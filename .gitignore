@@ -27,3 +27,11 @@
 /src/devices/fonts/font8x*.cc
 /src/include/make_ppc_spr_strings
 /src/include/ppc_spr_strings.h
+
+# Regenerated on every build
+/src/devices/autodev.cc
+/src/machines/automachine.cc
+/src/devices/.index
+/src/machines/.index
+/src/promemul/.index
+/src/file/.index
