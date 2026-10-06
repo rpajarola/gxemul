@@ -31,7 +31,3 @@
 # Regenerated on every build
 /src/devices/autodev.cc
 /src/machines/automachine.cc
-/src/devices/.index
-/src/machines/.index
-/src/promemul/.index
-/src/file/.index

@@ -36,14 +36,6 @@ printf "/*\n *  DO NOT EDIT. AUTOMATICALLY CREATED\n */\n\n" >> autodev.cc
 cat autodev_head.cc >> autodev.cc
 
 printf "5"
-rm -f .index
-for a in *.cc; do
-	B=`grep COMMENT $a`
-	if [ z"$B" != z ]; then
-		printf "$a " >> .index
-		echo "$B"|cut -d : -f 2- >> .index
-	fi
-done
 
 printf "4"
 for a in dev_*.cc; do

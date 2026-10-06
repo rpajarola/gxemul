@@ -7,7 +7,6 @@ CXXFLAGS=$(CWARNINGS) $(COPTIM) $(DINCLUDE)
 OBJS=file.o
 
 all: $(OBJS)
-	../../experiments/make_index.sh
 
 $(OBJS): Makefile
 
