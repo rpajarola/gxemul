@@ -35,7 +35,6 @@ CacheComponent::CacheComponent(const string& visibleClassName)
 	, m_lineSize(64)
 	, m_lastDumpAddr(0)
 	, m_associativity(1)
-	, m_addressSelect(0)
 {
 	AddVariable("size", &m_size);
 	AddVariable("lineSize", &m_lineSize);

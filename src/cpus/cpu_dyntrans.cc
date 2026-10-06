@@ -1329,7 +1329,7 @@ void DYNTRANS_INVALIDATE_TC_CODE(struct cpu *cpu, uint64_t addr, int flags)
 				*physpage_entryp = ppp->next_ofs;
 		}
 #else
-		prev_ppp = prev_ppp;	// shut up compiler warning
+		(void) prev_ppp;
 
 		/*
 		 *  Instead of removing the page from the code cache, each
@@ -1469,7 +1469,7 @@ void DYNTRANS_UPDATE_TRANSLATION_TABLE(struct cpu *cpu, uint64_t vaddr_page,
 		useraccess = 1;
 	}
 
-	useraccess = useraccess;  // shut up compiler warning about unused var
+	(void) useraccess;
 
 #ifdef DYNTRANS_M88K
 	/*  TODO  */

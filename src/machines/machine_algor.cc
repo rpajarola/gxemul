@@ -44,7 +44,6 @@
 
 MACHINE_SETUP(algor)
 {
-	struct pci_data *pci_bus;
 	char tmpstr[300];
 
 	machine->emulated_hz = 166560000;
@@ -69,7 +68,7 @@ MACHINE_SETUP(algor)
 	 *  2 = ISA
 	 */
 
-	pci_bus = (struct pci_data *) device_add(machine, "v3");
+	device_add(machine, "v3");
 
 	device_add(machine, "algor addr=0x1ff00000");
 

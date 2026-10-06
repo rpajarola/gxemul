@@ -165,7 +165,14 @@ void dev_ram_init(struct machine *machine, uint64_t baseaddr, uint64_t length,
 		 *  with dyntrans accesses if DM_EMULATED_RAM is set.
 		 */
 		d->offset = baseaddr - otheraddress;
-		d->name = (string(d->name) + " [mirror]").c_str();
+		{
+			size_t len = strlen(d->name) + strlen(" [mirror]") + 1;
+			char *mirror_name;
+			CHECK_ALLOCATION(mirror_name = (char *) malloc(len));
+			snprintf(mirror_name, len, "%s [mirror]", d->name);
+			free((void *) d->name);
+			d->name = mirror_name;
+		}
 
 		/*  Aligned RAM? Then it works with dyntrans.  */
 		if (points_to_ram &&

@@ -61,9 +61,7 @@ struct pcic_data {
 DEVICE_ACCESS(pcic_cis)
 {
 	/*  struct pcic_data *d = (struct pcic_data *) extra;  */
-	uint64_t idata = 0, odata = 0;
-
-	idata = memory_readmax64(cpu, data, len);
+	uint64_t odata = 0;
 
 {
 #if 0

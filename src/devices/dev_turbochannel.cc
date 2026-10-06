@@ -64,10 +64,7 @@ struct turbochannel_data {
 DEVICE_ACCESS(turbochannel)
 {
 	struct turbochannel_data *d = (struct turbochannel_data *) extra;
-	uint64_t idata = 0, odata = 0;
-
-	if (writeflag == MEM_WRITE)
-		idata = memory_readmax64(cpu, data, len);
+	uint64_t odata = 0;
 
 	relative_addr += d->rom_skip;
 

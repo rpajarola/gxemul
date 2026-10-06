@@ -184,13 +184,11 @@ void footbridge_interrupt_deassert(struct interrupt *interrupt)
 DEVICE_ACCESS(footbridge_isa)
 {
 	/*  struct footbridge_data *d = extra;  */
-	uint64_t idata = 0, odata = 0;
+	uint64_t odata = 0;
 	int x;
 
-	if (writeflag == MEM_WRITE) {
-		idata = memory_readmax64(cpu, data, len);
+	if (writeflag == MEM_WRITE)
 		fatal("[ footbridge_isa: WARNING/TODO: write! ]\n");
-	}
 
 	x = cpu->machine->isa_pic_data.last_int;
 	if (x < 8)

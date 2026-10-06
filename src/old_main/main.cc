@@ -394,7 +394,6 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 	int using_switch_e = 0, using_switch_E = 0;
 	bool using_switch_B = false;
 	char *type = NULL, *subtype = NULL;
-	int n_cpus_set = 0;
 	int msopts = 0;		/*  Machine-specific options used  */
 	struct machine *m = emul_add_machine(emul, NULL);
 
@@ -499,7 +498,6 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			break;
 		case 'n':
 			m->ncpus = atoi(optarg);
-			n_cpus_set = 1;
 			msopts = 1;
 			break;
 		case 'O':

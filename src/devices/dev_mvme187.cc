@@ -53,15 +53,12 @@ DEVICE_ACCESS(mvme187_memc)
 {
 	uint64_t idata = 0, odata = 0;
 	struct mvme187_data *d = (struct mvme187_data *) extra;
-	int controller = 0;
 
 	if (writeflag == MEM_WRITE)
 		idata = memory_readmax64(cpu, data, len);
 
-	if (relative_addr & 0x100) {
-		controller = 1;
-		relative_addr &= ~0x100;
-	}
+	/*  Both controllers share the same registers.  */
+	relative_addr &= ~0x100;
 
 	odata = ((uint8_t*)&d->memcreg)[relative_addr];
 

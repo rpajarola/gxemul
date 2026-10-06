@@ -260,6 +260,8 @@ void dev_px_dma(struct cpu *cpu, uint32_t sys_addr, struct px_data *d)
 
 #ifdef PX_DEBUG
 		debug("[ px: copyspans:  nspans = %i, lw = %i ]\n", nspans, lw);
+#else
+		(void) lw;
 #endif
 
 		/*  Reread copyspans command if it wasn't completely read:  */
@@ -475,8 +477,10 @@ void dev_px_dma(struct cpu *cpu, uint32_t sys_addr, struct px_data *d)
 		y2 = ((v2 - 63) >> 3) & 1023;
 
 #ifdef PX_DEBUG
-		debug("[ px putchar: v1 = 0x%08x  v2 = 0x%08x x=%i y=%i ]\n",
-		    (int)v1, (int)v2, x,y, x2,y2);
+		debug("[ px putchar: v1 = 0x%08x  v2 = 0x%08x x=%i y=%i"
+		    " x2=%i y2=%i ]\n", (int)v1, (int)v2, x,y, x2,y2);
+#else
+		(void) y2;
 #endif
 		x %= PX_XSIZE;
 		y %= PX_YSIZE;

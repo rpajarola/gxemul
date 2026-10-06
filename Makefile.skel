@@ -46,13 +46,13 @@ uninstall:
 
 clean:
 	rm -f $(BIN) *core core.* *.gmon _* *.exe ktrace.out tmp_*.out* callgrind.out* cachegrind.out*
-	rm -f unittest*.h components*.h commands*.h
 	rm -rf doc/doxygen
 	cd src; $(MAKE) clean
 
 #  experiments and demos are not cleaned on a normal clean, only on a clean_all.
 
 clean_all: clean
+	rm -f unittest*.h components*.h commands*.h
 	cd experiments; $(MAKE) clean_all
 	cd demos; $(MAKE) clean
 	rm -f config.h Makefile src/Makefile src/cpus/Makefile

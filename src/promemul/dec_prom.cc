@@ -232,8 +232,8 @@ int decstation_prom_emul(struct cpu *cpu)
 	int vector = cpu->pc & 0xfff;
 	int callback = (cpu->pc & 0xf000)? 1 : 0;
 	unsigned char buf[100];
-	unsigned char ch1, ch2, ch3;
-	uint64_t tmpaddr, slot_base = 0x10000000, slot_size = 0;
+	unsigned char ch1, ch2;
+	uint64_t slot_base = 0x10000000, slot_size = 0;
 
 	if (!callback) {
 		vector = dec_jumptable_func(cpu, vector);
@@ -274,7 +274,6 @@ int decstation_prom_emul(struct cpu *cpu)
 		break;
 	case 0x28:		/*  gets()  */
 		/*  debug("[ DEC PROM gets() ]\n");  */
-		tmpaddr = cpu->cd.mips.gpr[MIPS_GPR_A0];
 		i = 0;
 
 		/*  TODO: Make this not hang (block) the entire emulator  */
@@ -399,7 +398,7 @@ int decstation_prom_emul(struct cpu *cpu)
 						break;
 					case 's':
 						/*  Print a "%s" string.  */
-						j = 0; ch3 = '\n';
+						j = 0;
 						while (ch2) {
 							ch2 = mem_readchar(cpu,
 							    argreg, j++);
@@ -413,7 +412,6 @@ int decstation_prom_emul(struct cpu *cpu)
 								    1-strlen(
 								    printfbuf),
 								    "%c", ch2);
-								ch3 = ch2;
 							}
 						}
 						break;

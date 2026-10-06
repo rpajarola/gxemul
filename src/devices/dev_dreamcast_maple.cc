@@ -408,7 +408,7 @@ void maple_do_dma_xfer(struct cpu *cpu, struct dreamcast_maple_data *d)
 	 */
 	for (;;) {
 		uint32_t receive_addr, response_code, cond;
-		int datalen, port, last_message, cmd, to, from, datalen_cmd;
+		int port, last_message, cmd, to, datalen_cmd;
 		int unit;
 		uint8_t buf[8];
 
@@ -417,7 +417,6 @@ void maple_do_dma_xfer(struct cpu *cpu, struct dreamcast_maple_data *d)
 		    NO_EXCEPTIONS | PHYSICAL);
 		addr += 8;
 
-		datalen = buf[0] * sizeof(uint32_t);
 		if (buf[1] & 2) {
 			fatal("[ dreamcast_maple: TODO: GUN bit. ]\n");
 			/*  TODO: Set some bits in A05F80C4 to indicate
@@ -441,7 +440,6 @@ void maple_do_dma_xfer(struct cpu *cpu, struct dreamcast_maple_data *d)
 
 		cmd = buf[0];
 		to = buf[1];
-		from = buf[2];
 		datalen_cmd = buf[3];
 
 		/*  Decode the unit number:  */

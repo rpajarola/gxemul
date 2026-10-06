@@ -380,8 +380,8 @@ static void net_ip_tcp(struct net *net, void *extra,
 	unsigned char *packet, int len)
 {
 	int con_id, free_con_id, i, res;
-	int srcport, dstport, data_offset, window, checksum, urgptr;
-	int syn, ack, psh, rst, urg, fin;
+	int srcport, dstport, data_offset, checksum;
+	int syn, ack, psh, rst, fin;
 	uint32_t seqnr, acknr;
 	struct sockaddr_in remote_ip;
 	fd_set rfds;
@@ -413,17 +413,18 @@ static void net_ip_tcp(struct net *net, void *extra,
 	data_offset = (packet[46] >> 4) * 4 + 34;
 	/*  data_offset is now data offset within packet :-)  */
 
-	urg = packet[47] & 32;
 	ack = packet[47] & 16;
 	psh = packet[47] &  8;
 	rst = packet[47] &  4;
 	syn = packet[47] &  2;
 	fin = packet[47] &  1;
-	window   = (packet[48] << 8) + packet[49];
 	checksum = (packet[50] << 8) + packet[51];
-	urgptr   = (packet[52] << 8) + packet[53];
 
 #if 0
+	int urg = packet[47] & 32;
+	int window = (packet[48] << 8) + packet[49];
+	int urgptr = (packet[52] << 8) + packet[53];
+
 	fatal(urg? "URG " : "");
 	fatal(ack? "ACK " : "");
 	fatal(psh? "PSH " : "");
@@ -1135,7 +1136,7 @@ void net_ip_broadcast(struct net *net, void *extra,
 {
 	unsigned char *p = (unsigned char *) &net->netmask_ipv4;
 	uint32_t x, y;
-	int i, xl, warning = 0, match = 0;
+	int i, xl, warning = 0;
 
 #if 0
 	fatal("[ net: IP BROADCAST: ");
@@ -1165,19 +1166,12 @@ void net_ip_broadcast(struct net *net, void *extra,
 	/*  Example: x = 10.0.0.0  */
 	x |= 255;
 
-	if (x == y) {
+	if (x == y)
 		warning = 1;
-		match = 1;
-	}
 
 	xl = 32 - net->netmask_ipv4_len;
 	x |= (1 << xl) - 1;
 	/*  x = 10.255.255.255  */
-
-	if (x == y)
-		match = 1;
-	if (y == 0xffffffff)
-		match = 1;
 
 	if (warning)
 		fatal("[ net_ip_broadcast(): warning: broadcast to "

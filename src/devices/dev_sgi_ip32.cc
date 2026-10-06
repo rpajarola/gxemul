@@ -480,12 +480,10 @@ DEVICE_ACCESS(macepci)
 {
 	struct macepci_data *d = (struct macepci_data *) extra;
 	uint64_t idata = 0, odata=0;
-	int regnr, res = 1, bus, dev, func, pcireg;
+	int res = 1, bus, dev, func, pcireg;
 
 	if (writeflag == MEM_WRITE)
 		idata = memory_readmax64(cpu, data, len);
-
-	regnr = relative_addr / sizeof(uint32_t);
 
 	/*  Read from/write to the macepci:  */
 	switch (relative_addr) {

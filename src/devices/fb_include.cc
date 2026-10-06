@@ -63,7 +63,6 @@
 void REDRAW(struct vfb_data *d, int addr, int len)
 {
 	int x, y, pixel, npixels;
-	long color_r, color_g, color_b;
 	long color;
 
 #ifndef FB_SCALEDOWN
@@ -81,7 +80,6 @@ void REDRAW(struct vfb_data *d, int addr, int len)
 	if (d->bit_depth < 8) {
 		for (pixel=0; pixel<npixels; pixel++) {
 			int fb_addr, c, r, g, b;
-			color_r = color_g = color_b = 0;
 
 			fb_addr = (y * d->xsize + x) * d->bit_depth;
 			/*  fb_addr is now which _bit_ in
@@ -107,7 +105,6 @@ void REDRAW(struct vfb_data *d, int addr, int len)
 	} else if (d->bit_depth == 8) {
 		for (pixel=0; pixel<npixels; pixel++) {
 			int fb_addr, c, r, g, b;
-			color_r = color_g = color_b = 0;
 
 			fb_addr = y * d->xsize + x;
 			/*  fb_addr is now which byte in framebuffer  */
@@ -122,7 +119,6 @@ void REDRAW(struct vfb_data *d, int addr, int len)
 	} else {	/*  d->bit_depth > 8  */
 		for (pixel=0; pixel<npixels; pixel++) {
 			int fb_addr, r, g, b;
-			color_r = color_g = color_b = 0;
 
 			fb_addr = (y * d->xsize + x) * d->bit_depth;
 			/*  fb_addr is now which byte in framebuffer  */
@@ -185,6 +181,7 @@ void REDRAW(struct vfb_data *d, int addr, int len)
 	/*  scaledown > 1:  */
 	int scaledown = d->vfb_scaledown;
 	int scaledownXscaledown = scaledown * scaledown;
+	long color_r, color_g, color_b;
 
 	/*  Which framebuffer pixel does addr correspond to?  */
 	pixel = addr * 8 / d->bit_depth;

@@ -134,13 +134,10 @@ for (i=0; i<len; i++)
 		    (long long)relative_addr, (long long)idata);
 }
 #endif
-			int x, y, ofs;
-
-			ofs = (relative_addr - 0x100000) * 2;
-			y = ofs / XSIZE;
-			x = ofs - y * XSIZE;
 
 #if 0
+			int ofs = (relative_addr - 0x100000) * 2;
+
 			if (writeflag == MEM_WRITE) {
 				int ix;
 				for (ix=0; ix<len*2; ix++) {

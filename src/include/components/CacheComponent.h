@@ -128,9 +128,6 @@ private:
 	uint64_t			m_lastDumpAddr;
 	int				m_associativity;// 0 = fully. 1 = direct mapped. n = n-way.
 	// TODO: the actual data (cache lines)
-
-	// Cached/runtime state:
-	uint64_t	m_addressSelect;  // For AddressDataBus read/write
 };
 
 

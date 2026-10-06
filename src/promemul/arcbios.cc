@@ -1905,9 +1905,8 @@ static void arcbios_add_other_components(struct machine *machine,
 	    (machine->machine_subtype == MACHINE_ARC_JAZZ_PICA
 	    || machine->machine_subtype == MACHINE_ARC_JAZZ_MAGNUM)) {
 		uint64_t jazzbus, ali_s3, vxl;
-		uint64_t diskcontroller, floppy, kbdctl, kbd;
-		uint64_t ptrctl, ptr, paral, audio;
-		uint64_t eisa, scsi;
+		uint64_t diskcontroller, kbdctl;
+		uint64_t ptrctl, scsi;
 		/*  uint64_t serial1, serial2;  */
 
 		jazzbus = arcbios_addchild_manual(cpu,
@@ -2018,7 +2017,7 @@ static void arcbios_add_other_components(struct machine *machine,
 			COMPONENT_FLAG_Input | COMPONENT_FLAG_Output,
 		    1, 2, 0, 0xffffffff, "I82077", jazzbus, NULL, 0);
 
-		floppy = arcbios_addchild_manual(cpu,
+		arcbios_addchild_manual(cpu,
 		    COMPONENT_CLASS_PeripheralClass,
 		    COMPONENT_TYPE_FloppyDiskPeripheral,
 			COMPONENT_FLAG_Removable |
@@ -2031,7 +2030,7 @@ static void arcbios_add_other_components(struct machine *machine,
 			COMPONENT_FLAG_ConsoleIn | COMPONENT_FLAG_Input,
 		    1, 2, 0, 0xffffffff, "I8742", jazzbus, NULL, 0);
 
-		kbd = arcbios_addchild_manual(cpu,
+		arcbios_addchild_manual(cpu,
 		    COMPONENT_CLASS_PeripheralClass,
 		    COMPONENT_TYPE_KeyboardPeripheral,
 			COMPONENT_FLAG_ConsoleIn | COMPONENT_FLAG_Input,
@@ -2042,7 +2041,7 @@ static void arcbios_add_other_components(struct machine *machine,
 		    COMPONENT_TYPE_PointerController, COMPONENT_FLAG_Input,
 		    1, 2, 0, 0xffffffff, "I8742", jazzbus, NULL, 0);
 
-		ptr = arcbios_addchild_manual(cpu,
+		arcbios_addchild_manual(cpu,
 		    COMPONENT_CLASS_PeripheralClass,
 		    COMPONENT_TYPE_PointerPeripheral, COMPONENT_FLAG_Input,
 		    1, 2, 0, 0xffffffff, "PS2 MOUSE", ptrctl, NULL, 0);
@@ -2062,19 +2061,19 @@ static void arcbios_add_other_components(struct machine *machine,
 		    1, 2, 0, 0xffffffff, "COM1", jazzbus, NULL, 0);
 #endif
 
-		paral = arcbios_addchild_manual(cpu,
+		arcbios_addchild_manual(cpu,
 		    COMPONENT_CLASS_ControllerClass,
 		    COMPONENT_TYPE_ParallelController,
 			COMPONENT_FLAG_Input | COMPONENT_FLAG_Output,
 		    1, 2, 0, 0xffffffff, "LPT1", jazzbus, NULL, 0);
 
-		audio = arcbios_addchild_manual(cpu,
+		arcbios_addchild_manual(cpu,
 		    COMPONENT_CLASS_ControllerClass,
 		    COMPONENT_TYPE_AudioController,
 			COMPONENT_FLAG_Input | COMPONENT_FLAG_Output,
 		    1, 2, 0, 0xffffffff, "MAGNUM", jazzbus, NULL, 0);
 
-		eisa = arcbios_addchild_manual(cpu,
+		arcbios_addchild_manual(cpu,
 		    COMPONENT_CLASS_AdapterClass, COMPONENT_TYPE_EISAAdapter,
 		    0, 1, 2, 0, 0xffffffff, "EISA", system, NULL, 0);
 

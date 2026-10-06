@@ -448,7 +448,6 @@ void machine_dumpinfo(struct machine *m)
  */
 void machine_setup(struct machine *machine)
 {
-	struct memory *mem;
 	struct machine_entry *me;
 
 	/*  Abreviation:  :-)  */
@@ -457,7 +456,6 @@ void machine_setup(struct machine *machine)
 	machine->bootdev_id = diskimage_bootdev(machine,
 	    &machine->bootdev_type);
 
-	mem = cpu->mem;
 	machine->machine_name = NULL;
 
 	/*  TODO: Move this somewhere else?  */

@@ -4762,7 +4762,7 @@ X(to_be_translated)
 			ic->f = instr(reserved);
 	}
 #else
-	x64 = x64; // avoid compiler warning
+	(void) x64;
 #endif
 
 

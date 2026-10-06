@@ -62,7 +62,7 @@ MACHINE_SETUP(sgi)
 	int arc_wordlen = sizeof(uint32_t);
 	struct memory *mem = machine->memory;
 	char tmpstr[1000];
-	int i, j;
+	int j;
 	char *eaddr_string = strdup("eaddr=10:20:30:40:50:60");		/*  bogus  */
 	unsigned char macaddr[6];
 	char *machineName;
@@ -263,7 +263,7 @@ abort();
 		 */
 
 		/*  zsc0 serial console. 8 + 32 + 3 + 64*5 = 43+64*5 = 363 */
-		i = (size_t)device_add(machine,
+		device_add(machine,
 		    "z8530 addr=0x1fbd9830 irq=363 addr_mult=4");
 
 		/*  Not supported by NetBSD 1.6.2, but by 2.0_BETA:  */

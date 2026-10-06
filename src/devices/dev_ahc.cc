@@ -180,6 +180,9 @@ DEVICE_ACCESS(ahc)
 				    name, (int)odata);
 		}
 	}
+#else
+	(void) ok;
+	(void) name;
 #endif
 
 	if (writeflag == MEM_READ)

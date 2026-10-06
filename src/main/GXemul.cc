@@ -875,8 +875,7 @@ static void GetComponentsAndFrequencies(refcount_ptr<Component> component,
 	StateVariable* step = component->GetVariable("step");
 	if (freq != NULL && step != NULL &&
 	    (paused == NULL || paused->ToInteger() == 0)) {
-		struct ComponentAndFrequency caf;
-		memset(&caf, 0, sizeof(caf));
+		struct ComponentAndFrequency caf = ComponentAndFrequency();
 
 		caf.component = component;
 		caf.frequency = freq->ToDouble();

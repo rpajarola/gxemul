@@ -441,7 +441,6 @@ static size_t fwrite_helper(off_t offset, unsigned char *buf,
 	     curofs += OVERLAY_BLOCK_SIZE) {
 		/*  Always write to the last overlay:  */
 		int overlay_nr = d->nr_of_overlays-1;
-		off_t lenwritten;
 		int res = my_fseek(d->overlays[overlay_nr].f_data,
 		    curofs, SEEK_SET);
 		if (res != 0) {
@@ -450,8 +449,12 @@ static size_t fwrite_helper(off_t offset, unsigned char *buf,
 			return 0;
 		}
 
-		lenwritten = fwrite(buf, 1, OVERLAY_BLOCK_SIZE,
-		    d->overlays[overlay_nr].f_data);
+		if (fwrite(buf, 1, OVERLAY_BLOCK_SIZE,
+		    d->overlays[overlay_nr].f_data) != OVERLAY_BLOCK_SIZE) {
+			fatal("[ diskimage__internal_access(): fwrite()"
+			    " failed on disk id %i \n", d->id);
+			return 0;
+		}
 		buf += OVERLAY_BLOCK_SIZE;
 
 		/*  Mark this block in the last overlay as in use:  */

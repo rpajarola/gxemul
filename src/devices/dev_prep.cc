@@ -48,10 +48,7 @@ struct prep_data {
 DEVICE_ACCESS(prep)
 {
 	/*  struct prep_data *d = extra;  */
-	uint64_t idata = 0, odata = 0;
-
-	if (writeflag == MEM_WRITE)
-		idata = memory_readmax64(cpu, data, len);
+	uint64_t odata = 0;
 
 	if (writeflag == MEM_READ) {
 		odata = cpu->machine->isa_pic_data.last_int;

@@ -1032,30 +1032,17 @@ void pvr_render(struct cpu *cpu, struct pvr_data *d)
 	// Word 0:
 	int listtype = 0;
 	int striplength = 0;
-	int clipmode;
-	int modifier;
-	int modifier_mode;
 	int color_type = 0;
 	bool texture = false;
-	bool specular;
-	bool shading;
-	bool uv_format;
 
 	// Word 1:
-	int depthmode;
 	int cullingmode = 0;
 	bool zwrite;
-	bool texture1;
-	bool specular1;
-	bool shading1;
-	bool uv_format1;
-	bool dcalcexact;
 
 	// Word 2:
 	int texture_usize = 0, texture_vsize = 0;
 
 	// Word 3:
-	bool texture_mipmap = false;
 	bool texture_vq_compression = false;
 	int texture_pixelformat = 0;
 	bool texture_twiddled = false;
@@ -1119,16 +1106,17 @@ void pvr_render(struct cpu *cpu, struct pvr_data *d)
 			striplength = (list[0] >> 18) & 3;
 			striplength = striplength == 2 ? 4 : (
 			    striplength == 3 ? 6 : (striplength + 1));
-			clipmode = (list[0] >> 16) & 3;
-			modifier = (list[0] >> 7) & 1;
-			modifier_mode = (list[0] >> 6) & 1;
 			color_type = (list[0] >> 4) & 3;
 			texture = list[0] & 8;
-			specular = list[0] & 4;
-			shading = list[0] & 2;
-			uv_format = list[0] & 1;
 
 #ifdef TA_DEBUG
+			int clipmode = (list[0] >> 16) & 3;
+			int modifier = (list[0] >> 7) & 1;
+			int modifier_mode = (list[0] >> 6) & 1;
+			bool specular = list[0] & 4;
+			bool shading = list[0] & 2;
+			bool uv_format = list[0] & 1;
+
 			fatal("\nTA polygon  listtype %i, ", listtype);
 			fatal("striplength %i, ", striplength);
 			fatal("clipmode %i, ", clipmode);
@@ -1142,16 +1130,17 @@ void pvr_render(struct cpu *cpu, struct pvr_data *d)
 #endif
 
 			// List Word 1:
-			depthmode = (list[1] >> 29) & 7;
 			cullingmode = (list[1] >> 27) & 3;
 			zwrite = ! ((list[1] >> 26) & 1);
-			texture1 = (list[1] >> 25) & 1;
-			specular1 = (list[1] >> 24) & 1;
-			shading1 = (list[1] >> 23) & 1;
-			uv_format1 = (list[1] >> 22) & 1;
-			dcalcexact = (list[1] >> 20) & 1;
 
 #ifdef TA_DEBUG
+			int depthmode = (list[1] >> 29) & 7;
+			bool texture1 = (list[1] >> 25) & 1;
+			bool specular1 = (list[1] >> 24) & 1;
+			bool shading1 = (list[1] >> 23) & 1;
+			bool uv_format1 = (list[1] >> 22) & 1;
+			bool dcalcexact = (list[1] >> 20) & 1;
+
 			fatal("            depthmode %i, ", depthmode);
 			fatal("cullingmode %i, ", cullingmode);
 			fatal("zwrite %s, ", zwrite ? "TRUE" : "false");
@@ -1191,7 +1180,6 @@ void pvr_render(struct cpu *cpu, struct pvr_data *d)
 			texture_vsize = 8 << (list[2] & 7);
 
 			// List Word 3:
-			texture_mipmap = (list[3] >> 31) & 1;
 			texture_vq_compression = (list[3] >> 30) & 1;
 			texture_pixelformat = (list[3] >> 27) & 7;
 			texture_twiddled = ! ((list[3] >> 26) & 1);
@@ -1199,6 +1187,7 @@ void pvr_render(struct cpu *cpu, struct pvr_data *d)
 			textureAddr = (list[3] << 3) & 0x7fffff;
 
 #ifdef TA_DEBUG
+			bool texture_mipmap = (list[3] >> 31) & 1;
 			fatal("            texture: mipmap %s, ", texture_mipmap ? "TRUE" : "false");
 			fatal("vq_compression %s, ", texture_vq_compression ? "TRUE" : "false");
 			fatal("pixelformat %i, ", texture_pixelformat);

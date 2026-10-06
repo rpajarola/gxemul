@@ -381,6 +381,11 @@ void sh4_dmac_transfer(struct cpu *cpu, struct sh4_data *d, int channel)
 	fatal("|Count:            0x%08x\n", (int) count);
 	fatal("|Transmit size:    0x%08x\n", (int) transmit_size);
 	fatal("|Interrupt:        %s\n", cause_interrupt? "yes" : "no");
+#else
+	/*  TODO: The transfer below ignores the source and destination
+	    address modes.  */
+	(void) src_delta;
+	(void) dst_delta;
 #endif
 
 	switch (chcr & CHCR_RS) {

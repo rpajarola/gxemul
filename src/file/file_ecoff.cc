@@ -180,11 +180,11 @@ static void file_load_ecoff(struct machine *m, struct memory *mem,
 
 	/*  Go through all the section headers:  */
 	for (secn=0; secn<f_nscns; secn++) {
-		off_t s_scnptr, s_relptr, s_lnnoptr, oldpos;
-		int s_nreloc, s_nlnno, s_flags;
+		off_t s_scnptr, s_relptr, oldpos;
+		int s_flags;
 		int s_size;
 		unsigned int i;
-		uint64_t s_paddr, s_vaddr;
+		uint64_t s_vaddr;
 
 		/*  Read a section header:  */
 		len = fread(&scnhdr, 1, sizeof(scnhdr), f);
@@ -203,14 +203,10 @@ static void file_load_ecoff(struct machine *m, struct memory *mem,
 				break;
 		debug(" (");
 
-		unencode(s_paddr,   &scnhdr.s_paddr,   uint32_t);
 		unencode(s_vaddr,   &scnhdr.s_vaddr,   uint32_t);
 		unencode(s_size,    &scnhdr.s_size,    uint32_t);
 		unencode(s_scnptr,  &scnhdr.s_scnptr,  uint32_t);
 		unencode(s_relptr,  &scnhdr.s_relptr,  uint32_t);
-		unencode(s_lnnoptr, &scnhdr.s_lnnoptr, uint32_t);
-		unencode(s_nreloc,  &scnhdr.s_nreloc,  uint16_t);
-		unencode(s_nlnno,   &scnhdr.s_nlnno,   uint16_t);
 		unencode(s_flags,   &scnhdr.s_flags,   uint32_t);
 
 		debug("0x%x @ 0x%08x, offset 0x%lx, flags 0x%x)\n",
@@ -267,8 +263,8 @@ static void file_load_ecoff(struct machine *m, struct memory *mem,
 
 	if (f_symptr != 0 && f_nsyms != 0) {
 		struct ecoff_symhdr symhdr;
-		int sym_magic, iextMax, issExtMax, issMax, crfd;
-		off_t cbRfdOffset, cbExtOffset, cbSsExtOffset, cbSsOffset;
+		int sym_magic, iextMax, issExtMax;
+		off_t cbExtOffset, cbSsExtOffset;
 		char *symbol_data;
 		struct ecoff_extsym *extsyms;
 		int nsymbols, sym_nr;
@@ -283,10 +279,6 @@ static void file_load_ecoff(struct machine *m, struct memory *mem,
 		}
 
 		unencode(sym_magic,     &symhdr.magic,         uint16_t);
-		unencode(crfd,          &symhdr.crfd,          uint32_t);
-		unencode(cbRfdOffset,   &symhdr.cbRfdOffset,   uint32_t);
-		unencode(issMax,        &symhdr.issMax,        uint32_t);
-		unencode(cbSsOffset,    &symhdr.cbSsOffset,    uint32_t);
 		unencode(issExtMax,     &symhdr.issExtMax,     uint32_t);
 		unencode(cbSsExtOffset, &symhdr.cbSsExtOffset, uint32_t);
 		unencode(iextMax,       &symhdr.iextMax,       uint32_t);
