@@ -840,6 +840,11 @@ int diskimage_add(struct machine *machine, char *fname)
 	 */
 	if (prefix_t) {
 		d->is_a_tape = 1;
+
+		/*  Filenames ending with .tap are SIMH-format tape images.  */
+		if (strlen(d->fname) > 4 && strcasecmp(d->fname +
+		    strlen(d->fname) - 4, ".tap") == 0)
+			d->tape_simh = 1;
 	} else {
 		if (prefix_c ||
 		    ((strlen(d->fname) > 4 &&

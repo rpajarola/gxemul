@@ -84,6 +84,13 @@ struct diskimage {
 	int		tape_filenr;
 	int		filemark;
 
+	/*  SIMH .tap format: records with length headers, inline filemarks  */
+	int		tape_simh;
+	int		tape_sense_key;
+	int		tape_sense_flags;	/*  FM, EOM, ILI bits  */
+	int		tape_sense_info_valid;
+	int32_t		tape_sense_info;
+
 	int		rpms;
 	int		ncyls;
 };

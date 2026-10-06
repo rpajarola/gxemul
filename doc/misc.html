@@ -255,6 +255,15 @@ There is another advantage to using symbolic links for tape filenames:
 every time a tape is rewound, it is reopened using the filename given
 on the command line. By changing what the symbolic name points to,
 you can "switch tapes" without quiting and restarting the emulator.
+<p>
+The files described above are raw byte streams, so they do not preserve
+the size of the individual blocks on the tape. If the filename ends with
+<tt>.tap</tt>, the image is instead read as a single file in the SIMH
+tape image format, which holds the whole tape including filemarks:
+each block is stored as a 32-bit little-endian length, the data (padded
+to an even number of bytes), and the length again. A length of zero is a
+filemark, and 0xffffffff marks the end of the medium. With such images,
+each READ returns exactly one block, as on a real tape drive.
 
 <p>
 <font color="#ff0000">Note: Tape support is most likely very buggy, 
