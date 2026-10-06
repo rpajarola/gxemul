@@ -251,12 +251,12 @@ int m88k_translate_v2p(struct cpu *cpu, uint64_t vaddr64,
 
 #ifdef M8820X_TABLE_SEARCH_DEBUG
 	printf("+---   M8820x page table search debug:\n");
-	printf("| vaddr     0x%08"PRIx32"\n", vaddr);
-	printf("| apr       0x%08"PRIx32"\n", apr);
+	printf("| vaddr     0x%08" PRIx32"\n", vaddr);
+	printf("| apr       0x%08" PRIx32"\n", apr);
 	printf("| seg_base  %p (on the host)\n", seg_base);
 	printf("| seg_nr    0x%03x\n", seg_nr);
 	printf("| page_nr   0x%03x\n", page_nr);
-	printf("| sd        0x%08"PRIx32"\n", seg_descriptor);
+	printf("| sd        0x%08" PRIx32"\n", seg_descriptor);
 #endif
 
 	/*  Segment descriptor invalid? Then cause a segfault exception.  */
@@ -288,7 +288,7 @@ int m88k_translate_v2p(struct cpu *cpu, uint64_t vaddr64,
 
 #ifdef M8820X_TABLE_SEARCH_DEBUG
 	printf("| page_base %p (on the host)\n", page_base);
-	printf("| pd        0x%08"PRIx32"\n", page_descriptor);
+	printf("| pd        0x%08" PRIx32"\n", page_descriptor);
 #endif
 
 	/*  Page descriptor invalid? Then cause a page fault exception.  */

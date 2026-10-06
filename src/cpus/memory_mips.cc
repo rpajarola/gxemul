@@ -91,8 +91,8 @@ int memory_cache_R3000(struct cpu *cpu, int cache, uint64_t paddr,
 
 	/*  Data cache isolated?  Then don't access main memory:  */
 	if (cache_isolated) {
-		/*  debug("ISOLATED write=%i cache=%i vaddr=%016"PRIx64" "
-		    "paddr=%016"PRIx64" => addr in cache = 0x%lx\n",
+		/*  debug("ISOLATED write=%i cache=%i vaddr=%016" PRIx64" "
+		    "paddr=%016" PRIx64" => addr in cache = 0x%lx\n",
 		    writeflag, cache, (uint64_t) vaddr,
 		    (uint64_t) paddr, addr);  */
 

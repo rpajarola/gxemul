@@ -68,7 +68,7 @@ void LS_GENERIC_N(struct cpu *cpu, struct mips_instr_call *ic)
 		    0, addr, 0, 0, 0, 0);
 #else
 		fatal("{ mips dyntrans alignment exception, size = %i,"
-		    " addr = %016"PRIx64", pc = %016"PRIx64" }\n", LS_SIZE,
+		    " addr = %016" PRIx64", pc = %016" PRIx64" }\n", LS_SIZE,
 		    (uint64_t) addr, cpu->pc);
 
 		/*  TODO: Generalize this into a abort_call, or similar:  */
@@ -132,7 +132,7 @@ void LS_N(struct cpu *cpu, struct mips_instr_call *ic)
 	x1 = (addr >> (64-DYNTRANS_L1N)) & mask1;
 	x2 = (addr >> (64-DYNTRANS_L1N-DYNTRANS_L2N)) & mask2;
 	x3 = (addr >> (64-DYNTRANS_L1N-DYNTRANS_L2N-DYNTRANS_L3N)) & mask3;
-	/*  fatal("X3: addr=%016"PRIx64" x1=%x x2=%x x3=%x\n",
+	/*  fatal("X3: addr=%016" PRIx64" x1=%x x2=%x x3=%x\n",
 	    (uint64_t) addr, (int) x1, (int) x2, (int) x3);  */
 	l2 = cpu->cd.DYNTRANS_ARCH.l1_64[x1];
 	/*  fatal("  l2 = %p\n", l2);  */

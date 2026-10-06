@@ -540,7 +540,7 @@ bool FileLoader_ELF::LoadIntoComponent(refcount_ptr<Component> component, ostrea
 		    ((uint64_t)b[5] << 16) + ((uint64_t)b[6] << 8) +
 		    (uint64_t)b[7];
 
-		debug("entrypoint 0x%016"PRIx64", toc_base 0x%016"PRIx64"\n",
+		debug("entrypoint 0x%016" PRIx64", toc_base 0x%016" PRIx64"\n",
 		    (uint64_t) *entrypointp, (uint64_t) toc_base);
 		if (tocp != NULL)
 			*tocp = toc_base;
