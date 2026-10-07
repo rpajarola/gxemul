@@ -36,14 +36,6 @@ printf "/*\n *  DO NOT EDIT. AUTOMATICALLY CREATED\n */\n\n" >> automachine.c
 cat automachine_head.c >> automachine.c
 
 printf "3"
-rm -f .index
-for a in *.c; do
-	B=`grep COMMENT $a`
-	if [ z"$B" != z ]; then
-		printf "$a " >> .index
-		echo "$B"|cut -d : -f 2- >> .index
-	fi
-done
 
 printf "2"
 for a in machine_*.c; do
