@@ -2,7 +2,7 @@
 #define	DEVICES_H
 
 /*
- *  Copyright (C) 2003-2011  Anders Gavare.  All rights reserved.
+ *  Copyright (C) 2003-2021  Anders Gavare.  All rights reserved.
  *
  *  Redistribution and use in source and binary forms, with or without
  *  modification, are permitted provided that the following conditions are met:
@@ -75,17 +75,40 @@ struct pic8259_data {
 };
 
 /*  dev_dec_ioasic.c:  */
-#define	DEV_DEC_IOASIC_LENGTH		0x80100
-#define	N_DEC_IOASIC_REGS	(0x1f0 / 0x10)
+#define	DEV_DEC_IOASIC_LENGTH		0xc0000
 #define	MAX_IOASIC_DMA_FUNCTIONS	8
 struct dec_ioasic_data {
-	uint32_t	reg[N_DEC_IOASIC_REGS];
-	int		(*(dma_func[MAX_IOASIC_DMA_FUNCTIONS]))(struct cpu *, void *, uint64_t addr, size_t dma_len, int tx);
+	uint32_t	scsi_dmaptr;		/*  0x000  */
+	uint32_t	scsi_nextptr;		/*  0x010  */
+	uint32_t	lance_dmaptr;		/*  0x020  */
+	uint32_t	floppy_dmaptr;		/*  0x070  */
+	uint32_t	isdn_x_dmaptr;		/*  0x080  */
+	uint32_t	isdn_x_nextptr;		/*  0x090  */
+	uint32_t	isdn_r_dmaptr;		/*  0x0a0  */
+	uint32_t	isdn_r_nextptr;		/*  0x0b0  */
+	uint32_t	csr;			/*  0x100  */
+	uint32_t	intr;			/*  0x110  */
+	uint32_t	imsk;			/*  0x120  */
+	uint32_t	isdn_x_data;		/*  0x140  */
+	uint32_t	isdn_r_data;		/*  0x150  */
+	uint32_t	lance_decode;		/*  0x160  */
+	uint32_t	scsi_decode;		/*  0x170  */
+	uint32_t	scc0_decode;		/*  0x180  */
+	uint32_t	scc1_decode;		/*  0x190  */
+	uint32_t	floppy_decode;		/*  0x1a0  */
+	uint32_t	scsi_scr;		/*  0x1b0  */
+	uint32_t	scsi_sdr0;		/*  0x1c0  */
+	uint32_t	scsi_sdr1;		/*  0x1d0  */
+
+	int		(*dma_func[MAX_IOASIC_DMA_FUNCTIONS])(struct cpu *, void *, uint64_t addr, size_t dma_len, int tx);
 	void		*dma_func_extra[MAX_IOASIC_DMA_FUNCTIONS];
 	int		rackmount_flag;
+	struct interrupt *irq;
+	int		int_asserted;
 };
+void dec_ioasic_reassert(struct dec_ioasic_data*);
 int dev_dec_ioasic_access(struct cpu *cpu, struct memory *mem, uint64_t relative_addr, unsigned char *data, size_t len, int writeflag, void *);
-struct dec_ioasic_data *dev_dec_ioasic_init(struct cpu *cpu, struct memory *mem, uint64_t baseaddr, int rackmount_flag);
+struct dec_ioasic_data *dev_dec_ioasic_init(struct cpu *cpu, struct memory *mem, uint64_t baseaddr, int rackmount_flag, struct interrupt* irq);
 
 /*  dev_asc.c:  */
 #define	DEV_ASC_DEC_LENGTH		0x40000
@@ -170,6 +193,7 @@ void dev_decxmi_init(struct memory *mem, uint64_t baseaddr);
 #define	VFB_DEC_VFB02		3
 #define	VFB_DEC_MAXINE		4
 #define	VFB_PLAYSTATION2	5
+#define	VFB_REVERSEBITS		6
 /*  Extra flags:  */
 #define	VFB_REVERSE_START	0x10000
 struct vfb_data {
@@ -345,7 +369,7 @@ void dev_px_init(struct machine *machine, struct memory *mem,
 int dev_ram_access(struct cpu *cpu, struct memory *mem, uint64_t relative_addr,
 	unsigned char *data, size_t len, int writeflag, void *);
 void dev_ram_init(struct machine *machine, uint64_t baseaddr, uint64_t length,
-	int mode, uint64_t otheraddr, const char* name = NULL);
+	int mode, uint64_t otheraddr, const char* name);
 
 /*  dev_scc.c:  */
 #define	DEV_SCC_LENGTH			0x1000
@@ -354,7 +378,7 @@ int dev_scc_access(struct cpu *cpu, struct memory *mem, uint64_t relative_addr,
 int dev_scc_dma_func(struct cpu *cpu, void *extra, uint64_t addr,
 	size_t dma_len, int tx);
 void *dev_scc_init(struct machine *machine, struct memory *mem,
-	uint64_t baseaddr, int irq_nr, int use_fb, int scc_nr, int addrmul);
+	uint64_t baseaddr, char* irq_path, int use_fb, int scc_nr, int addrmul);
 
 /*  dev_sfb.c:  */
 #define	DEV_SFB_LENGTH		0x400000
@@ -370,6 +394,34 @@ int dev_sgi_gbe_access(struct cpu *cpu, struct memory *mem,
 	void *);
 void dev_sgi_gbe_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr);
+
+/*  dev_sgi_re.cc:  */
+// SGI O2 Rendering Engine:
+#define	DEV_SGI_RE_LENGTH		0x1000
+int dev_sgi_re_access(struct cpu *cpu, struct memory *mem,
+	uint64_t relative_addr, unsigned char *data, size_t len,
+	int writeflag, void *);
+void dev_sgi_re_init(struct machine *machine, struct memory *mem, uint64_t baseaddr);
+// SGI O2 Drawing Engine:
+#define	DEV_SGI_DE_LENGTH		0x1000
+int dev_sgi_de_access(struct cpu *cpu, struct memory *mem,
+	uint64_t relative_addr, unsigned char *data, size_t len,
+	int writeflag, void *);
+struct sgi_re_data;
+void dev_sgi_de_init(struct memory *mem, uint64_t baseaddr, struct sgi_re_data *);
+// SGI O2 Memory Transfer Engine:
+#define	DEV_SGI_MTE_LENGTH		0x1000
+int dev_sgi_re_access(struct cpu *cpu, struct memory *mem,
+	uint64_t relative_addr, unsigned char *data, size_t len,
+	int writeflag, void *);
+void dev_sgi_mte_init(struct memory *mem, uint64_t baseaddr, struct sgi_re_data *);
+// SGI O2 Rendering Engine:
+#define	DEV_SGI_DE_STATUS_LENGTH		0x1000
+int dev_sgi_de_access(struct cpu *cpu, struct memory *mem,
+	uint64_t relative_addr, unsigned char *data, size_t len,
+	int writeflag, void *);
+void dev_sgi_de_status_init(struct memory *mem, uint64_t baseaddr, struct sgi_re_data *);
+
 
 /*  dev_sgi_ip20.c:  */
 #define	DEV_SGI_IP20_LENGTH		0x40
@@ -416,11 +468,6 @@ int dev_sgi_ust_access(struct cpu *cpu, struct memory *mem,
 	uint64_t relative_addr, unsigned char *data, size_t len,
 	int writeflag, void *);
 void dev_sgi_ust_init(struct memory *mem, uint64_t baseaddr);
-#define	DEV_SGI_MTE_LENGTH		0x10000
-int dev_sgi_mte_access(struct cpu *cpu, struct memory *mem,
-	uint64_t relative_addr, unsigned char *data, size_t len,
-	int writeflag, void *);
-void dev_sgi_mte_init(struct memory *mem, uint64_t baseaddr);
 
 /*  dev_sii.c:  */
 #define	DEV_SII_LENGTH			0x100
@@ -466,6 +513,7 @@ struct lk201_data {
         int                     use_fb;
 	int			console_handle;
 
+        int                     (*space_available_in_queue)(void *,int);
         void                    (*add_to_rx_queue)(void *,int,int);
 	void			*add_data;
                 
@@ -474,12 +522,14 @@ struct lk201_data {
                         
         int                     mouse_mode;
         int                     mouse_revision;         /*  0..15  */  
-        int                     mouse_x, mouse_y, mouse_buttons;
+        int                     mouse_buttons;
 };
 void lk201_tick(struct machine *, struct lk201_data *); 
 void lk201_tx_data(struct lk201_data *, int port, int idata);
 void lk201_init(struct lk201_data *d, int use_fb,
-	void (*add_to_rx_queue)(void *,int,int), int console_handle, void *);
+	int (*space_available_in_queue)(void *,int),
+	void (*add_to_rx_queue)(void *,int,int),
+	int console_handle, void *);
 
 
 #endif	/*  DEVICES_H  */

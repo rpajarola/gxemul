@@ -2,7 +2,7 @@
 #define	DISKIMAGE_H
 
 /*
- *  Copyright (C) 2003-2011  Anders Gavare.  All rights reserved.
+ *  Copyright (C) 2003-2021  Anders Gavare.  All rights reserved.
  *
  *  Redistribution and use in source and binary forms, with or without
  *  modification, are permitted provided that the following conditions are met:
@@ -31,12 +31,14 @@
  *  Generic disk image functions.  (See diskimage.c for more info.)
  */
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <sys/types.h>
 
 #include "misc.h"
 
 /*  Diskimage types:  */
+#define	DISKIMAGE_UNKNOWN	0
 #define	DISKIMAGE_SCSI		1
 #define	DISKIMAGE_IDE		2
 #define	DISKIMAGE_FLOPPY	3
@@ -67,13 +69,17 @@ struct diskimage {
 	struct diskimage_overlay *overlays;
 
 	int		chs_override;
-	int		cylinders;
+	int64_t		cylinders;
 	int		heads;
-	int		sectors_per_track;
+	int64_t		sectors_per_track;
 
-	off_t		total_size;
-	int64_t		override_base_offset;
-	int		logical_block_size;
+	int		rpms;
+
+	int64_t		total_size;			// in bytes
+	int64_t		override_base_offset;		// in bytes
+	int		logical_block_size;		// in bytes
+
+	int64_t		nr_of_logical_blocks;		// in logical blocks
 
 	int		writable;
 	int		is_a_cdrom;
@@ -83,16 +89,6 @@ struct diskimage {
 	uint64_t	tape_offset;
 	int		tape_filenr;
 	int		filemark;
-
-	/*  SIMH .tap format: records with length headers, inline filemarks  */
-	int		tape_simh;
-	int		tape_sense_key;
-	int		tape_sense_flags;	/*  FM, EOM, ILI bits  */
-	int		tape_sense_info_valid;
-	int32_t		tape_sense_info;
-
-	int		rpms;
-	int		ncyls;
 };
 
 
@@ -144,8 +140,9 @@ int diskimage__internal_access(struct diskimage *d, int writeflag,
 	off_t offset, unsigned char *buf, size_t len);
 int diskimage_access(struct machine *machine, int id, int type, int writeflag,
 	off_t offset, unsigned char *buf, size_t len);
-void diskimage_add_overlay(struct diskimage *d, char *overlay_basename);
-void diskimage_recalc_size(struct diskimage *d);
+bool diskimage_add_overlay(struct diskimage *d, char *overlay_basename,
+	bool remove_after_open);
+bool diskimage_recalc_size(struct diskimage *d);
 int diskimage_exist(struct machine *machine, int id, int type);
 int diskimage_bootdev(struct machine *machine, int *typep);
 int diskimage_add(struct machine *machine, char *fname);

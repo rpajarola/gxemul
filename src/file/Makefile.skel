@@ -2,16 +2,17 @@
 #  Makefile for GXemul src/file
 #
 
-CXXFLAGS=$(CWARNINGS) $(COPTIM) $(DINCLUDE)
+CFLAGS=$(CWARNINGS) $(COPTIM) $(DINCLUDE)
 
 OBJS=file.o
 
 all: $(OBJS)
+	../../experiments/make_index.sh
 
 $(OBJS): Makefile
 
-file.o: file.cc file_aout.cc file_ecoff.cc file_elf.cc file_macho.cc \
-	file_raw.cc file_srec.cc
+file.o: file.c file_android.c file_aout.c file_ecoff.c file_elf.c \
+	file_macho.c file_raw.c file_srec.c
 
 
 clean:

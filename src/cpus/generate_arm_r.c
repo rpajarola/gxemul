@@ -59,9 +59,7 @@ void f(int s, int func, int only_name)
 
 	printf("uint32_t %s(struct cpu *cpu, struct arm_instr_call *ic)"
 	    " {\n", name);
-
-	/*  lsr #0 without S always returns 0, and does not need the pc.  */
-	if (pc && !(t == 2 && c == 0 && !s))
+	if (pc)
 		sync_pc();
 
 	switch (t) {

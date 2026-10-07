@@ -16,7 +16,7 @@
 
 <!--
 
-Copyright (C) 2003-2010  Anders Gavare.  All rights reserved.
+Copyright (C) 2003-2019  Anders Gavare.  All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -46,10 +46,9 @@ SUCH DAMAGE.
 <p><br>
 <ul>
   <li><a href="#hello">Hello world</a>
+  <li><a href="#testmachines">Test machines</a>
   <li><a href="#expdevices">Experimental devices</a>
 </ul>
-
-
 
 
 
@@ -58,11 +57,9 @@ SUCH DAMAGE.
 <a name="hello"></a>
 <h3>Hello world:</h3>
 
-<p>[ Note: This page is about the <font color="#dd2222"><b>LEGACY MODES</b></font> of GXemul. ]
-
 <p>You might want to use the emulator to develop programs on your own,
-not just run precompiled kernels such as NetBSD. To get started, I recommend
-that you do two things:
+not just run already existing operating system kernels such as NetBSD.
+To get started, I recommend that you do two things:
 
 <p>
 <ul>
@@ -81,30 +78,17 @@ code distribution, in the <a href="../demos/hello/"><tt>demos/hello/</tt></a>
 subdirectory. The README files in the demo directories have several 
 examples of how the demo programs can be built.
 
-<p>Once you have tried running the Hello World program from the command 
-line, e.g.<pre>
-	<b>gxemul -E oldtestmips hello_mips</b>
+<p>Once you have compiled the Hello World program into a binary,
+<tt>hello_mips</tt>, start it like this:
+<pre>
+	<b>gxemul -E testmips hello_mips</b>
 </pre>
-you can experiment with adding one or more of the following command line 
-options:
 
-<p><ul>
-  <li><b><tt>-t</tt></b>, to show a function call trace,
-  <li><b><tt>-i</tt></b>, to show instruction disassembly (for each
-	executed instruction),
-  <li>and finally <b><tt>-V</tt></b> to start the emulator in a "paused"
-	state.
-</ul>
+<p>Then you can experiment using the commands further up on this page.
 
 <p>If you start the emulator in the paused state, or if you press CTRL-C 
 during normal execution, you will end up with a <tt><b>GXemul></b></tt> 
-prompt. This is the built-in debugger.
-
-<p>Using the built-in debugger, you can single step (<tt><b>s</b></tt>), 
-show the current contents of the emulated registers (<tt><b>r</b></tt>),
-turn on/off the function call trace mode (<tt><b>trace</b></tt>), or 
-continue at full speed (<tt><b>c</b></tt>). Typing <tt><b>quit</b></tt> 
-exits the emulator.
+prompt.
 
 <p>Hopefully this is enough to get you inspired. :-)
 
@@ -114,19 +98,91 @@ exits the emulator.
 
 
 <p><br>
+<a name="testmachines"></a>
+<h3>Test machines:</h3>
+
+<p>The emulator has several modes where it doesn't emulate any real machine.
+It can either run in "bare" mode, where no devices are included by default
+(just the CPU), or in a "test" mode where some simple devices are 
+emulated. This can be used when developing e.g. operating systems, as a complement
+to targeting real machines.
+
+<p>The name of the test machine modes are <tt>testmips</tt>, <tt>testarm</tt>, etc.
+Run <tt>gxemul -H</tt> for an up-to-date list.
+
+
+<p>Here are some examples of guest OSes that use or (have used) the test machine modes:
+
+<p>
+<ul>
+	<li><p><a name="helenos">HelenOS:</a>
+		<br>Old versions of <a href="http://www.helenos.org/">HelenOS</a> can run in GXemul's
+			<tt>testarm</tt> and <tt>testmips</tt> machine modes.<pre>
+	<b>ftp <a href="http://www.helenos.org/releases/HelenOS-0.5.0-arm32-GXemul.boot">http://www.helenos.org/releases/HelenOS-0.5.0-arm32-GXemul.boot</a></b>
+  	<b>gxemul -X -E testarm HelenOS-0.5.0-arm32-GXemul.boot</b>
+
+	<b>ftp <a href="http://www.helenos.org/releases/HelenOS-0.5.0-mips32-GXemul.boot">http://www.helenos.org/releases/HelenOS-0.5.0-mips32-GXemul.boot</a></b>
+  	<b>gxemul -X -E testmips HelenOS-0.5.0-mips32-GXemul.boot</b></pre>
+
+	<p>
+	<li>FreeBSD/MIPS:
+		<br>For a while, testmips was <a href="http://web.archive.org/web/20180218123520/https://wiki.freebsd.org/FreeBSD/MipsEmulation">one of
+		the targets when developing the MIPS port of FreeBSD</a>.
+		See <a href="https://svnweb.freebsd.org/base?view=revision&revision=234920">revision 234920</a>
+		for more details. (The target was removed
+		<a href="https://reviews.freebsd.org/rS342256">in December
+		2018</a>; focus from now on is on the Malta board.)
+
+	<p>
+	<li><a name="glattmumk">Glatt MU/MK:</a>
+		<br>One of <a href="https://github.com/caladri/glatt">Glatt MU/MK</a>'s targets is <tt>testmips</tt>.
+
+	<p>
+	<li>MINIX 3.x:
+		<br><a href="http://yana.jp/20160811/computer/minix.ja.euc.html">http://yana.jp/20160811/computer/minix.ja.euc.html</a> indicates that an attempt was made
+		to port MINIX 3.x to testarm and testmips.
+
+	<p>
+	<li><a name="ycx5">YCX5:</a>
+		<br>One of <a href="http://gavare.se/ycx5/">YCX5</a>'s primary development targets is <tt>testmips</tt>.
+</ul>
+
+
+
+
+
+<p><br>
 <a name="expdevices"></a>
 <h3>Experimental devices:</h3>
 
-The emulator has several modes where it doesn't emulate any real machine.
-It can either run in "bare" mode, where no devices are included by default
-(just the CPU), or in a "test" mode where some simple devices are 
-emulated.
-
-<p>The test machines (<tt>oldtestmips</tt>, <tt>testppc</tt>, etc) have the
+<p>The test machines (<tt>testmips</tt>, <tt>testarm</tt>, etc) have the
 following experimental devices:
 
 <p>
 <center><table border="0" width="80%">
+
+  <tr>
+    <td align="left" valign="top" width="200">
+	<a name="expdevices_ram"><b><tt>ram</tt>:</b></a>
+	<p>The first 256 MB of RAM.
+	<br>Physical address:&nbsp&nbsp;<font color="#0000f0">0x00000000</font>
+    </td>
+    <td align="left" valign="top" width="25">&nbsp;</td>
+    <td align="left" valign="top">
+	<table border="0">
+	  <tr>
+	    <td align="left" valign="top"><i><u>Comment:</u></i></td>
+	  </tr>
+	  <tr>
+	    <td align="left" valign="top"></td>
+	  </tr>
+	</table>
+    </td>
+  </tr>
+
+  <tr height="15">
+    <td height="15">&nbsp;</td>
+  </tr>
 
   <tr>
     <td align="left" valign="top" width="200">
@@ -136,7 +192,7 @@ following experimental devices:
 	and receiving keypresses.
 	<p>Source code:&nbsp;&nbsp;<font color="#0000f0"><tt>src/devices/dev_cons.c</tt></font>
 	<p>Include file:&nbsp;&nbsp;<font color="#0000f0"><tt>dev_cons.h</tt></font>
-	<br>Default physical address:&nbsp&nbsp;<font color="#0000f0">0x10000000</font>
+	<br>Physical address:&nbsp&nbsp;<font color="#0000f0">0x10000000</font>
     </td>
     <td align="left" valign="top" width="25">&nbsp;</td>
     <td align="left" valign="top">
@@ -172,7 +228,7 @@ following experimental devices:
 	multi-processor system.
 	<p>Source code:&nbsp;&nbsp;<font color="#0000f0"><tt>src/devices/dev_mp.c</tt></font>
 	<p>Include file:&nbsp;&nbsp;<font color="#0000f0"><tt>dev_mp.h</tt></font>
-	<br>Default physical address:&nbsp&nbsp;<font color="#0000f0">0x11000000</font>
+	<br>Physical address:&nbsp&nbsp;<font color="#0000f0">0x11000000</font>
     </td>
     <td></td>
     <td align="left" valign="top">
@@ -274,10 +330,11 @@ following experimental devices:
     <td align="left" valign="top">
 	<a name="expdevices_fb"><b><tt>fb</tt>:</b></a>
 	<p>A simple linear framebuffer, for graphics output.
-	640 x 480 pixels, 3 bytes per pixel (red, green, blue, 8 bits each).
+	Initial resolution is 640 x 480 pixels, with 3 bytes per pixel
+	(red, green, blue, 8 bits each).
 	<p>Source code:&nbsp;&nbsp;<font color="#0000f0"><tt>src/devices/dev_fb.c</tt></font>
 	<p>Include file:&nbsp;&nbsp;<font color="#0000f0"><tt>dev_fb.h</tt></font>
-	<br>Default physical address:&nbsp&nbsp;<font color="#0000f0">0x12000000</font>
+	<br>Physical address:&nbsp&nbsp;<font color="#0000f0">0x12000000</font>
     </td>
     <td></td>
     <td align="left" valign="top">
@@ -287,9 +344,17 @@ following experimental devices:
 	    <td align="left" valign="top"><i><u>Effect:</u></i></td>
 	  </tr>
 	  <tr>
-	    <td align="left" valign="top"><tt>0x00000-</tt><br><tt>0xe0fff</tt></td>
+	    <td align="left" valign="top"><tt>0x00000000</tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
 	    <td align="left" valign="top">Read: read pixel values.
-		<br>Write: write pixel values.</td>
+		Write: write pixel values.</td>
+	  </tr>
+	  <tr>
+	    <td align="left" valign="top"><tt>0x00f00000</tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+	    <td align="left" valign="top">Read/Write: Control ports for changing the
+	    	resolution at runtime, etc. See <tt>dev_fb.h</tt> and
+	    	<tt>dev_fbctrl.cc</tt> for more details.
+	    	<p>If the resolution is read back as X=0 Y=0, then that
+	    	means that graphics is not used, only serial console.</td>
 	  </tr>
 	</table>
     </td>
@@ -307,7 +372,7 @@ following experimental devices:
 	write operations finish instantaneously.
 	<p>Source code:&nbsp;&nbsp;<font color="#0000f0"><tt>src/devices/dev_disk.c</tt></font>
 	<p>Include file:&nbsp;&nbsp;<font color="#0000f0"><tt>dev_disk.h</tt></font>
-	<br>Default physical address:&nbsp&nbsp;<font color="#0000f0">0x13000000</font>
+	<br>Physical address:&nbsp&nbsp;<font color="#0000f0">0x13000000</font>
     </td>
     <td></td>
     <td align="left" valign="top">
@@ -361,7 +426,7 @@ following experimental devices:
 	and receive packets on a simulated network.
 	<p>Source code:&nbsp;&nbsp;<font color="#0000f0"><tt>src/devices/dev_ether.c</tt></font>
 	<p>Include file:&nbsp;&nbsp;<font color="#0000f0"><tt>dev_ether.h</tt></font>
-	<br>Default physical address:&nbsp&nbsp;<font color="#0000f0">0x14000000</font>
+	<br>Physical address:&nbsp&nbsp;<font color="#0000f0">0x14000000</font>
     </td>
     <td></td>
     <td align="left" valign="top">
@@ -415,7 +480,7 @@ following experimental devices:
 	and to cause periodic interrupts.
 	<p>Source code:&nbsp;&nbsp;<font color="#0000f0"><tt>src/devices/dev_rtc.c</tt></font>
 	<p>Include file:&nbsp;&nbsp;<font color="#0000f0"><tt>dev_rtc.h</tt></font>
-	<br>Default physical address:&nbsp&nbsp;<font color="#0000f0">0x15000000</font>
+	<br>Physical address:&nbsp&nbsp;<font color="#0000f0">0x15000000</font>
     </td>
     <td></td>
     <td align="left" valign="top">
@@ -462,7 +527,7 @@ following experimental devices:
 	<p>An Interrupt Controller. (Note: Not used for the MIPS test machine.)
 	<p>Source code:&nbsp;&nbsp;<font color="#0000f0"><tt>src/devices/dev_irqc.c</tt></font>
 	<p>Include file:&nbsp;&nbsp;<font color="#0000f0"><tt>dev_irqc.h</tt></font>
-	<br>Default physical address:&nbsp&nbsp;<font color="#0000f0">0x16000000</font>
+	<br>Physical address:&nbsp&nbsp;<font color="#0000f0">0x16000000</font>
     </td>
     <td></td>
     <td align="left" valign="top">
@@ -505,9 +570,9 @@ some machines actually have simple linear framebuffers like this.)
 
 <p>If the physical address is <tt>0x10000000</tt>, then for MIPS that
 means that it can be accessed at virtual address
-<tt>0xffffffffb0000000</tt>. (Actually it can be accessed at
-<tt>0xffffffff90000000</tt> too, but devices should usually be accessed in
-a non-cached manner.)
+<tt>0xffffffffb0000000</tt>. (Using virtual address
+<tt>0xffffffff90000000</tt> may work in the emulator, but should be
+avoided, since devices should in general be accessed in a non-cached manner.)
 
 <p>When using the ARM or PPC test machines, the addresses are
 <tt>0x10000000</tt>, <tt>0x11000000</tt> etc., so no need to add any
@@ -543,7 +608,7 @@ what kind of IPI it was.
 <p><center>
 <table border="1">
 	<tr><td align="center">
-		<b><tt>oldtestmips</tt></b> (as native MIPS interrupts)
+		<b><tt>testmips</tt></b> (as native MIPS interrupts)
 	</td></tr>
 	<tr><td>
 		<table border="0">

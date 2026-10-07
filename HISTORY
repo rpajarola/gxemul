@@ -4625,3 +4625,430 @@ Changelog for GXemul:
 20140816	Fixing console.cc so that it doesn't complain about buffer
 		overrun when pasting a lot of data.
 
+==============  RELEASE 0.6.0.1  ==============
+
+20150312	Making old framework config files work again (@filename).
+20180203	Reviving the (dummy) Luna 88K machine mode from r5458.
+20180204	Continuing on LUNA 88K stuff; some initial fake PROM putchar
+		functionality for experimenting with OpenBSD/luna88k.
+20180205	Some initial OpenBSD/luna88k syscnputc() output works (hack).
+20180206	Adding enough of a hack to let OpenBSD/luna88k distinguish
+		between LUNA 88K and 88K2, by faking FUSE_ROM string.
+20180207	Adding a semi-broken framebuffer for LUNA 88K.
+20180208	Making the code build with reasonably modern GNU C++ (6.4)
+		and clang (3.4.1), although there are lots of warnings.
+		Updating NetBSD/pmax install instructions: 6.1.4 -> 7.1.1.
+20180209	Making OpenBSD/luna88k print some more things, by faking
+		more things in dev_luna88k.cc.
+20180214	Minor fixes for LUNA 88K.
+		88K disasm shows "nop" instead of "or r0,r0,r0" now.
+		OpenBSD/luna88k 5.2 (an older version) now reaches userland
+		:-) issuing syscalls, but not 6.2 yet :-( and since no
+		interrupts are implemented yet, it doesn't really do much.
+		Removing notes about "legacy modes" in the documentation,
+		since it was too ugly and those modes are pretty much the
+		main focus of end-users of GXemul still.
+20180219	Basic interrupt controller and timer interrupt for LUNA88K.
+20180220	Minor progress on the LUNA88K framebuffer.
+20180223	Serial controller interrupt progress for LUNA88K; some
+		interaction can be done with OpenBSD/luna88k ramdisk user-
+		land but it is shaky.
+20180302	Fixing bug in dev_mp when returning amount of memory (it
+		was truncated to 32 bits). Found during YCX5 development.
+20180410	Adding a dummy skeleton for an Intel i960 CPU component
+		using the new framework.
+20180418	Adding dummy skeletons for a Cyclone/VH (i960VH) evaluation
+		board, and the HP 700/RX X-terminal (i960CA).
+20180419	Implementing basic disassembly of some i960 instructions
+		(only the CTRL group so far), and basic register dump
+		functionality.
+20180420	i960 MEM and COBR instruction group disassembly has now
+		been implemented.
+20180422	Adding a simple b.out file loader for i960 binaries, but
+		no support for symbols yet.
+		Beginning to add some REG instruction disassembly (i960).
+20180423	Implementing the rest of i960CA REG instruction disasm.
+20180424	Beginning to implement i960 dyntrans instructions (a simple
+		'b' branch and a simple 'mov lit,reg' so far).
+20180428	Implementing happy case of an "lda" i960 instruction which has
+		an extra displacement word, i.e. non-standard dyntrans
+		instruction length.
+20180503	Implementing i960 lda with immediate 12-bit offset, and
+		dummy (nop) sysctl cache invalidation (msg type 0x01).
+20180613	Fixing an old TODO for invalidating translation caches when
+		using non-4KB pages for MIPS. This makes HelenOS 0.7.1/malta
+		boot further than before.
+20180614	Removing an old TODO regarding MIPS count/compare interrupts;
+		this causes HelenOS on Malta to run much faster (while
+		NetBSD/evbmips (malta) and /cobalt are not worse off than
+		before).
+		Updating NetBSD/evmbips and /cobalt installation instructions
+		to 7.1.2 (with a note about clock not being correct).
+		More work on the other-than-4KB bug fix.
+20180618	Doubling DEFAULT_DYNTRANS_CACHE_SIZE from 48 to 96 MB.
+		Updating more NetBSD install instructions to 7.1.2.
+20180619	When reading disk sectors from the 'disk' device (for e.g.
+		testmips), automatically move to the next sector after
+		reading (or writing).
+		Allow testmips programs to detect whether the X11 framebuffer
+		is in use or not (returns 0x0 as resolution if not).
+20180706	Adding a dummy VoCore machine skeleton using the old framework
+		(with the wrong CPU type 4KEc instead of 24K).
+20180707	Implementing the rorv (aka rotrv?) MIPS instruction.
+20180725	More clang fixes.
+20180726	Minor progress on booting Linux/VoCore. MIPS rdhwr CC is
+		implemented as reading the COP0_COUNT register.
+20180819	Applying a patch from Andreas Gustafsson (gson) for the MIPS
+		div and ddiv instructions, which checks for divide overflow
+		manually before doing the divide.
+20180820	Updating the Sprite/DECstation URLs.
+20180821	DECstation 5000/125 "3MIN" mode has been broken for quite
+		a while; attempting to rewrite/resurrect it.
+20180822	Rewrote/refactored enough of the dec_ioasic code to make the
+		5000/125's original PROM output its first boot messages again
+		(and NetBSD/pmax and OpenBSD/pmax too).
+20180823	Continuing on making 5000/125 emulation work again: rewriting
+		the interrupt code for the scc serial controller, and
+		connecting TURBOchannel graphics cards.
+		Fixing the LK201 keyboard self-test codes so that the 5000/125
+		PROM doesn't complain.
+
+==============  RELEASE 0.6.0.2  ==============
+
+20180910	Running the SGI O2 PROM works a little bit again, with some
+		hacks (updating the documentation).
+20180917	OpenBSD/landisk 6.3 guest OS install instruction update.
+20180918	Fixing a regression bug which was introduced September 2012
+		(svn r5805), regarding shifted immediate values, which caused
+		OpenBSD/cats to fail during install.
+20180920	Making ARM disassembly show THUMB instructions, if the lowest
+		bit of the address is 1. (They can not be executed yet though.)
+		Fixing broken "print" command. Oops.
+		Implement some more THUMB disassembly.
+		Fail rather than silently treating ARM instructions beginning
+		with 0xf as nops.
+		Allow the emulator to start in THUMB mode (lowest pc bit set).
+20180921        Continuing on ARM THUMB disassembly.
+		Beginning to implement very slow THUMB interpretation (not
+		dyntrans). Horrible performance-wise, but better than nothing.
+20180924	Oops, forgot to add machine_rpi.cc back in 20131006.
+20180925	Cleaning up some more files on make clean_all. Thanks to
+		Göran Weinholt for noticing.
+20180927	Fixing big-endian ARM loads/stores (except perhaps double-word
+		loads and stores); probably slows everything down a bit.
+20181001	Continuing on the slow THUMB instruction interpretation.
+20181008	Disk images added using -d for SGI modes are now SCSI, not IDE.
+		Importing newer crimereg.h and crmfbreg.h from NetBSD.
+20181009	Moving around SGI O2 graphics code, in preparation for making
+		more use of the "new" NetBSD defines.
+20181011	SGI O2 GBE now switches resolution if the OS wants it (i.e.
+		Linux/O2), rather than requiring a recompile.
+		Also, detection of Linux' "tweaked" (linear) mode, thus
+		avoiding a recompile when experimenting with Linux/O2.
+		NetBSD can now show some output on the O2 framebuffer too.
+20181012	Fixing a bug in the generic X11 framebuffer output, so that
+		scaledown is preserved even when a guest OS switches resultion
+		at runtime.
+		Continuing on the SGI O2 graphics; when the nr of tiles or
+		"partial pixels" is in mismatch with the screen resolution,
+		the skewed result now looks the same as on my real physical O2.
+20181013	More SGI O2 graphics work: TLBs. OpenBSD can now show graphical
+		console messages.
+20181015	Some more emulated O2 registers now return the same values as
+		my real O2 does.
+		Refactoring the O2 "output" to always be 24-bit, separate from
+		the emulated framebuffer tiles (which may be e.g. 8 bit).
+		NetBSD's colors (RG3B2 mode) are now probably more correct.
+		Changing from 64 to 128 MB ram for the O2; this matches what
+		my real O2 has, and it is now detected correctly both by OSes
+		and the PROM.
+		Implementing the O2's GBE cursor; both bitmap and crosshair
+		modes work exactly like on the real machine now.
+		Finally fixed the bug which caused scroll-up to not work when
+		running the O2's PROM.
+20181016	More work on the O2 graphics; managed to get rid of the Linux
+		tweaked special case rendering mode.
+		Splitting the O2 GBE into a GBE part and a Rendering Engine
+		part.
+20181017	Refactored the register representation in dev_sgi_ip32's crime
+		interrupt controller.
+		Adding a horrible hack to enable the use of a RAM_MIRROR at
+		0x40000000 (for SGI O2 emulation).
+20181018	Updating the OpenBSD/sgi installation instructions (still
+		in unsupported.html though, and still only diskless).
+20181019	Fixing some 8242 key encodings (used by the SGI O2 mode).
+		Better memory bank stuff for SGI O2 (128 vs 256 MB RAM).
+		Taking the FR bit of the MIPS status register into account to
+		use 64-bit floating point registers rather than pairs of 32-bit
+		registers (need for OpenBSD/sgi to work).
+		Moving OpenBSD/sgi from unsupported.html to guestoes.html.
+20181022	Fixing broken MACE interrupt mechanism for SGI O2.
+20181025	Implementing MTE_MODE_COPY in the SGI O2 memory transfer engine
+		to allow NetBSD to scroll up the framebuffer.
+		Made the pckbc work with NetBSD/sgimips.
+		Only allow SGI O2 MTE memory fills to pages that are in a TLB.
+20181026	Some cleanup and refactoring of the O2 rendering engine and 
+		other things.
+		ARCS environment fixes (better values for diskless booting).
+20181030	Updating NetBSD/sgimips guest OS instructions to version 8.0.
+		Some progress on the hw accelerated graphics operations used
+		by NetBSD/sgimips' Xorg driver.
+20181031	Better separation of pckbc scancode translation tables 1, 2,
+		and 3, and beginning to play around with PS/2 mouse movement.
+20181101	Fixes to the SGI O2 mec ethernet implementation's register
+		alignment to correctly support mixed 32/64-bit access.
+20181102	Adding some PHY/MII related parts of the O2 mec device (not
+		needed by NetBSD/OpenBSD it seems, but by the O2 PROM).
+20181106	Splitting SGI O2 rectangle drawing and line drawing into
+		separate parts; NetBSD/sgimips' Xorg now looks reasonable.
+20181107	Progress on PS/2 mouse emulation; NetBSD accepts it as "pms0
+		at macekbc0" in the SGI O2 emulation mode. (No actual host
+		mouse input yet though.)
+20181108	Implementing host X11 mouse input for the pckbc device.
+20181112	More work on the O2 rendering engine Raster Ops. Moving windows
+		within NetBSD's X11 now looks as it should.
+20181115	Changing the PCI product ID for the AIC7880 SCSI controller in
+		the SGI O2 emulation mode to match my real O2 (0x9004, 0x8078).
+20181120	Continuing on SGI O2 graphics: "overlays" (seem to always be
+		8 bits deep?).
+20181121	Getting rid of a hack in the O2 rendering code for "stipple
+		patterns", by looking at the "stipple mode" register.
+20181122	Fixing an old very annoying bug where floating point number
+		0x0 was interpreted as 2.22507e-308 rather than 0.0. Thanks to
+		Maya Rashish (coypu@SDF.ORG) for reporting the bug.
+20181203	Beginning on test/floatingpoint infrastructure. Fixing some
+		more floating point bugs.
+
+==============  RELEASE 0.6.1  ==============
+
+20181217	Implementing the ARM uxtb instruction.
+		Implementing a simple Android boot.img file loader, and two
+		dummy Android ARM machines ("Sony Xperia Mini" and "Finow X5
+		Air").
+		Treating ARM dsb/dmb/isb instructions as NOPs for now.
+20190101	Implementing the ARM v7 movt and movw instructions.
+20190103	Implementing the ARM sxth, uxth, bfi, and ubfx instructions.
+20190110	Adding disassembly (but not execution yet) of ARM uxtab, uxtah,
+		ldrex, and strex instructions.
+20190112	Making sure that when writing to mirrored RAM, any dyntrans
+		translations made in either the mirror or mirrored ranges are
+		invalidated.
+20190122	Beginning on a hack to allow emulated SGI O2 machines have more
+		than 256 MB of RAM. Works with OpenBSD/sgi so far.
+20190206	Implementing the ARM ldrex/strex (load-linked / store-
+		conditional) instructions, and mls (multiply-and-subtract).
+20190218	Implementing the ARM rev, uxtab, and uxtah instructions.
+20190224	Implementing the ARM sbfx instruction.
+20190227	Adding a skeleton RISC-V CPU and RISC-V "virt" machine.
+		Refactoring some parts of the new framework to deal better
+		with variable length instructions during disassembly.
+20190306	Applying a patch from Andreas Gustafsson (gson) to set the
+		SA_RESTART flag in the timer sigaction call.
+20190417	Applying most of NetBSD's patches for the gxemul package (all
+		except two).
+20190418	Adding 512 KB ROM at 0xfff80000 in the HP 700/RX machine.
+20190422	Implementing the i960 "mov reg,reg" instruction.
+20190502	Adding a section to the documentation about how to use the
+		emulator as a debugger (breakpoints, unassembling, single-
+		stepping, inspecting registers, and so on).
+20190515	Making sure that when invalidating virtual addresses in
+		the dyntrans cache, take into account that not all CPUs can
+		use all 64 bits for virtual addresses. This fixes a very old
+		bug which affected Glatt MU/MK. Unfortunate side effect means
+		that internal cache invalidation goes from O(1) to O(n) for
+		64-bit address spaces. :-(
+20190519	Better fix for the issue found four days ago, taking 32-bit
+		addressing (UX=0) on 64-bit MIPS CPUs into account. The cache
+		invalidation code is now O(1) again. :-)
+20190520	Unfortunately, to make everything work with all guest OSes
+		with many different kinds of CPUs (R3000, R4000, R10000),
+		the invalidation is now O(n) again, but it works.
+20190521	De-emphasizing the new framework in the man page and in the
+		help/usage message produced when running gxemul with no
+		arguments, focusing on the old/legacy framework.
+		Removing the MIPS CPU emulation and testmips machines from
+		the new framework completely. Any MIPS enhancements and bug
+		fixes will go into the old framework only.
+		Renaming oldtestmips back to testmips.
+20190523	Starting to move guest OS installation instructions into
+		individual machine pages, rather than having all of them
+		randomly in the general guest OS page.
+20190525	Adding detection of /opt/X11/{include,lib} in the configure
+		script, to build with X11 on MacOS with XQuartz installed
+		(thanks to eschatologist in the #GXemul IRC channel on
+		FreeNode for noticing this).
+20190530	Removing the "QEMU_MIPS" machine mode, which was useful back
+		in 2006 to compare performance against QEMU's MIPS emulation.
+20190601	The fix 2018-06-13 for translation invalidation when using
+		larger than 4 KB pages, which made HelenOS/malta run further,
+		caused a regressions which broke NetBSD/hpcmips (on VR4121
+		CPUs, which have 1 KB native page size). A bit of cleanup seems
+		to have fixed this, so that both NetBSD/hpcmips and
+		HelenOS/malta work now.
+		Applying a fix for the ARM sbc and rsc instructions from
+		Joergen Nilsson.
+20190606	Changing PCI device nr from 9 to 10 for the PIIX4 controller
+		in the Malta emulation mode, to match a real dmesg from
+		NetBSD/malta.
+		Fixing disassembly of the MIPS TGEI, TGEIU, TLTI, TLTIU, TEQI,
+		and TNEI instructions (NetBSD's pkgsrc patch had it wrong!).
+		Implementing the MIPS TGEI, TGEIU, TLTI, TLTIU, TEQI, and TNEI
+		instructions (but have not really tested them).
+		Updating NetBSD/evbmips (Malta) installation instructions from
+		7.1.2 to 8.0 (which needs the tgeiu instruction to boot).
+		Fixing pmax bootpath bug (thanks for Andreas Gustafsson for 
+		figuring out what the problem was).
+20190610	Adding a memory range (ROM) dumping tool for HP 700/RX to the
+		experiments directory.
+20190611	Expanding the MIPS lw/sw 2-, 3-, and 4-instruction combinations
+		(when loading/storing using the same base register) so that
+		they are used also when emulating 64-bit CPUs such as the
+		R4400. (Note: still lw/sw, i.e. 32-bit loads and stores, NOT
+		ld/sd.)  Also stretching it to 5-instruction-sequences.
+20190614	Adding __builtin_expect (likely/unlikely) detection to the
+		configure script.
+
+==============  RELEASE 0.6.2  ==============
+
+20190626	Rounding up disk image sizes to full cylinders; fixes a bug
+		where guest OSes could fail to read the end of e.g. a .tar.gz
+		file supplied as a disk image on the command line.
+20201006	Applying a rather large patch from Jason Thorpe for using
+		/dev/tap devices in addition to the existing networking modes.
+		The patch also consists of enhancements to the DEC21143 and
+		Lance ethernet devices to perform packet filtering.
+20201015	Adding support for masks for memory mapped components in the
+		new framework. Used so far by the HP 700/RX, which has 2 MB
+		RAM repeated throughout 0x30000000..0x3fffffff.
+20201101	bootblock.cc now parses SGI disk boot blocks, and tries to
+		load the OSLoader (sash), if booting without an explicitly
+		provided OS kernel.
+20201103	The ECOFF file loader can now (barely) load relocated binaries,
+		such as "sash" from an IRIX installation on my real O2.
+20201105	Some minor refactoring of arcbios environment variables etc,
+		to attempt to get emulated O2 boot-from-disk image (or cdrom
+		image) to work better.
+20210116	Include ASID and VPN2 in MIPS load/store misalignment
+		exceptions (patch from Nick Hudson).
+20210123	Adding a patch from Luchezar Georgiev for missing variant of
+		rot for 88100 (immediate argument), and for missing addu_cio
+		and subu_cio instructions.
+		Inspired by Luchezar Georgiev's patch for subu_cio, a closer
+		look at the subu borrow bit resulted in a bug fix which finally
+		allows a OpenBSD/luna88k 6.8 ramdisk to boot all the way to
+		userland.
+20210127	Writing some ugly glue code to connect the Lance Ethernet
+		device (dev_le) to the LUNA88K machine. An OpenBSD/luna88k 6.8
+		ramdisk can now (barely) reach the internet using TCP/IPv4.
+20210130	Writing guest OS install instructions for running OpenBSD/
+		luna88k with root-on-nfs, which involves using NetBSD/pmax as
+		an NFS server and OpenBSD/sgi (!) to run MAKEDEV.
+20210207	Fixing a spelling mistake in the 88K fdiv.sss instruction,
+		making self-compilation of [an older version of] GXemul inside
+		OpenBSD/luna88k get further.
+20210209	Adding keyboard support to dev_luna88k.
+20210213	Implementing exception cases in 88K xmem_slow implementation.
+20210214	Implementing the fdiv.dss 88K instruction.
+20210215	Implementing the fsub.sss 88K instruction.
+
+==============  RELEASE 0.6.3  ==============
+
+20210215	Implementing the fadd.dss 88K instruction, and working a bit
+		more on the exception cases in the xmem instruction.
+20210220	Implementing mouse emulation support for the LUNA88K machine.
+		Updating OpenBSD/sgi install instructions (6.5 -> 6.8),
+		and including a screenshot of X11 running.
+20210221	Handle return values from interrupted select() when checking
+		for available console input. (Found when using CTRL-C on Linux
+		to enter the debugger command line, and noticed that it was
+		spuriously broken.)
+20210222	Basic multiprocessor bootup of OpenBSD/luna88k now works, but
+		it is slightly unstable.
+
+==============  RELEASE 0.6.3.1  ==============
+
+20210228	Switching back from C++ to plain C.
+		Implementing a helper method for registering device addresses
+		as symbols (so that it can be used from several machines).
+20210307	Subtle colorized output when stdin/stdout are connected to a
+		tty, to make it quicker to interpret text output. Enabled with
+		-G or by setting the CLICOLOR environment variable. Can be
+		disabled with -A.
+20210309	Beginning to separate debug messages into subsystems, that have
+		individual verbosity levels.
+		Making -K work more consistently (enter the debugger at the
+		end of a run). -V implies -K.
+		Making -T work better for M88K (breaking into the debugger
+		directly on bad memory accesses, if -K is used).
+20210310	All MIPS machines now register their devices as symbols (based
+		in kseg1, i.e. 0xffffffffa0000000).
+20210311	Making -T work better for MIPS, PPC, ARM, and SuperH.
+20210314	Adding a -L command line option for enabling tap networking
+		without using configuration files.
+		-x is now needed if one wants separate xterm windows for serial
+		I/O when using configuration files with a single machine.
+20210316	debugmsg subsystems can now be registered at runtime; this is
+		so far done from the Lance Ethernet device.
+		Adding a 'verbosity' debugger command for inspecting and
+		setting the verbosity level for individual subsystems.
+20210318	Fixing an annoying 'backspace' bug in the debugger command
+		line handling, where the response sometimes could become
+		"unknown command ''".
+		Implementing CTRL-W (erase word) in the debugger.
+		Implementing CTRL-T (SIGINFO-like status line) in the debugger.
+20210320	Removing the UNSTABLE_DEVEL configure define; it was not used
+		much, and the debugmsg verbosity levels can be used in its
+		place.
+		Fixing a bug for MIPS R2000/R3000 when writing to coprocessor 0
+		"entrylo" register (if the lowest 8 bits were 0, the code took
+		the non-R2000/R3000 code path).
+20210321	Adding an empty i960 CPU skeleton [again].
+		Moving 'arch' from struct machine to struct cpu; in the future,
+		perhaps this would allow a machine to have heterogenous CPU
+		sets (such as the Dreamcast with both SuperH and ARM).
+		Removing "slow_serial_interrupts_hack_for_linux" (-U) command
+		line option, since it is not used for most guest OSes, and
+		occupied a command line option char.
+20210323	Breaking out the mb89352 SCSI Protocol Controller from the
+		luna88k device, and beginning to implement it. Works well
+		enough for OpenBSD's "boot" to read the disk and load the
+		kernel, but not well enough for the kernel to like it.
+20210324	Adding support for 00 99 01 07 variant of luna88k a.out.
+20210325	The mb89352 SCSI controller uses its own subsystem for debug
+		messages.
+20210327	Adding an empty RISC-V CPU skeleton [again].
+		Implementing enough of the mb89352 to allow OpenBSD/luna88k
+		to boot with SCSI (both the boot loader and the kernel)!
+20210401	Applying a patch from George Matsumura to make things build
+		better on Linux: __attribute__((__packed__));  in bootblock.h.
+20210405	Adding hardcoded boot_unit=0 and boot_partition=0 NVRAM
+		variables to the LUNA-88K machine, allowing OpenBSD/luna88k
+		to boot from disk without asking for root and swap partitions.
+		Adding 'R' (upper-case) disk image prefix, as a shorthand for
+		creating temporary overlays.
+20210407	Code for idling the host processor has been moved out from
+		individual CPU implementations to the main emul loop.
+		Implementing an X11 mouse pointer grab mechanism. Grab is
+		activated by clicking in a framebuffer window, and released
+		using left CTRL + ALT. When grab is active, the host mouse
+		cursor is hidden and the window caption changes to indicate
+		that grab is active.
+20210408	Implementing an unusual 88K "not_maxneg_nor_zero" bcnd
+		condition.
+20210409	Moving the LUNA88K framebuffer to its own device file.
+		Beginning to implement the LUNA88K front panel LCD.
+		Also fixing a bug where the rightmost pixel (or 8 pixels in
+		the case of monochrome) were not drawn.
+20210410	Also check for X11R7 in the configure script, in addition
+		to X11R6.
+20210417	Porting over i960CA disassembly from the C++ framework.
+20210418	More i960 stuff, including re-adding the (so far dummy)
+		Cyclone VH machine.
+		Assuming availabilty of __func__ (C99 standard).
+20210422	Enabling idle detection for OpenBSD/luna88k, which uses a
+		bcnd.n instruction. A hack, but it seems to work.
+		Fixing a bug where console input could randomly be lost when
+		idling, if there were multiple emulated serial ports.
+
+==============  RELEASE 0.7.0  ==============
+

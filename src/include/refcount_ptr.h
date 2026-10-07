@@ -2,7 +2,7 @@
 #define	REFCOUNT_PTR_H
 
 /*
- *  Copyright (C) 2007-2010  Anders Gavare.  All rights reserved.
+ *  Copyright (C) 2007-2019  Anders Gavare.  All rights reserved.
  *
  *  Redistribution and use in source and binary forms, with or without
  *  modification, are permitted provided that the following conditions are met:
@@ -29,12 +29,11 @@
  */
 
 
-#include <cstdlib>
-
-
 template <class T>
 class refcount_ptr;
 
+
+#include <stddef.h>
 
 /**
  * \brief Base class for reference countable objects.
@@ -78,7 +77,7 @@ public:
 	{
 		if (m_refCount != 0) {
 			std::cerr << "TODO: ~ReferenceCountable count != 0!\n";
-			abort();
+			std::terminate();
 		}
 	}
 

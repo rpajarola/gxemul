@@ -2,7 +2,7 @@
 #define	CPU_M88K_H
 
 /*
- *  Copyright (C) 2007-2010  Anders Gavare.  All rights reserved.
+ *  Copyright (C) 2007-2021  Anders Gavare.  All rights reserved.
  *
  *  Redistribution and use in source and binary forms, with or without
  *  modification, are permitted provided that the following conditions are met:
@@ -195,8 +195,13 @@ DYNTRANS_MISC_DECLARATIONS(m88k,M88K,uint32_t)
 #define	M88K_EXCEPTION_ILLEGAL_INTEGER_DIVIDE		8
 #define	M88K_EXCEPTION_INTEGER_OVERFLOW			9
 #define	M88K_EXCEPTION_ERROR				10
+#define	M88K_EXCEPTION_NMI				11
+#define	M88K_EXCEPTION_DATA_MMU_READ_MISS		12
+#define	M88K_EXCEPTION_DATA_MMU_WRITE_MISS		13
+#define	M88K_EXCEPTION_INSTRUCTION_MMU_ATC_MISS		14
 #define	M88K_EXCEPTION_SFU1_PRECISE			114
 #define	M88K_EXCEPTION_SFU1_IMPRECISE			115
+#define	M88K_EXCEPTION_SFU2_GRAPHICS			116
 #define	M88K_EXCEPTION_USER_TRAPS_START			128
 
 /*  A reserved/unimplemented instruction, used for PROM calls:  */
@@ -280,7 +285,7 @@ void m88k_invalidate_translation_caches(struct cpu *cpu, uint64_t, int);
 void m88k_invalidate_code_translation(struct cpu *cpu, uint64_t, int);
 int m88k_memory_rw(struct cpu *cpu, struct memory *mem, uint64_t vaddr,
 	unsigned char *data, size_t len, int writeflag, int cache_flags);
-int m88k_cpu_family_init(struct cpu_family *);
+void m88k_cpu_family_init(struct cpu_family *);
 void m88k_ldcr(struct cpu *cpu, uint32_t *r32ptr, int cr);
 void m88k_stcr(struct cpu *cpu, uint32_t value, int cr, int rte);
 void m88k_fstcr(struct cpu *cpu, uint32_t value, int fcr);
