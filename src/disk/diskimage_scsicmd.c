@@ -33,7 +33,7 @@
  *  TODO:  scsi_transfer_free could save away previous allocations, and
  *         scsi_transfer_allocbuf could reuse them (for given sizes).
  *
- *  TODO:  There's probably a bug in the tape support:
+ *  TODO:  There's probably a bug in the (raw, non-SIMH) tape support:
  *         Let's say there are 10240 bytes left in a file, and 10240
  *         bytes are read. Then feof() is not true yet (?), so the next
  *         read will also return 10240 bytes (but all zeroes), and then after
@@ -197,6 +197,301 @@ static void diskimage__switch_tape(struct diskimage *d)
 		/*  TODO: return error  */
 	}
 	d->tape_offset = 0;
+}
+
+
+/*
+ *  SIMH .tap format tape images:
+ *
+ *  Each data record (tape block) is stored as a 32-bit little-endian
+ *  length, the data (padded to an even number of bytes), and the length
+ *  again. A length of zero is a filemark, 0xffffffff marks end of medium,
+ *  and 0xfffffffe is an erase gap. The top 4 bits of a length are a class
+ *  (0 = good data, 8 = bad data, 0xf = reserved marker, others = private).
+ */
+#define	SIMH_TAPE_MARK		0x00000000
+#define	SIMH_TAPE_GAP		0xfffffffe
+#define	SIMH_TAPE_EOM		0xffffffff
+#define	SIMH_TAPE_LEN_MASK	0x0fffffff
+
+#define	TAPE_REC_DATA		0
+#define	TAPE_REC_FILEMARK	1
+#define	TAPE_REC_EOM		2
+#define	TAPE_REC_BOT		3
+
+#define	SENSE_KEY_NO_SENSE	0x00
+#define	SENSE_KEY_BLANK_CHECK	0x08
+#define	SENSE_FLAG_FILEMARK	0x80
+#define	SENSE_FLAG_EOM		0x40
+#define	SENSE_FLAG_ILI		0x20
+
+
+static int simh_tape_read_marker(struct diskimage *d, uint64_t ofs,
+	uint32_t *markerp)
+{
+	unsigned char buf[4];
+
+	if (d->f == NULL || fseeko(d->f, ofs, SEEK_SET) != 0 ||
+	    fread(buf, 1, 4, d->f) != 4)
+		return 0;
+
+	*markerp = buf[0] + (buf[1] << 8) + (buf[2] << 16) +
+	    ((uint32_t)buf[3] << 24);
+	return 1;
+}
+
+
+/*
+ *  simh_tape_forward():
+ *
+ *  Moves past the next record or filemark. For data records, the record
+ *  length and the offset of the data in the image file are returned.
+ *  At end of medium, the position is not changed.
+ */
+static int simh_tape_forward(struct diskimage *d, uint32_t *lenp,
+	uint64_t *data_ofsp)
+{
+	uint32_t marker, len;
+	int recclass;
+
+	for (;;) {
+		if (!simh_tape_read_marker(d, d->tape_offset, &marker) ||
+		    marker == SIMH_TAPE_EOM)
+			return TAPE_REC_EOM;
+
+		if (marker == SIMH_TAPE_MARK) {
+			d->tape_offset += 4;
+			d->tape_filenr ++;
+			return TAPE_REC_FILEMARK;
+		}
+
+		recclass = marker >> 28;
+		if (recclass == 0xf) {
+			/*  Erase gap or other reserved marker  */
+			d->tape_offset += 4;
+			continue;
+		}
+
+		len = marker & SIMH_TAPE_LEN_MASK;
+		*lenp = len;
+		*data_ofsp = d->tape_offset + 4;
+		d->tape_offset += 8 + ((len + 1) & ~1);
+
+		/*  Skip private records; return good and bad data.  */
+		if (recclass == 0 || recclass == 8)
+			return TAPE_REC_DATA;
+	}
+}
+
+
+/*
+ *  simh_tape_backward():
+ *
+ *  Moves backwards past the previous record or filemark.
+ */
+static int simh_tape_backward(struct diskimage *d)
+{
+	uint32_t marker, len;
+	uint64_t reclen;
+	int recclass;
+
+	for (;;) {
+		if (d->tape_offset < 4 || !simh_tape_read_marker(d,
+		    d->tape_offset - 4, &marker)) {
+			d->tape_offset = 0;
+			return TAPE_REC_BOT;
+		}
+
+		if (marker == SIMH_TAPE_MARK) {
+			d->tape_offset -= 4;
+			d->tape_filenr --;
+			return TAPE_REC_FILEMARK;
+		}
+
+		recclass = marker >> 28;
+		if (recclass == 0xf) {
+			d->tape_offset -= 4;
+			continue;
+		}
+
+		len = marker & SIMH_TAPE_LEN_MASK;
+		reclen = 8 + ((len + 1) & ~1);
+		if (reclen > d->tape_offset) {
+			d->tape_offset = 0;
+			return TAPE_REC_BOT;
+		}
+		d->tape_offset -= reclen;
+
+		if (recclass == 0 || recclass == 8)
+			return TAPE_REC_DATA;
+	}
+}
+
+
+/*
+ *  tape_check_condition():
+ *
+ *  Returns CHECK CONDITION status, and remembers the sense data to return
+ *  on the following REQUEST SENSE.
+ */
+static void tape_check_condition(struct diskimage *d,
+	struct scsi_transfer *xferp, int key, int flags, int32_t info)
+{
+	xferp->status[0] = 0x02;	/*  CHECK CONDITION  */
+
+	d->tape_sense_key = key;
+	d->tape_sense_flags = flags;
+	d->tape_sense_info_valid = 1;
+	d->tape_sense_info = info;
+}
+
+
+/*
+ *  diskimage__simh_tape_read():
+ *
+ *  READ from a SIMH-format tape. In variable block mode, exactly one
+ *  record is read, no matter how short it is. In fixed block mode, each
+ *  of the requested blocks is one record of logical_block_size bytes.
+ */
+static void diskimage__simh_tape_read(struct diskimage *d,
+	struct scsi_transfer *xferp)
+{
+	int fixed = xferp->cmd[1] & 0x01, sili = xferp->cmd[1] & 0x02;
+	uint32_t count = (xferp->cmd[2] << 16) + (xferp->cmd[3] << 8) +
+	    xferp->cmd[4];
+	uint32_t blocksize = fixed? d->logical_block_size : count;
+	uint32_t nblocks = fixed? count : 1;
+	uint32_t i, reclen, n;
+	uint64_t data_ofs;
+	size_t done = 0, got;
+	int res;
+
+	diskimage__return_default_status_and_message(xferp);
+
+	debug(" READ tape, id=%i file=%i, cmd[1]=%02x count=%i ofs=%lli\n",
+	    d->id, d->tape_filenr, xferp->cmd[1], (int)count,
+	    (long long)d->tape_offset);
+
+	/*  A transfer length of zero is not an error, and moves nothing.  */
+	if (count == 0)
+		return;
+
+	scsi_transfer_allocbuf(&xferp->data_in_len, &xferp->data_in,
+	    (size_t)nblocks * blocksize, 1);
+
+	for (i = 0; i < nblocks; i++) {
+		res = simh_tape_forward(d, &reclen, &data_ofs);
+
+		if (res == TAPE_REC_FILEMARK) {
+			tape_check_condition(d, xferp, SENSE_KEY_NO_SENSE,
+			    SENSE_FLAG_FILEMARK, fixed? nblocks - i : count);
+			break;
+		}
+		if (res != TAPE_REC_DATA) {
+			tape_check_condition(d, xferp, SENSE_KEY_BLANK_CHECK,
+			    0, fixed? nblocks - i : count);
+			break;
+		}
+
+		n = reclen < blocksize? reclen : blocksize;
+		got = 0;
+		if (n > 0 && fseeko(d->f, data_ofs, SEEK_SET) == 0)
+			got = fread(xferp->data_in + done, 1, n, d->f);
+		if (got < n)
+			fatal("[ tape id %i: short record data at ofs %lli ]\n",
+			    d->id, (long long)data_ofs);
+		done += n;
+
+		if (reclen != blocksize) {
+			/*  Incorrect length. The tape is still positioned
+			    after the whole record.  */
+			if (fixed)
+				tape_check_condition(d, xferp,
+				    SENSE_KEY_NO_SENSE, SENSE_FLAG_ILI,
+				    nblocks - i);
+			else if (reclen > blocksize || !sili)
+				tape_check_condition(d, xferp,
+				    SENSE_KEY_NO_SENSE, SENSE_FLAG_ILI,
+				    (int32_t)(blocksize - reclen));
+			break;
+		}
+	}
+
+	/*  Only the data actually read from the tape is returned.  */
+	xferp->data_in_len = done;
+}
+
+
+/*
+ *  diskimage__simh_tape_space():
+ *
+ *  SPACE on a SIMH-format tape: over blocks (code 0), filemarks (code 1),
+ *  or to end of data (code 3).
+ */
+static void diskimage__simh_tape_space(struct diskimage *d,
+	struct scsi_transfer *xferp)
+{
+	int code = xferp->cmd[1] & 7;
+	int32_t count = (xferp->cmd[2] << 16) + (xferp->cmd[3] << 8) +
+	    xferp->cmd[4];
+	int32_t todo, done = 0, sign = 1;
+	uint32_t reclen;
+	uint64_t data_ofs;
+	int res = TAPE_REC_DATA;
+
+	diskimage__return_default_status_and_message(xferp);
+
+	/*  Negative counts space backwards:  */
+	if (count & (1 << 23)) {
+		count -= 1 << 24;
+		sign = -1;
+	}
+	todo = count * sign;
+
+	switch (code) {
+
+	case 0:	/*  Blocks  */
+	case 1:	/*  Filemarks  */
+		while (done < todo) {
+			res = sign > 0? simh_tape_forward(d, &reclen, &data_ofs)
+			    : simh_tape_backward(d);
+
+			if (res == (code == 0? TAPE_REC_DATA :
+			    TAPE_REC_FILEMARK)) {
+				done ++;
+				continue;
+			}
+
+			if (res == TAPE_REC_FILEMARK) {
+				/*  Filemark while spacing over blocks  */
+				tape_check_condition(d, xferp,
+				    SENSE_KEY_NO_SENSE, SENSE_FLAG_FILEMARK,
+				    (todo - done) * sign);
+				break;
+			}
+			if (res == TAPE_REC_EOM) {
+				tape_check_condition(d, xferp,
+				    SENSE_KEY_BLANK_CHECK, 0,
+				    (todo - done) * sign);
+				break;
+			}
+			if (res == TAPE_REC_BOT) {
+				tape_check_condition(d, xferp,
+				    SENSE_KEY_NO_SENSE, SENSE_FLAG_EOM,
+				    (todo - done) * sign);
+				break;
+			}
+		}
+		break;
+
+	case 3:	/*  End of data  */
+		while (simh_tape_forward(d, &reclen, &data_ofs) != TAPE_REC_EOM)
+			;
+		break;
+
+	default:
+		fatal("[ diskimage: unimplemented SPACE type %i ]\n", code);
+	}
 }
 
 
@@ -568,6 +863,11 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 	case SCSICMD_READ_10:
 		debug("READ");
 
+		if (d->is_a_tape && d->tape_simh) {
+			diskimage__simh_tape_read(d, xferp);
+			break;
+		}
+
 		/*
 		 *  For tape devices, read data at the current position.
 		 *  For disk and CDROM devices, the command bytes contain
@@ -793,6 +1093,24 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		if (d->filemark) {
 			xferp->data_in[2] = 0x80;
 		}
+
+		if (d->is_a_tape && d->tape_simh) {
+			xferp->data_in[2] = d->tape_sense_flags |
+			    d->tape_sense_key;
+			if (d->tape_sense_info_valid) {
+				xferp->data_in[3] = d->tape_sense_info >> 24;
+				xferp->data_in[4] = d->tape_sense_info >> 16;
+				xferp->data_in[5] = d->tape_sense_info >> 8;
+				xferp->data_in[6] = d->tape_sense_info;
+			} else
+				xferp->data_in[0] = 0x70;
+
+			/*  Sense data is only reported once.  */
+			d->tape_sense_key = SENSE_KEY_NO_SENSE;
+			d->tape_sense_flags = 0;
+			d->tape_sense_info_valid = 0;
+			d->tape_sense_info = 0;
+		}
 		debug(": [2]=0x%02x ", xferp->data_in[2]);
 
 		printf(" XXX(!) \n");
@@ -860,6 +1178,9 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		d->tape_offset = 0;
 		d->tape_filenr = 0;
 		d->filemark = 0;
+		d->tape_sense_key = SENSE_KEY_NO_SENSE;
+		d->tape_sense_flags = 0;
+		d->tape_sense_info_valid = 0;
 
 		diskimage__return_default_status_and_message(xferp);
 		break;
@@ -884,6 +1205,11 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		    xferp->cmd[3],
 		    xferp->cmd[4],
 		    xferp->cmd[5]);
+
+		if (d->is_a_tape && d->tape_simh) {
+			diskimage__simh_tape_space(d, xferp);
+			break;
+		}
 
 		switch (xferp->cmd[1] & 7) {
 		case 1:	/*  Seek to a different file nr:  */
