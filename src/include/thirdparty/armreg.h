@@ -700,7 +700,9 @@ arm_cond_ok_p(uint32_t insn, uint32_t psr)
 }
 #endif /* !__ASSEMBLER && _KERNEL */
 
-#if !defined(__ASSEMBLER__) && !defined(_RUMPKERNEL)
+/*  Inline helpers for accessing the registers of the host CPU; only
+    usable when GXemul itself runs on 32-bit ARM.  */
+#if !defined(__ASSEMBLER__) && !defined(_RUMPKERNEL) && defined(__arm__)
 #define	ARMREG_READ_INLINE(name, __insnstring)			\
 static inline uint32_t armreg_##name##_read(void)		\
 {								\
@@ -1028,7 +1030,7 @@ gtmr_cntv_cval_read(void)
 }
 
 #endif /* _KERNEL */
-#endif /* !__ASSEMBLER && !_RUMPKERNEL */
+#endif /* !__ASSEMBLER && !_RUMPKERNEL && __arm__ */
 
 #elif defined(__aarch64__)
 

@@ -81,7 +81,7 @@ static void file_load_elf(struct machine *m, struct memory *mem,
 	FILE *f;
 	uint64_t eentry;
 	int len, i, ok;
-	int elf64, encoding, eflags;
+	int elf64, encoding;
 	int etype, emachine;
 	int ephnum, ephentsize, eshnum, eshentsize;
 	off_t ephoff, eshoff;
@@ -146,7 +146,6 @@ static void file_load_elf(struct machine *m, struct memory *mem,
 
 	if (elf64) {
 		unencode(etype,      &hdr64.e_type,      Elf64_Quarter);
-		unencode(eflags,     &hdr64.e_flags,     Elf64_Half);
 		unencode(emachine,   &hdr64.e_machine,   Elf64_Quarter);
 		unencode(eentry,     &hdr64.e_entry,     Elf64_Addr);
 		unencode(ephnum,     &hdr64.e_phnum,     Elf64_Quarter);
@@ -171,7 +170,6 @@ static void file_load_elf(struct machine *m, struct memory *mem,
 		}
 	} else {
 		unencode(etype,      &hdr32.e_type,      Elf32_Half);
-		unencode(eflags,     &hdr32.e_flags,     Elf32_Word);
 		unencode(emachine,   &hdr32.e_machine,   Elf32_Half);
 		unencode(eentry,     &hdr32.e_entry,     Elf32_Addr);
 		unencode(ephnum,     &hdr32.e_phnum,     Elf32_Half);
@@ -355,8 +353,6 @@ static void file_load_elf(struct machine *m, struct memory *mem,
 		uint64_t p_paddr;
 		uint64_t p_filesz;
 		uint64_t p_memsz;
-		int p_flags;
-		int p_align;
 		int allRead;
 
 		fseek(f, ephoff + i * ephentsize, SEEK_SET);
@@ -364,13 +360,11 @@ static void file_load_elf(struct machine *m, struct memory *mem,
 		if (elf64) {
 			allRead = fread(&phdr64, 1, sizeof(Elf64_Phdr), f) == sizeof(Elf64_Phdr);
 			unencode(p_type,    &phdr64.p_type,    Elf64_Half);
-			unencode(p_flags,   &phdr64.p_flags,   Elf64_Half);
 			unencode(p_offset,  &phdr64.p_offset,  Elf64_Off);
 			unencode(p_vaddr,   &phdr64.p_vaddr,   Elf64_Addr);
 			unencode(p_paddr,   &phdr64.p_paddr,   Elf64_Addr);
 			unencode(p_filesz,  &phdr64.p_filesz,  Elf64_Xword);
 			unencode(p_memsz,   &phdr64.p_memsz,   Elf64_Xword);
-			unencode(p_align,   &phdr64.p_align,   Elf64_Xword);
 		} else {
 			allRead = fread(&phdr32, 1, sizeof(Elf32_Phdr), f) == sizeof(Elf32_Phdr);
 			unencode(p_type,    &phdr32.p_type,    Elf32_Word);
@@ -379,8 +373,6 @@ static void file_load_elf(struct machine *m, struct memory *mem,
 			unencode(p_paddr,   &phdr32.p_paddr,   Elf32_Addr);
 			unencode(p_filesz,  &phdr32.p_filesz,  Elf32_Word);
 			unencode(p_memsz,   &phdr32.p_memsz,   Elf32_Word);
-			unencode(p_flags,   &phdr32.p_flags,   Elf32_Word);
-			unencode(p_align,   &phdr32.p_align,   Elf32_Word);
 		}
 
 		if (!allRead) {
@@ -494,8 +486,8 @@ static void file_load_elf(struct machine *m, struct memory *mem,
 	 */
 
 	for (i=0; i<eshnum; i++) {
-		int sh_name, sh_type, sh_flags, sh_link, sh_info, sh_entsize;
-		uint64_t sh_addr, sh_size, sh_addralign;
+		int sh_type, sh_entsize;
+		uint64_t sh_size;
 		off_t sh_offset;
 		int n_entries;	/*  for reading the symbol / string tables  */
 
@@ -510,16 +502,9 @@ static void file_load_elf(struct machine *m, struct memory *mem,
 				fprintf(stderr, "couldn't read header\n");
 				exit(1);
 			}
-			unencode(sh_name,    &shdr64.sh_name, Elf64_Half);
 			unencode(sh_type,    &shdr64.sh_type, Elf64_Half);
-			unencode(sh_flags,   &shdr64.sh_flags, Elf64_Xword);
-			unencode(sh_addr,    &shdr64.sh_addr, Elf64_Addr);
 			unencode(sh_offset,  &shdr64.sh_offset, Elf64_Off);
 			unencode(sh_size,    &shdr64.sh_size, Elf64_Xword);
-			unencode(sh_link,    &shdr64.sh_link, Elf64_Half);
-			unencode(sh_info,    &shdr64.sh_info, Elf64_Half);
-			unencode(sh_addralign, &shdr64.sh_addralign,
-			    Elf64_Xword);
 			unencode(sh_entsize, &shdr64.sh_entsize, Elf64_Xword);
 		} else {
 			len = fread(&shdr32, 1, sizeof(Elf32_Shdr), f);
@@ -527,15 +512,9 @@ static void file_load_elf(struct machine *m, struct memory *mem,
 				fprintf(stderr, "couldn't read header\n");
 				exit(1);
 			}
-			unencode(sh_name,      &shdr32.sh_name,    Elf32_Word);
 			unencode(sh_type,      &shdr32.sh_type,    Elf32_Word);
-			unencode(sh_flags,     &shdr32.sh_flags,   Elf32_Word);
-			unencode(sh_addr,      &shdr32.sh_addr,    Elf32_Addr);
 			unencode(sh_offset,    &shdr32.sh_offset,  Elf32_Off);
 			unencode(sh_size,      &shdr32.sh_size,    Elf32_Word);
-			unencode(sh_link,      &shdr32.sh_link,    Elf32_Word);
-			unencode(sh_info,      &shdr32.sh_info,    Elf32_Word);
-			unencode(sh_addralign, &shdr32.sh_addralign,Elf32_Word);
 			unencode(sh_entsize,   &shdr32.sh_entsize, Elf32_Word);
 		}
 
@@ -624,18 +603,15 @@ static void file_load_elf(struct machine *m, struct memory *mem,
 	if (symbol_strings != NULL) {
 		for (i=0; i<n_symbols; i++) {
 			uint64_t st_name, addr, size;
-			int st_info;
 
 			if (elf64) {
 				sym64 = symbols_sym64[i];
 				unencode(st_name, &sym64.st_name,  Elf64_Half);
-				unencode(st_info, &sym64.st_info,  Elf_Byte);
 				unencode(addr,    &sym64.st_value, Elf64_Addr);
 				unencode(size,    &sym64.st_size,  Elf64_Xword);
 			} else {
 				sym32 = symbols_sym32[i];
 				unencode(st_name, &sym32.st_name,  Elf32_Word);
-				unencode(st_info, &sym32.st_info,  Elf_Byte);
 				unencode(addr,    &sym32.st_value, Elf32_Word);
 				unencode(size,    &sym32.st_size, Elf32_Word);
 			}

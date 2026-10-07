@@ -219,7 +219,7 @@ DEVICE_TICK(sgi_gbe)
 	// but this algorithm will render "up to" 256 and abort as soon
 	// as the screen is filled instead. This makes it work for both
 	// Linux' "tweaked linear" mode and all the other guest OSes.
-	const int max_nr_of_tiles = 256;
+	enum { max_nr_of_tiles = 256 };
 	
 	uint32_t tile[max_nr_of_tiles];
 	uint8_t alltileptrs[max_nr_of_tiles * sizeof(uint16_t)];

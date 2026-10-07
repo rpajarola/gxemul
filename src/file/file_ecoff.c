@@ -193,8 +193,8 @@ static void file_load_ecoff(struct machine *m, struct memory *mem,
 
 	/*  First, dump the section headers, see if Relocation is needed:  */
 	for (secn=0; secn<f_nscns; secn++) {
-		off_t s_scnptr, s_relptr, s_lnnoptr;
-		unsigned int s_nreloc, s_nlnno, s_flags, s_size;
+		off_t s_scnptr, s_relptr;
+		unsigned int s_nreloc, s_flags, s_size;
 		uint64_t s_paddr, s_vaddr;
 
 		/*  Read a section header:  */
@@ -219,9 +219,7 @@ static void file_load_ecoff(struct machine *m, struct memory *mem,
 		unencode(s_size,    &scnhdr.s_size,    uint32_t);
 		unencode(s_scnptr,  &scnhdr.s_scnptr,  uint32_t);
 		unencode(s_relptr,  &scnhdr.s_relptr,  uint32_t);
-		unencode(s_lnnoptr, &scnhdr.s_lnnoptr, uint32_t);
 		unencode(s_nreloc,  &scnhdr.s_nreloc,  uint16_t);
-		unencode(s_nlnno,   &scnhdr.s_nlnno,   uint16_t);
 		unencode(s_flags,   &scnhdr.s_flags,   uint32_t);
 
 		debug("0x%x bytes @ vaddr 0x%08x, file offset 0x%lx, %i relocations @ 0x%lx, flags 0x%x)\n",
@@ -269,8 +267,8 @@ static void file_load_ecoff(struct machine *m, struct memory *mem,
 	// Load symbols, if there are any.
 	if (f_symptr != 0 && f_nsyms != 0) {
 		struct ecoff_symhdr symhdr;
-		int sym_magic, iextMax, issExtMax, issMax, crfd;
-		off_t cbRfdOffset, cbExtOffset, cbSsExtOffset, cbSsOffset;
+		int sym_magic, iextMax, issExtMax;
+		off_t cbExtOffset, cbSsExtOffset;
 		char *symbol_data;
 		int sym_nr;
 
@@ -284,10 +282,6 @@ static void file_load_ecoff(struct machine *m, struct memory *mem,
 		}
 
 		unencode(sym_magic,     &symhdr.magic,         uint16_t);
-		unencode(crfd,          &symhdr.crfd,          uint32_t);
-		unencode(cbRfdOffset,   &symhdr.cbRfdOffset,   uint32_t);
-		unencode(issMax,        &symhdr.issMax,        uint32_t);
-		unencode(cbSsOffset,    &symhdr.cbSsOffset,    uint32_t);
 		unencode(issExtMax,     &symhdr.issExtMax,     uint32_t);
 		unencode(cbSsExtOffset, &symhdr.cbSsExtOffset, uint32_t);
 		unencode(iextMax,       &symhdr.iextMax,       uint32_t);
@@ -429,9 +423,9 @@ skip_normal_coff_symbols:
 
 	/*  Then, load the sections that are loadable:  */
 	for (secn=0; secn<f_nscns; secn++) {
-		off_t s_scnptr, s_relptr, s_lnnoptr;
-		unsigned int s_nreloc, s_nlnno, s_flags, s_size;
-		uint64_t s_paddr, s_vaddr;
+		off_t s_scnptr, s_relptr;
+		unsigned int s_nreloc, s_flags, s_size;
+		uint64_t s_vaddr;
 
 		/*  Read a section header:  */
 		fseek(f, sectionHeadersPos + sizeof(scnhdr) * secn, SEEK_SET);
@@ -442,14 +436,11 @@ skip_normal_coff_symbols:
 			exit(1);
 		}
 
-		unencode(s_paddr,   &scnhdr.s_paddr,   uint32_t);
 		unencode(s_vaddr,   &scnhdr.s_vaddr,   uint32_t);
 		unencode(s_size,    &scnhdr.s_size,    uint32_t);
 		unencode(s_scnptr,  &scnhdr.s_scnptr,  uint32_t);
 		unencode(s_relptr,  &scnhdr.s_relptr,  uint32_t);
-		unencode(s_lnnoptr, &scnhdr.s_lnnoptr, uint32_t);
 		unencode(s_nreloc,  &scnhdr.s_nreloc,  uint16_t);
-		unencode(s_nlnno,   &scnhdr.s_nlnno,   uint16_t);
 		unencode(s_flags,   &scnhdr.s_flags,   uint32_t);
 
 		s_vaddr += relocationOffset;

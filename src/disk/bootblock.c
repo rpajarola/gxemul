@@ -162,7 +162,7 @@ int load_bootblock(struct machine *m, struct cpu *cpu,
 
 	case MACHINE_LUNA88K:
 		{
-			const int disklabel_size = 512;
+			enum { disklabel_size = 512 };
 			uint8_t disklabel[disklabel_size];
 
 			res = diskimage_access(m, boot_disk_id, boot_disk_type,

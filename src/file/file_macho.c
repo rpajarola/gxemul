@@ -56,7 +56,7 @@ static void file_load_macho(struct machine *m, struct memory *mem,
 	int encoding = ELFDATA2MSB;
 	unsigned char buf[65536];
 	char *symbols, *strings;
-	uint32_t cputype, cpusubtype, filetype, ncmds, sizeofcmds, flags;
+	uint32_t cputype, cpusubtype, filetype, sizeofcmds, flags;
 	uint64_t vmaddr, vmsize, fileoff, filesize;
 	int cmd_type, cmd_len, i, flavor;
 	int32_t symoff, nsyms, stroff, strsize;
@@ -89,7 +89,6 @@ static void file_load_macho(struct machine *m, struct memory *mem,
 	unencode(cputype,    &buf[4], uint32_t);
 	unencode(cpusubtype, &buf[8], uint32_t);
 	unencode(filetype,   &buf[12], uint32_t);
-	unencode(ncmds,      &buf[16], uint32_t);
 	unencode(sizeofcmds, &buf[20], uint32_t);
 	unencode(flags,      &buf[24], uint32_t);
 
@@ -231,12 +230,9 @@ static void file_load_macho(struct machine *m, struct memory *mem,
 			}
 
 			for (i=0; i<nsyms; i++) {
-				int n_strx, n_type, n_sect, n_desc;
+				int n_strx;
 				uint32_t n_value;
 				unencode(n_strx,  &symbols[i*12+0], int32_t);
-				unencode(n_type,  &symbols[i*12+4], uint8_t);
-				unencode(n_sect,  &symbols[i*12+5], uint8_t);
-				unencode(n_desc,  &symbols[i*12+6], int16_t);
 				unencode(n_value, &symbols[i*12+8], uint32_t);
 				/*  debug("%i: strx=%i type=%i sect=%i desc=%i"
 				    " value=0x%x\n", i, n_strx, n_type,
