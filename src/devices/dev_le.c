@@ -35,6 +35,8 @@
  *
  *	0x000000 - 0x0fffff	Ethernet SRAM buffer  (should be 128KB)
  *	0x100000 - 0x17ffff	LANCE registers
+ *	0x180000 - 0x1bffff	Station Address ROM (read here by the
+ *				PMAD-AA option ROM's diagnostics)
  *	0x1c0000 - 0x1fffff	Ethernet Diagnostic ROM and Station
  *				Address ROM
  *
@@ -764,7 +766,7 @@ DEVICE_ACCESS(le)
 #endif
 
 	/*  Read from station's ROM (ethernet address):  */
-	if (relative_addr >= 0xc0000 && relative_addr <= 0xfffff) {
+	if (relative_addr >= 0x80000 && relative_addr <= 0xfffff) {
 		uint32_t a;
 		int j = (relative_addr & 0xff) / 4;
 		a = d->rom[j & (ROM_SIZE-1)];
@@ -893,15 +895,32 @@ void dev_le_init(struct machine *machine, struct memory *mem, uint64_t baseaddr,
 	/*  ROM (including the MAC address):  */
 	net_generate_unique_mac(machine, &d->rom[0]);
 
-	/*  Copies of the MAC address and a test pattern:  */
-	d->rom[10] = d->rom[21] = d->rom[5];
-	d->rom[11] = d->rom[20] = d->rom[4];
-	d->rom[12] = d->rom[19] = d->rom[3];
-	d->rom[7] =  d->rom[8]  = d->rom[23] =
-		     d->rom[13] = d->rom[18] = d->rom[2];
-	d->rom[6] =  d->rom[9]  = d->rom[22] =
-		     d->rom[14] = d->rom[17] = d->rom[1];
-	d->rom[15] = d->rom[16] = d->rom[0];
+	/*
+	 *  Bytes 6 and 7 hold a checksum of the MAC address. Bytes 0..7
+	 *  are then repeated in reverse order (bytes 8..15) and in
+	 *  forward order (bytes 16..23), followed by a test pattern.
+	 *  This is what the PMAD-AA option ROM's "esar" test checks.
+	 */
+	{
+		uint32_t sum = 0;
+		int i;
+
+		for (i=0; i<3; i++) {
+			sum <<= 1;
+			if (sum > 0xffff)
+				sum -= 0xffff;
+			sum += (d->rom[i*2] << 8) + d->rom[i*2 + 1];
+			if (sum > 0xffff)
+				sum -= 0xffff;
+		}
+
+		d->rom[6] = sum >> 8;
+		d->rom[7] = sum & 0xff;
+
+		for (i=0; i<8; i++)
+			d->rom[15 - i] = d->rom[16 + i] = d->rom[i];
+	}
+
 	d->rom[24] = d->rom[28] = 0xff;
 	d->rom[25] = d->rom[29] = 0x00;
 	d->rom[26] = d->rom[30] = 0x55;
