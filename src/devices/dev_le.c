@@ -73,6 +73,9 @@
 extern int quiet_mode;
 
 #define	LE_MODE_PROM		0x8000
+#define	LE_MODE_INTL		0x0040
+#define	LE_MODE_COLL		0x0010
+#define	LE_MODE_DTCR		0x0008
 #define	LE_MODE_LOOP		0x0004
 #define	LE_MODE_DTX		0x0002
 #define	LE_MODE_DRX		0x0001
@@ -127,6 +130,7 @@ struct le_data {
 	int		rx_packet_len;
 	int		rx_packet_offset;
 	int		rx_middle_bit;
+	int		rx_packet_crc_error;
 };
 
 
@@ -279,6 +283,98 @@ static void le_chip_init(struct le_data *d)
  *
  *  This routine should only be called if TXON is enabled.
  */
+static void le_rx(struct net *net, struct le_data *d);
+
+
+/*
+ *  le_rx_append_fcs():
+ *
+ *  Append the Ethernet frame check sequence (CRC-32, least significant
+ *  byte first) to the packet being received. The LANCE stores it in the
+ *  receive buffer, and includes it in the message byte count.
+ */
+static void le_rx_append_fcs(struct le_data *d)
+{
+	uint32_t fcs = ~net_ether_crc32_le(d->rx_packet, d->rx_packet_len);
+	int i;
+
+	CHECK_ALLOCATION(d->rx_packet = (unsigned char *)
+	    realloc(d->rx_packet, d->rx_packet_len + 4));
+	for (i=0; i<4; i++)
+		d->rx_packet[d->rx_packet_len + i] = fcs >> (i * 8);
+	d->rx_packet_len += 4;
+}
+
+
+/*
+ *  le_address_match():
+ *
+ *  Returns 1 if a packet with the given destination address should be
+ *  received: in promiscuous mode, for broadcasts, for multicast addresses
+ *  that pass the logical address filter, or for our own (PADR) address.
+ */
+static int le_address_match(struct le_data *d, const unsigned char *dst)
+{
+	uint32_t crc;
+
+	if (d->mode & LE_MODE_PROM)
+		return 1;
+
+	if (dst[0] & 1) {
+		if (net_ether_broadcast(dst))
+			return 1;
+
+		/*  The top 6 bits of the CRC select a filter bit:  */
+		crc = net_ether_crc32_le(dst, 6) >> 26;
+		return (d->ladrf[crc >> 4] >> (crc & 15)) & 1;
+	}
+
+	return memcmp(dst, d->nic.mac_address, 6) == 0;
+}
+
+
+/*
+ *  le_loopback():
+ *
+ *  In loopback mode, a transmitted packet is received by the LANCE itself
+ *  instead of being sent to the network. Unless DTCR is set, the
+ *  transmitter appends the CRC, which is then received with the data.
+ */
+static void le_loopback(struct net *net, struct le_data *d)
+{
+	if (d->tx_packet_len < 6 || !le_address_match(d, d->tx_packet))
+		return;
+
+	if (d->rx_packet != NULL) {
+		debugmsg(d->subsys, "loopback", VERBOSITY_WARNING,
+		    "receiver busy, packet dropped");
+		return;
+	}
+
+	CHECK_ALLOCATION(d->rx_packet = (unsigned char *)
+	    malloc(d->tx_packet_len + 4));
+	memcpy(d->rx_packet, d->tx_packet, d->tx_packet_len);
+	d->rx_packet_len = d->tx_packet_len;
+	d->rx_packet_offset = 0;
+
+	if (!(d->mode & LE_MODE_DTCR)) {
+		le_rx_append_fcs(d);
+	} else if (d->rx_packet_len >= 4) {
+		/*  The last 4 bytes, supplied by the guest, are the FCS:  */
+		uint32_t fcs = ~net_ether_crc32_le(d->rx_packet,
+		    d->rx_packet_len - 4);
+		unsigned char *p = d->rx_packet + d->rx_packet_len - 4;
+		uint32_t rcvd = p[0] + (p[1] << 8) + (p[2] << 16) +
+		    ((uint32_t) p[3] << 24);
+
+		d->rx_packet_crc_error = fcs != rcvd;
+	}
+
+	if (d->reg[0] & LE_RXON)
+		le_rx(net, d);
+}
+
+
 static void le_tx(struct net *net, struct le_data *d)
 {
 	int start_txp = d->txp;
@@ -362,8 +458,19 @@ static void le_tx(struct net *net, struct le_data *d)
 		 *  the packet.
 		 */
 		if (enp) {
-			net_ethernet_tx(net, &d->nic, d->tx_packet,
-			    d->tx_packet_len);
+			if ((d->mode & (LE_MODE_LOOP | LE_MODE_INTL |
+			    LE_MODE_COLL)) == (LE_MODE_LOOP | LE_MODE_INTL |
+			    LE_MODE_COLL)) {
+				/*  Forced collisions (only valid in internal
+				    loopback): the transmission is retried 16
+				    times, and then fails with a retry error.  */
+				tx_descr[1] |= LE_ERR;
+				tx_descr[3] |= LE_RTRY;
+			} else if (d->mode & LE_MODE_LOOP)
+				le_loopback(net, d);
+			else
+				net_ethernet_tx(net, &d->nic, d->tx_packet,
+				    d->tx_packet_len);
 
 			free(d->tx_packet);
 			d->tx_packet = NULL;
@@ -451,24 +558,26 @@ static void le_rx(struct net *net, struct le_data *d)
 		if (d->rx_packet_offset >= d->rx_packet_len) {
 			rx_descr[1] |= LE_ENP;
 
+			if (d->rx_packet_crc_error)
+				rx_descr[1] |= LE_ERR | LE_CRC;
+
 			/*
-			 *  NOTE:  The Lance documentation that I have read
-			 *  says _NOTHING_ about the length being 4 more than
-			 *  the length of the data.  You can guess how
-			 *  surprised I was when I saw the following in
-			 *  NetBSD (dev/ic/am7990.c):
+			 *  The message byte count includes the 4 byte FCS
+			 *  (CRC) at the end of the packet, which is why e.g.
+			 *  NetBSD (dev/ic/am7990.c) does:
 			 *
 			 *	lance_read(sc, LE_RBUFADDR(sc, bix),
 			 *		(int)rmd.rmd3 - 4);
 			 */
 			rx_descr[3] &= ~0xfff;
-			rx_descr[3] |= d->rx_packet_len + 4;
+			rx_descr[3] |= d->rx_packet_len;
 
 			free(d->rx_packet);
 			d->rx_packet = NULL;
 			d->rx_packet_len = 0;
 			d->rx_packet_offset = 0;
 			d->rx_middle_bit = 0;
+			d->rx_packet_crc_error = 0;
 
 			d->reg[0] |= LE_RINT;
 		}
@@ -588,6 +697,7 @@ static void le_register_fix(struct net *net, struct le_data *d)
 				    &d->rx_packet, &d->rx_packet_len);
 				if (le_rx_drop_packet(net, d))
 					continue;
+				le_rx_append_fcs(d);
 			}
 		} while (d->rx_packet != NULL);
 	}
@@ -653,6 +763,16 @@ void le_register_write(struct le_data *d, int r, uint32_t x)
 {
 	switch (r) {
 	case 0:	/*  CSR0:  */
+		/*
+		 *  Setting STOP resets the LANCE: CSR0 then reads as just
+		 *  STOP. (The PMAD-AA option ROM's diagnostics check this.)
+		 *  STOP takes precedence over STRT and INIT.
+		 */
+		if (x & LE_STOP) {
+			d->reg[r] = LE_STOP;
+			break;
+		}
+
 		/*  Some bits are write-one-to-clear:  */
 		if (x & LE_BABL)
 			d->reg[r] &= ~LE_BABL;
@@ -675,6 +795,13 @@ void le_register_write(struct le_data *d, int r, uint32_t x)
 		if (x & LE_STRT) {
 			d->reg[r] |= LE_STRT;
 			d->reg[r] &= ~LE_STOP;
+
+			/*  STRT turns on the transmitter and receiver (which
+			    STOP turned off), unless disabled by the mode.  */
+			if (!(d->mode & LE_MODE_DTX))
+				d->reg[r] |= LE_TXON;
+			if (!(d->mode & LE_MODE_DRX))
+				d->reg[r] |= LE_RXON;
 		}
 		if (x & LE_INIT) {
 			if (!(d->reg[r] & LE_STOP))
@@ -683,12 +810,6 @@ void le_register_write(struct le_data *d, int r, uint32_t x)
 			d->reg[r] |= LE_INIT;
 			d->reg[r] &= ~LE_STOP;
 		}
-		if (x & LE_STOP) {
-			d->reg[r] |= LE_STOP;
-			/*  STOP takes precedence over STRT and INIT:  */
-			d->reg[r] &= ~(LE_STRT | LE_INIT);
-		}
-
 		/*  Some bits get through, both settable and clearable:  */
 		d->reg[r] &= ~LE_INEA;
 		d->reg[r] |= (x & LE_INEA);
