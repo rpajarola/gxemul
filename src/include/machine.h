@@ -92,6 +92,10 @@ struct x11_md {
 };
 
 
+/*  Max nr of TURBOchannel slots with an option ROM image:  */
+#define	MACHINE_MAX_TC_SLOTS	16
+
+
 /*
  *  The machine struct:
  */
@@ -167,6 +171,10 @@ struct machine {
 	char	*boot_kernel_filename;
 	char	*boot_string_argument;
 	int	n_gfx_cards;
+
+	/*  TURBOchannel option ROM image filenames, per slot. NULL
+	    means that the slot's built-in fake ROM is used.  */
+	char	*tc_rom_filename[MACHINE_MAX_TC_SLOTS];
 
 	/*  Instruction statistics:  */
 	struct statistics statistics;

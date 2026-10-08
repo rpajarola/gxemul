@@ -230,6 +230,10 @@ static char cur_machine_memory[10];
 #define	MAX_LOAD_LEN		2000
 static char *cur_machine_load[MAX_N_LOAD];
 static int cur_machine_n_load;
+#define	MAX_N_TC_ROM		MACHINE_MAX_TC_SLOTS
+#define	MAX_TC_ROM_LEN		2000
+static char *cur_machine_tc_rom[MAX_N_TC_ROM];
+static int cur_machine_n_tc_rom;
 #define	MAX_N_DISK		10
 #define	MAX_DISK_LEN		2000
 static char *cur_machine_disk[MAX_N_DISK];
@@ -340,6 +344,7 @@ static void parse__emul(struct emul *e, FILE *f, int *in_emul, int *line,
 		cur_machine_bootarg[0] = '\b';	// HACK
 		cur_machine_bootarg[1] = '\0';	// HACK
 		cur_machine_n_load = 0;
+		cur_machine_n_tc_rom = 0;
 		cur_machine_n_disk = 0;
 		cur_machine_n_device = 0;
 		cur_machine_n_x11_disp = 0;
@@ -584,6 +589,30 @@ static void parse__machine(struct emul *e, FILE *f, int *in_emul, int *line,
 			cur_machine_x11_disp[i] = NULL;
 		}
 
+		for (i=0; i<cur_machine_n_tc_rom; i++) {
+			char *colon = strchr(cur_machine_tc_rom[i], ':');
+			char *end;
+			long slot = strtol(cur_machine_tc_rom[i], &end, 0);
+
+			if (colon == NULL || end != colon ||
+			    end == cur_machine_tc_rom[i] || colon[1] == '\0' ||
+			    slot < 0 || slot >= MACHINE_MAX_TC_SLOTS) {
+				fatal("tc_rom(\"%s\"): expected \"slot:filename\", with slot 0..%i\n",
+				    cur_machine_tc_rom[i], MACHINE_MAX_TC_SLOTS - 1);
+				exit(1);
+			}
+
+			if (m->tc_rom_filename[slot] != NULL) {
+				fatal("tc_rom(): more than one ROM image for slot %li\n", slot);
+				exit(1);
+			}
+
+			CHECK_ALLOCATION(m->tc_rom_filename[slot] =
+			    strdup(colon + 1));
+			free(cur_machine_tc_rom[i]);
+			cur_machine_tc_rom[i] = NULL;
+		}
+
 		emul_machine_setup(m,
 		    cur_machine_n_load, cur_machine_load,
 		    cur_machine_n_device, cur_machine_device);
@@ -634,6 +663,23 @@ static void parse__machine(struct emul *e, FILE *f, int *in_emul, int *line,
 		read_one_word(f, cur_machine_load[cur_machine_n_load],
 		    MAX_LOAD_LEN, line, EXPECT_WORD);
 		cur_machine_n_load ++;
+		read_one_word(f, word, maxbuflen,
+		    line, EXPECT_RIGHT_PARENTHESIS);
+		return;
+	}
+
+	if (strcmp(word, "tc_rom") == 0) {
+		read_one_word(f, word, maxbuflen,
+		    line, EXPECT_LEFT_PARENTHESIS);
+		if (cur_machine_n_tc_rom >= MAX_N_TC_ROM) {
+			fprintf(stderr, "too many tc_roms\n");
+			exit(1);
+		}
+		CHECK_ALLOCATION(cur_machine_tc_rom[cur_machine_n_tc_rom] =
+		    (char*) malloc(MAX_TC_ROM_LEN));
+		read_one_word(f, cur_machine_tc_rom[cur_machine_n_tc_rom],
+		    MAX_TC_ROM_LEN, line, EXPECT_WORD);
+		cur_machine_n_tc_rom ++;
 		read_one_word(f, word, maxbuflen,
 		    line, EXPECT_RIGHT_PARENTHESIS);
 		return;

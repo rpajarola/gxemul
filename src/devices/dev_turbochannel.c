@@ -60,6 +60,107 @@ struct turbochannel_data {
 	char		card_firmware_type[CARD_FIRMWARE_BUFLEN];
 };
 
+/*  Where the option ROM is located within a slot:  */
+#define	TC_OPTION_ROM_OFFSET	0x3c0000
+
+/*
+ *  An option ROM image, loaded from a file (e.g. a dump of the ROM chip
+ *  on a real card). The ROM is one byte wide, with a stride of 4: byte i
+ *  of the image is read at offset 4*i. It is returned in all four byte
+ *  lanes of the word, so it can be read with any access size.
+ */
+struct turbochannel_rom_data {
+	int		slot_nr;
+	unsigned char	*image;
+	size_t		image_len;
+};
+
+
+DEVICE_ACCESS(turbochannel_rom)
+{
+	struct turbochannel_rom_data *d =
+	    (struct turbochannel_rom_data *) extra;
+	size_t i;
+
+	if (writeflag == MEM_WRITE) {
+		debug("[ turbochannel: write to option ROM in slot %i,"
+		    " offset 0x%x, ignored ]\n", d->slot_nr,
+		    (int) relative_addr);
+		return 1;
+	}
+
+	for (i=0; i<len; i++) {
+		uint64_t ofs = (relative_addr + i) / 4;
+		data[i] = ofs < d->image_len? d->image[ofs] : 0xff;
+	}
+
+	return 1;
+}
+
+
+/*
+ *  turbochannel_load_rom():
+ *
+ *  Loads an option ROM image for a slot, and maps it at the slot's option
+ *  ROM address. Returns the length of the mapped range, in bytes.
+ */
+static uint64_t turbochannel_load_rom(struct memory *mem, int slot_nr,
+	uint64_t baseaddr, uint64_t endaddr, const char *device_name,
+	const char *filename)
+{
+	struct turbochannel_rom_data *rd;
+	uint64_t maplen;
+	char *name;
+	size_t nlen;
+	long filelen;
+	FILE *f;
+
+	f = fopen(filename, "rb");
+	if (f == NULL) {
+		perror(filename);
+		exit(1);
+	}
+
+	fseek(f, 0, SEEK_END);
+	filelen = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	maplen = (uint64_t) filelen * 4;
+	if (filelen <= 0 ||
+	    baseaddr + TC_OPTION_ROM_OFFSET + maplen - 1 > endaddr) {
+		fprintf(stderr, "%s: a TURBOchannel option ROM image must"
+		    " be between 1 and %i bytes\n", filename,
+		    (int) ((endaddr + 1 - baseaddr - TC_OPTION_ROM_OFFSET) / 4));
+		exit(1);
+	}
+
+	CHECK_ALLOCATION(rd = (struct turbochannel_rom_data *)
+	    malloc(sizeof(struct turbochannel_rom_data)));
+	memset(rd, 0, sizeof(struct turbochannel_rom_data));
+	rd->slot_nr = slot_nr;
+	rd->image_len = filelen;
+	CHECK_ALLOCATION(rd->image = (unsigned char *) malloc(filelen));
+
+	if (fread(rd->image, 1, filelen, f) != (size_t) filelen) {
+		fprintf(stderr, "%s: could not read the option ROM image\n",
+		    filename);
+		exit(1);
+	}
+	fclose(f);
+
+	nlen = strlen(device_name) + 40;
+	CHECK_ALLOCATION(name = (char *) malloc(nlen));
+	snprintf(name, nlen, "turbochannel [%s] option ROM", device_name);
+
+	memory_device_register(mem, name, baseaddr + TC_OPTION_ROM_OFFSET,
+	    maplen, dev_turbochannel_rom_access, rd, DM_DEFAULT, NULL);
+
+	debug("turbochannel: slot %i option ROM: %s (%li bytes)\n",
+	    slot_nr, filename, filelen);
+
+	return maplen;
+}
+
 
 DEVICE_ACCESS(turbochannel)
 {
@@ -312,6 +413,30 @@ void dev_turbochannel_init(struct machine *machine, struct memory *mem,
 		    device_name);
 	}
 
+	/*
+	 *  An option ROM image for this slot replaces the fake ROM in the
+	 *  address range it covers. The fake ROM is kept outside of that
+	 *  range (e.g. the PMAD-AA station address ROM at 0x1c0000).
+	 */
+	if (slot_nr >= 0 && slot_nr < MACHINE_MAX_TC_SLOTS &&
+	    machine->tc_rom_filename[slot_nr] != NULL) {
+		uint64_t rom_start = TC_OPTION_ROM_OFFSET;
+		uint64_t rom_end = rom_start + turbochannel_load_rom(mem,
+		    slot_nr, baseaddr, endaddr, device_name,
+		    machine->tc_rom_filename[slot_nr]);
+		uint64_t fake_start = rom_offset + rom_skip;
+		uint64_t fake_end = rom_offset + rom_length;
+
+		if (fake_start < rom_end && fake_end > rom_start) {
+			if (fake_start < rom_start)
+				rom_length = rom_start - rom_offset;
+			else if (fake_end > rom_end)
+				rom_skip = rom_end - rom_offset;
+			else
+				rom_length = rom_skip;	/*  nothing left  */
+		}
+	}
+
 	d->rom_skip = rom_skip;
 
 	nlen = strlen(device_name) + 30;
@@ -322,7 +447,9 @@ void dev_turbochannel_init(struct machine *machine, struct memory *mem,
 	else
 		snprintf(name2, nlen, "turbochannel");
 
-	memory_device_register(mem, name2, baseaddr + rom_offset + rom_skip,
-	    rom_length-rom_skip, dev_turbochannel_access, d, DM_DEFAULT, NULL);
+	if (rom_length > rom_skip)
+		memory_device_register(mem, name2,
+		    baseaddr + rom_offset + rom_skip, rom_length - rom_skip,
+		    dev_turbochannel_access, d, DM_DEFAULT, NULL);
 }
 
