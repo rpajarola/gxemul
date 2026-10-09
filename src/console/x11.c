@@ -240,22 +240,43 @@ void x11_redraw_cursor(struct machine *m, int i)
 		    fbwin->OLD_cursor_ysize/fbwin->scaledown + 1);
 	}
 
+	fbwin->OLD_cursor_on = fbwin->cursor_on;
+	fbwin->OLD_cursor_x = fbwin->cursor_x;
+	fbwin->OLD_cursor_y = fbwin->cursor_y;
+	fbwin->OLD_cursor_xsize = fbwin->cursor_xsize;
+	fbwin->OLD_cursor_ysize = fbwin->cursor_ysize;
+
 	if (!fbwin->cursor_on)
+		return;
+
+	/*  Only the part of the cursor which is inside the framebuffer:  */
+	int x0 = fbwin->cursor_x/fbwin->scaledown;
+	int y0 = fbwin->cursor_y/fbwin->scaledown;
+	int x1 = x0 + fbwin->cursor_xsize/fbwin->scaledown + 1;
+	int y1 = y0 + fbwin->cursor_ysize/fbwin->scaledown + 1;
+	int clip_x0 = x0 < 0? 0 : x0, clip_y0 = y0 < 0? 0 : y0;
+
+	if (x1 > fbwin->fb_ximage->width)
+		x1 = fbwin->fb_ximage->width;
+	if (y1 > fbwin->fb_ximage->height)
+		y1 = fbwin->fb_ximage->height;
+	if (x1 <= clip_x0 || y1 <= clip_y0)
 		return;
 
 	XImage *xtmp;
 	CHECK_ALLOCATION(xtmp = XSubImage(fbwin->fb_ximage,
-	    fbwin->cursor_x/fbwin->scaledown,
-	    fbwin->cursor_y/fbwin->scaledown,
-	    fbwin->cursor_xsize/fbwin->scaledown + 1,
-	    fbwin->cursor_ysize/fbwin->scaledown + 1));
+	    clip_x0, clip_y0, x1 - clip_x0, y1 - clip_y0));
 
 	for (int y = 0; y < fbwin->cursor_ysize; y += fbwin->scaledown) {
 		for (int x = 0; x < fbwin->cursor_xsize; x += fbwin->scaledown) {
-			int px = x/fbwin->scaledown;
-			int py = y/fbwin->scaledown;
+			int px = x0 + x/fbwin->scaledown - clip_x0;
+			int py = y0 + y/fbwin->scaledown - clip_y0;
 			int p = 0, n = 0, c = 0;
 			unsigned long oldcol;
+
+			if (px < 0 || py < 0 || px >= x1 - clip_x0 ||
+			    py >= y1 - clip_y0)
+				continue;
 
 			for (int suby = 0; suby < fbwin->scaledown; suby++)
 				for (int subx = 0; subx < fbwin->scaledown; subx++) {
@@ -294,19 +315,10 @@ void x11_redraw_cursor(struct machine *m, int i)
 	XPutImage(fbwin->x11_display,
 	    fbwin->x11_fb_window,
 	    fbwin->x11_fb_gc,
-	    xtmp, 0, 0,
-	    fbwin->cursor_x/fbwin->scaledown,
-	    fbwin->cursor_y/fbwin->scaledown,
-	    fbwin->cursor_xsize/fbwin->scaledown,
-	    fbwin->cursor_ysize/fbwin->scaledown);
+	    xtmp, 0, 0, clip_x0, clip_y0,
+	    x1 - clip_x0, y1 - clip_y0);
 
 	XDestroyImage(xtmp);
-
-	fbwin->OLD_cursor_on = fbwin->cursor_on;
-	fbwin->OLD_cursor_x = fbwin->cursor_x;
-	fbwin->OLD_cursor_y = fbwin->cursor_y;
-	fbwin->OLD_cursor_xsize = fbwin->cursor_xsize;
-	fbwin->OLD_cursor_ysize = fbwin->cursor_ysize;
 }
 
 
