@@ -54,6 +54,9 @@ extern int quiet_mode;
 /*  #define WITH_CURSOR_DEBUG  */
 #define BT459_TICK_SHIFT	14
 
+/*  Vertical retrace rate of the PMAG-BA (approximately):  */
+#define	BT459_BA_RETRACE_HZ	72
+
 struct bt459_data {
 	uint32_t	bt459_reg[DEV_BT459_NREGS];
 
@@ -81,6 +84,17 @@ struct bt459_data {
 	int		cursor_ysize;
 
 	int		palette_sub_offset;	/*  0, 1, or 2  */
+
+	/*
+	 *  The overlay and cursor color registers are 24 bits wide, and
+	 *  are accessed with three (r,g,b) cycles, like the color map.
+	 *  bt459_reg[] holds the red component of the cursor colors.
+	 */
+	unsigned char	overlay_rgb[16][3];
+	unsigned char	cursor_rgb[3][3];
+
+	/*  Analog comparator result (test register bit D3):  */
+	int		comparator_result;
 
 	struct vfb_data *vfb_data;
 
@@ -246,6 +260,73 @@ static void bt459_update_cursor_position(struct bt459_data *d,
 }
 
 
+/*
+ *  bt459_comparator():
+ *
+ *  The test register's analog comparator compares the DAC outputs to each
+ *  other, or to a 150 mV reference. The result is latched at the left edge
+ *  of the 64x64 cursor, on each of its scan lines; this uses the last one.
+ *  Returns 1 if the result (bit D3) is set, 0 if not. If the cursor is not
+ *  on the screen, the previous result is kept.
+ */
+static int bt459_comparator(struct bt459_data *d)
+{
+	struct vfb_data *fb = d->vfb_data;
+	int x = d->cursor_x, y = d->cursor_y + 63;
+	int sel = (d->bt459_reg[BT459_REG_TEST] >> 4) & 0xf;
+	int pedestal = d->bt459_reg[BT459_REG_CMD2] & 0x40;
+	int c, ccr = d->bt459_reg[BT459_REG_CCR];
+	unsigned char *rgb;
+	int level[3], i;
+
+	if (d->planes != 8 || x < 0 || y < 0 || x >= fb->visible_xsize ||
+	    y >= fb->visible_ysize)
+		return d->comparator_result;
+
+	/*  Cursor pixel (plane 1 = odd bits), or the pixel below it:  */
+	c = (d->bt459_reg[BT459_REG_CRAM_BASE + 63 * 16] >> 6) & 3;
+	if (!(ccr & 0x80))
+		c &= 1;
+	if (!(ccr & 0x40))
+		c &= 2;
+
+	if (c != 0)
+		rgb = d->cursor_rgb[c - 1];
+	else
+		rgb = d->local_rgb_palette + 3 * (fb->framebuffer[
+		    y * fb->bytes_per_line + x] &
+		    d->bt459_reg[BT459_REG_PRM]);
+
+	/*
+	 *  DAC output levels in mV, with or without the 7.5 IRE pedestal.
+	 *  With sync enabled, the green output also carries the 40 IRE sync
+	 *  level. (The PMAG-BA ROM's diagnostics depend on that.)
+	 */
+	for (i=0; i<3; i++)
+		level[i] = pedestal? 54 + rgb[i] * 660 / 255 :
+		    rgb[i] * 714 / 255;
+	if (d->bt459_reg[BT459_REG_CMD2] & 0x80)
+		level[1] += 286;
+
+	switch (sel) {
+	case 0xa:	/*  red compared to blue  */
+		d->comparator_result = level[0] > level[2];
+		break;
+	case 0x9:	/*  red compared to 150 mV  */
+		d->comparator_result = level[0] > 150;
+		break;
+	case 0x6:	/*  green compared to blue  */
+		d->comparator_result = level[1] > level[2];
+		break;
+	case 0x5:	/*  green compared to 150 mV  */
+		d->comparator_result = level[1] > 150;
+		break;
+	}
+
+	return d->comparator_result;
+}
+
+
 DEVICE_TICK(bt459)
 {
 	struct bt459_data *d = (struct bt459_data *) extra;
@@ -316,6 +397,10 @@ DEVICE_ACCESS(bt459)
 
 	idata = memory_readmax64(cpu, data, len);
 
+	/*  The PMAG-BA does not decode the higher address bits:  */
+	if (d->type == BT459_BA)
+		relative_addr &= 0xc;
+
 #ifdef BT459_DEBUG
 	if (writeflag == MEM_WRITE)
 		fatal("[ bt459: write to addr 0x%02x: %08x ]\n",
@@ -379,16 +464,27 @@ DEVICE_ACCESS(bt459)
 				debug("[ bt459: write to BT459 register "
 				    "0x%04x, value 0x%02x ]\n", btaddr,
 				    (int)idata);
+			if ((btaddr >= BT459_REG_CCOLOR_1 &&
+			    btaddr <= BT459_REG_CCOLOR_3) ||
+			    (btaddr >= 0x100 && btaddr <= 0x10f)) {
+				/*  Overlay or cursor color, (r,g,b):  */
+				unsigned char *rgb = btaddr < 0x110?
+				    d->overlay_rgb[btaddr - 0x100] :
+				    d->cursor_rgb[btaddr - BT459_REG_CCOLOR_1];
+				rgb[d->palette_sub_offset] = idata;
+				if (btaddr >= BT459_REG_CCOLOR_1 &&
+				    d->palette_sub_offset == 0 &&
+				    d->bt459_reg[btaddr] != (idata & 0xff)) {
+					d->bt459_reg[btaddr] = idata & 0xff;
+					d->need_to_update_cursor_shape = 1;
+				}
+				goto next_color_component;
+			}
+
 			modified = (d->bt459_reg[btaddr] != idata);
 			d->bt459_reg[btaddr] = idata;
 
 			switch (btaddr) {
-			case BT459_REG_CCOLOR_1:
-			case BT459_REG_CCOLOR_2:
-			case BT459_REG_CCOLOR_3:
-				if (modified)
-					d->need_to_update_cursor_shape = 1;
-				break;
 			case BT459_REG_PRM:
 				/*
 				 *  NetBSD writes 0x00 to this register to
@@ -432,7 +528,24 @@ DEVICE_ACCESS(bt459)
 			if (btaddr >= BT459_REG_CRAM_BASE && modified)
 				d->need_to_update_cursor_shape = 1;
 		} else {
+			if ((btaddr >= BT459_REG_CCOLOR_1 &&
+			    btaddr <= BT459_REG_CCOLOR_3) ||
+			    (btaddr >= 0x100 && btaddr <= 0x10f)) {
+				odata = btaddr < 0x110?
+				    d->overlay_rgb[btaddr - 0x100]
+				    [d->palette_sub_offset] :
+				    d->cursor_rgb[btaddr - BT459_REG_CCOLOR_1]
+				    [d->palette_sub_offset];
+				goto next_color_component;
+			}
+
 			odata = d->bt459_reg[btaddr];
+
+			if (btaddr == BT459_REG_TEST) {
+				odata &= ~0x08;
+				if ((odata & 0xf0) && bt459_comparator(d))
+					odata |= 0x08;
+			}
 
 			/*  Perhaps this hack is not necessary:  */
 			if (btaddr == BT459_REG_ID && len==1)
@@ -485,6 +598,7 @@ DEVICE_ACCESS(bt459)
 				    btaddr, d->palette_sub_offset, (int)odata);
 		}
 
+next_color_component:
 		d->palette_sub_offset ++;
 		if (d->palette_sub_offset >= 3) {
 			d->palette_sub_offset = 0;
@@ -573,7 +687,20 @@ void dev_bt459_init(struct machine *machine, struct memory *mem,
 
 	d->interrupt_time_reset_value = 500;
 
-	memory_device_register(mem, "bt459", baseaddr, DEV_BT459_LENGTH,
+	/*
+	 *  The PMAG-BA option ROM's diagnostics expect vertical retrace
+	 *  interrupts at the real rate. The PMAG-BA also mirrors the four
+	 *  BT459 ports throughout the 1 MB at baseaddr.
+	 */
+	if (d->type == BT459_BA) {
+		d->interrupt_time_reset_value = machine->emulated_hz /
+		    (BT459_BA_RETRACE_HZ << BT459_TICK_SHIFT);
+		if (d->interrupt_time_reset_value < 1)
+			d->interrupt_time_reset_value = 1;
+	}
+
+	memory_device_register(mem, "bt459", baseaddr, d->type == BT459_BA?
+	    0x100000 : DEV_BT459_LENGTH,
 	    dev_bt459_access, (void *)d, DM_DEFAULT, NULL);
 
 	if (baseaddr_irq != 0)
