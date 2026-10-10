@@ -139,13 +139,20 @@ static void setMousePointerCoordinates(struct fb_window *fbwin, int x, int y)
 }
 
 
-static void mouseMouseToCenterOfScreen(struct fb_window *fbwin)
+/*
+ *  While grabbed, the (hidden) host mouse pointer is kept inside the
+ *  framebuffer window. If it were elsewhere on the screen, clicks could
+ *  reach other windows. (With a rootless X server, such as XQuartz on
+ *  macOS, the host window system acts on those clicks despite the grab,
+ *  and the emulator loses focus.)
+ */
+static void moveMouseToCenterOfWindow(struct fb_window *fbwin)
 {
-	Screen *screen = XDefaultScreenOfDisplay(fbwin->x11_display);
+	XWarpPointer(fbwin->x11_display, None, fbwin->x11_fb_window, 0, 0, 0, 0,
+	    fbwin->x11_fb_winxsize / 2, fbwin->x11_fb_winysize / 2);
+	XFlush(fbwin->x11_display);
 
-	int screenWidth = XWidthOfScreen(screen);
-	int screenHeight = XHeightOfScreen(screen);
-	setMousePointerCoordinates(fbwin, screenWidth / 2, screenHeight / 2);
+	mouseExplicityMoved = true;
 }
 
 static void grab(struct fb_window *fbwin)
@@ -173,8 +180,7 @@ static void grab(struct fb_window *fbwin)
 	    ButtonPressMask | ButtonReleaseMask | PointerMotionMask | FocusChangeMask |
 	    EnterWindowMask | LeaveWindowMask,
 	    GrabModeAsync, GrabModeAsync,
-	    RootWindow(fbwin->x11_display, DefaultScreen(fbwin->x11_display)),
-	    None, CurrentTime);
+	    fbwin->x11_fb_window, None, CurrentTime);
 
 	if (res == GrabSuccess)
 		grabbed = fbwin;
@@ -187,7 +193,7 @@ static void grab(struct fb_window *fbwin)
 
 	x11_hide_cursor();
 
-	mouseMouseToCenterOfScreen(fbwin);
+	moveMouseToCenterOfWindow(fbwin);
 
 	x11_set_standard_properties(fbwin);
 }
@@ -695,7 +701,9 @@ static void x11_check_events_machine(struct emul *emul, struct machine *m)
 				need_redraw = true;
 			}
 
-			if (event.type == FocusOut)
+			/*  Ignore focus changes caused by grabs:  */
+			if (event.type == FocusOut &&
+			    event.xfocus.mode == NotifyNormal)
 				ungrab();
 
 			if (event.type == Expose && event.xexpose.count == 0) {
@@ -739,29 +747,17 @@ static void x11_check_events_machine(struct emul *emul, struct machine *m)
 					dy *= fbwin->scaledown;
 					console_mouse_coordinate_update(dx, dy, fb_nr);
 
-					// Hack for keeping the mouse pointer away
-					// from the edges of the screen.
-					Window xqpWindow;
-					int rootx, rooty, x, y;
-					unsigned int mask;
-					int res = XQueryPointer(fbwin->x11_display,
-					    RootWindow(fbwin->x11_display, DefaultScreen(fbwin->x11_display)),
-					    &xqpWindow,
-					    &xqpWindow, &rootx, &rooty, &x, &y,
-					    &mask);
+					// Keep the mouse pointer away from the
+					// edges of the window, so that it can
+					// always move further.
+					int w = fbwin->x11_fb_winxsize;
+					int h = fbwin->x11_fb_winysize;
+					int x = event.xmotion.x;
+					int y = event.xmotion.y;
 
-					Screen *screen = XDefaultScreenOfDisplay(fbwin->x11_display);
-
-					int w = XWidthOfScreen(screen);
-					int h = XHeightOfScreen(screen);
-					int x1 = w * 1 / 5;
-					int y1 = h * 1 / 5;
-					int x2 = w * 4 / 5;
-					int y2 = h * 4 / 5;
-
-					if (res == True && (rootx < x1 || rooty < y1
-					    || rootx >= x2 || rooty >= y2))
-						mouseMouseToCenterOfScreen(fbwin);
+					if (x < w * 1 / 5 || y < h * 1 / 5 ||
+					    x >= w * 4 / 5 || y >= h * 4 / 5)
+						moveMouseToCenterOfWindow(fbwin);
 				}
 			}
 
