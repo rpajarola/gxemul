@@ -53,6 +53,7 @@ SUCH DAMAGE.
 	<li><a href="#step">Continuing execution or Single-stepping</a>
 	<li><a href="#breakpoints">Breakpoints</a>
 	<li><a href="#trace">Function call tracing</a>
+	<li><a href="#capture">Screenshots and videos</a>
 </ul>
 
 
@@ -417,6 +418,34 @@ large integers or general pointer values (prefixed with 0x), or addresses of kno
 symbols (&amp;vector_list). Strings are also sometimes shown, if an argument looks like
 readable memory which points to a string.
 
+
+</p>
+
+<p><br>
+<a name="capture"></a><h4>Screenshots and videos</h4>
+
+<p>The <tt>grab</tt> command saves a screenshot of the emulated machine's
+first framebuffer window, as it is shown, including the emulated cursor.
+The <tt>video</tt> command starts recording it, and <tt>video stop</tt>
+stops the recording:
+
+<pre>
+GXemul> <b>grab</b>
+saved screenshot gxemul-20261013-174100.png
+GXemul> <b>video</b>
+recording to gxemul-20261013-174105.mp4
+GXemul> <b>continue</b>
+<i>(press CTRL-C later)</i>
+GXemul> <b>video stop</b>
+saved video gxemul-20261013-174105.mp4
+</pre>
+
+<p>Both commands also take a file name. Without one, files are named after
+the date and time, and saved in the current directory. Screenshots are PNG
+files, written by <tt>ffmpeg</tt> if it is installed, or otherwise PPM
+files. Videos need <tt>ffmpeg</tt>, and are MP4 files at 10 frames per
+second, which keep recording in real time while the emulator runs, and
+while the debugger is in use.
 
 </p>
 

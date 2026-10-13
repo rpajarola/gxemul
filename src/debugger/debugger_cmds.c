@@ -1216,6 +1216,35 @@ static void debugger_cmd_version(struct machine *m, char *args)
 }
 
 
+/*
+ *  debugger_cmd_grab():
+ */
+static void debugger_cmd_grab(struct machine *m, char *args)
+{
+	char *end = args + strlen(args);
+
+	while (end > args && end[-1] == ' ')
+		*--end = '\0';
+	x11_grab(m, *args ? args : NULL);
+}
+
+
+/*
+ *  debugger_cmd_video():
+ */
+static void debugger_cmd_video(struct machine *m, char *args)
+{
+	char *end = args + strlen(args);
+
+	while (end > args && end[-1] == ' ')
+		*--end = '\0';
+	if (strcmp(args, "stop") == 0)
+		x11_video_stop();
+	else
+		x11_video_start(m, *args ? args : NULL);
+}
+
+
 /****************************************************************************/
 
 
@@ -1251,6 +1280,9 @@ static struct cmd cmds[] = {
 
 	{ "focus", "x[,y[,z]]", 0, debugger_cmd_focus,
 		"changes focus to cpu x, machine x, emul z" },
+
+	{ "grab", "[file]", 0, debugger_cmd_grab,
+		"save a screenshot of the framebuffer" },
 
 	{ "help", "", 0, debugger_cmd_help,
 		"Print this help message" },
@@ -1311,6 +1343,9 @@ static struct cmd cmds[] = {
 
 	{ "version", "", 0, debugger_cmd_version,
 		"Print version information" },
+
+	{ "video", "[file|stop]", 0, debugger_cmd_video,
+		"start or stop recording the framebuffer" },
 
 	/*  Note: NULL handler.  */
 	{ "x = expr", "", 0, NULL, "generic assignment" },

@@ -32,6 +32,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
+#include <time.h>
+#include <sys/time.h>
 
 #include "console.h"
 #include "emul.h"
@@ -52,6 +55,11 @@ struct fb_window *x11_fb_init(int xsize, int ysize, char *name,
 	int scaledown, struct machine *machine)
     { return NULL; }
 void x11_check_event(struct emul *emul) { }
+int x11_grab(struct machine *m, const char *file)
+    { printf("this GXemul was built without X11\n"); return -1; }
+int x11_video_start(struct machine *m, const char *file)
+    { printf("this GXemul was built without X11\n"); return -1; }
+void x11_video_stop(void) { }
 
 
 #else	/*  WITH_X11  */
@@ -997,6 +1005,343 @@ static void x11_check_events_machine(struct emul *emul, struct machine *m)
 
 
 /*
+ *  Screen capture:
+ *
+ *  x11_grab() saves a screenshot of a framebuffer window, and
+ *  x11_video_start() and x11_video_stop() record one into a video file,
+ *  both at the size of the window's image, including the emulated
+ *  cursor.  Screenshots are PNG files written by ffmpeg, or PPM files
+ *  if ffmpeg isn't available.  Recordings are MP4 files written by
+ *  ffmpeg at a constant frame rate, repeating the current image when
+ *  nothing changes, so they play back in real time.
+ */
+
+#define	VIDEO_FPS	10
+
+static struct fb_window *video_fbwin = NULL;
+static FILE *video_pipe = NULL;
+static char *video_file = NULL;
+static int video_width, video_height;
+static struct timeval video_start;
+static unsigned long video_frames;
+
+
+/*  Returns a new file name in the current directory, from the date and time.  */
+static char *capture_name(const char *extension)
+{
+	char name[64], stamp[32];
+	time_t now = time(NULL);
+
+	strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", localtime(&now));
+	snprintf(name, sizeof(name), "gxemul-%s.%s", stamp, extension);
+	for (int suffix = 2; access(name, F_OK) == 0; suffix++)
+		snprintf(name, sizeof(name), "gxemul-%s-%d.%s", stamp,
+		    suffix, extension);
+	return strdup(name);
+}
+
+
+static bool have_ffmpeg(void)
+{
+	return system("command -v ffmpeg >/dev/null 2>&1") == 0;
+}
+
+
+/*  Converts an XColor to 8-bit r, g, b.  */
+static void xcolor_rgb(const XColor *c, unsigned char *rgb)
+{
+	rgb[0] = c->red >> 8;
+	rgb[1] = c->green >> 8;
+	rgb[2] = c->blue >> 8;
+}
+
+
+/*
+ *  Returns a new 24-bit RGB image of what a framebuffer window shows,
+ *  or NULL if that isn't possible.
+ */
+static unsigned char *capture_rgb(struct fb_window *fbwin, int *wp, int *hp)
+{
+	if (fbwin == NULL || fbwin->x11_display == NULL ||
+	    fbwin->fb_ximage == NULL || fbwin->x11_fb_winxsize <= 0)
+		return NULL;
+
+	XImage *img = fbwin->fb_ximage;
+	Visual *visual = DefaultVisual(fbwin->x11_display, fbwin->x11_screen);
+#if defined(__cplusplus) || defined(c_plusplus)
+	if (visual->c_class != TrueColor) {
+#else
+	if (visual->class != TrueColor) {
+#endif
+		printf("screen capture only supports TrueColor X11 displays\n");
+		return NULL;
+	}
+
+	int w = img->width, h = img->height;
+	unsigned long masks[3] = { visual->red_mask, visual->green_mask,
+	    visual->blue_mask };
+	int shifts[3];
+	unsigned long maxes[3];
+	for (int c = 0; c < 3; c++) {
+		shifts[c] = 0;
+		while (masks[c] != 0 && !((masks[c] >> shifts[c]) & 1))
+			shifts[c]++;
+		maxes[c] = masks[c] >> shifts[c];
+		if (maxes[c] == 0)
+			maxes[c] = 1;
+	}
+
+	unsigned char *rgb = (unsigned char *) malloc((size_t) w * h * 3);
+	if (rgb == NULL)
+		return NULL;
+
+	for (int y = 0; y < h; y++)
+		for (int x = 0; x < w; x++) {
+			unsigned long pixel = XGetPixel(img, x, y);
+			unsigned char *p = rgb + ((size_t) y * w + x) * 3;
+			for (int c = 0; c < 3; c++)
+				p[c] = ((pixel & masks[c]) >> shifts[c]) * 255
+				    / maxes[c];
+		}
+
+	/*  Draw the emulated cursor like x11_redraw_cursor() does:  */
+	if (fbwin->cursor_on) {
+		unsigned char white[3], black[3];
+		xcolor_rgb(&fbwin->x11_graycolor[N_GRAYCOLORS-1], white);
+		xcolor_rgb(&fbwin->x11_graycolor[0], black);
+		int x0 = fbwin->cursor_x / fbwin->scaledown;
+		int y0 = fbwin->cursor_y / fbwin->scaledown;
+
+		for (int y = 0; y < fbwin->cursor_ysize; y += fbwin->scaledown)
+			for (int x = 0; x < fbwin->cursor_xsize;
+			    x += fbwin->scaledown) {
+				int px = x0 + x / fbwin->scaledown;
+				int py = y0 + y / fbwin->scaledown;
+				int pv = 0, n = 0, c = 0;
+
+				if (px < 0 || py < 0 || px >= w || py >= h)
+					continue;
+
+				for (int suby = 0; suby < fbwin->scaledown; suby++)
+					for (int subx = 0; subx < fbwin->scaledown; subx++) {
+						c = fbwin->cursor_pixels[y+suby][x+subx];
+						if (c >= 0) {
+							pv += c;
+							n++;
+						}
+					}
+				pv = n > 0 ? pv / n : c;
+
+				unsigned char *p = rgb + ((size_t) py * w + px) * 3;
+				switch (pv) {
+				case CURSOR_COLOR_TRANSPARENT:
+					break;
+				case CURSOR_COLOR_INVERT:
+					memcpy(p, memcmp(p, white, 3) != 0 ?
+					    white : black, 3);
+					break;
+				default:
+					xcolor_rgb(&fbwin->x11_graycolor[pv], p);
+				}
+			}
+	}
+
+	*wp = w;
+	*hp = h;
+	return rgb;
+}
+
+
+/*  Returns the first framebuffer window of a machine, or NULL.  */
+static struct fb_window *capture_fbwin(struct machine *m)
+{
+	if (m == NULL || m->x11_md.n_fb_windows < 1 ||
+	    m->x11_md.fb_windows[0]->x11_fb_winxsize <= 0) {
+		printf("this machine has no framebuffer window\n");
+		return NULL;
+	}
+	return m->x11_md.fb_windows[0];
+}
+
+
+/*
+ *  x11_grab():
+ *
+ *  Saves a screenshot of a machine's framebuffer window.
+ */
+int x11_grab(struct machine *m, const char *file)
+{
+	struct fb_window *fbwin = capture_fbwin(m);
+	unsigned char *rgb;
+	int w, h, ok;
+
+	if (fbwin == NULL || (rgb = capture_rgb(fbwin, &w, &h)) == NULL)
+		return -1;
+
+	bool ffmpeg = have_ffmpeg();
+	char *name = file != NULL ? strdup(file) :
+	    capture_name(ffmpeg ? "png" : "ppm");
+	if (strchr(name, '\'') != NULL) {
+		printf("file names with quotes are not supported\n");
+		free(rgb);
+		free(name);
+		return -1;
+	}
+
+	if (ffmpeg) {
+		char cmd[1024];
+		snprintf(cmd, sizeof(cmd), "ffmpeg -loglevel error -y"
+		    " -f rawvideo -pixel_format rgb24 -video_size %dx%d -i -"
+		    " -frames:v 1 -update 1 '%s'", w, h, name);
+		signal(SIGPIPE, SIG_IGN);
+		FILE *f = popen(cmd, "w");
+		ok = f != NULL &&
+		    fwrite(rgb, (size_t) w * 3, h, f) == (size_t) h;
+		if (f != NULL && pclose(f) != 0)
+			ok = 0;
+	} else {
+		FILE *f = fopen(name, "wb");
+		ok = f != NULL && fprintf(f, "P6\n%d %d\n255\n", w, h) > 0 &&
+		    fwrite(rgb, (size_t) w * 3, h, f) == (size_t) h;
+		if (f != NULL && fclose(f) != 0)
+			ok = 0;
+	}
+
+	if (ok)
+		printf("saved screenshot %s\n", name);
+	else
+		printf("couldn't save screenshot %s\n", name);
+	free(rgb);
+	free(name);
+	return ok ? 0 : -1;
+}
+
+
+/*  Sends the frames that are due by now to ffmpeg.  */
+static void video_tick(void)
+{
+	struct timeval now;
+	unsigned char *rgb;
+	int w, h;
+
+	if (video_pipe == NULL)
+		return;
+
+	gettimeofday(&now, NULL);
+	unsigned long due = ((now.tv_sec - video_start.tv_sec) * 1000000L +
+	    (now.tv_usec - video_start.tv_usec)) * VIDEO_FPS / 1000000L + 1;
+	if (due <= video_frames)
+		return;
+
+	/*  After a long stall, skip most of the missed frames:  */
+	unsigned long count = due - video_frames;
+	if (count > 5 * VIDEO_FPS)
+		count = 5 * VIDEO_FPS;
+	video_frames = due;
+
+	rgb = capture_rgb(video_fbwin, &w, &h);
+	bool ok = rgb != NULL && w == video_width && h == video_height;
+	for (; ok && count > 0; count--)
+		ok = fwrite(rgb, (size_t) w * 3, h, video_pipe) == (size_t) h;
+	ok = ok && fflush(video_pipe) == 0;
+	free(rgb);
+
+	if (!ok) {
+		printf("[ video stopped: the screen changed size, or "
+		    "ffmpeg failed ]\n");
+		x11_video_stop();
+	}
+}
+
+
+/*
+ *  x11_video_start():
+ *
+ *  Starts recording a machine's framebuffer window.
+ */
+int x11_video_start(struct machine *m, const char *file)
+{
+	struct fb_window *fbwin;
+	unsigned char *rgb;
+	char cmd[1024];
+
+	if (video_pipe != NULL) {
+		printf("already recording %s\n", video_file);
+		return -1;
+	}
+	if (!have_ffmpeg()) {
+		printf("recording needs ffmpeg, which wasn't found\n");
+		return -1;
+	}
+	if ((fbwin = capture_fbwin(m)) == NULL ||
+	    (rgb = capture_rgb(fbwin, &video_width, &video_height)) == NULL)
+		return -1;
+	free(rgb);
+
+	char *name = file != NULL ? strdup(file) : capture_name("mp4");
+	if (strchr(name, '\'') != NULL) {
+		printf("file names with quotes are not supported\n");
+		free(name);
+		return -1;
+	}
+
+	/*  An odd frame size is padded to an even one, which the H.264
+	    encoder needs:  */
+	snprintf(cmd, sizeof(cmd), "ffmpeg -loglevel error -y"
+	    " -f rawvideo -pixel_format rgb24 -video_size %dx%d"
+	    " -framerate %d -i -"
+	    " -vf 'pad=ceil(iw/2)*2:ceil(ih/2)*2'"
+	    " -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p '%s'",
+	    video_width, video_height, VIDEO_FPS, name);
+	signal(SIGPIPE, SIG_IGN);
+	if ((video_pipe = popen(cmd, "w")) == NULL) {
+		printf("couldn't start ffmpeg\n");
+		free(name);
+		return -1;
+	}
+
+	video_fbwin = fbwin;
+	video_file = name;
+	gettimeofday(&video_start, NULL);
+	video_frames = 0;
+	video_tick();
+	if (video_pipe == NULL)
+		return -1;
+
+	printf("recording to %s\n", name);
+	return 0;
+}
+
+
+/*
+ *  x11_video_stop():
+ *
+ *  Stops recording, and waits for ffmpeg to finish the file.
+ */
+void x11_video_stop(void)
+{
+	if (video_pipe == NULL) {
+		printf("not recording\n");
+		return;
+	}
+
+	FILE *f = video_pipe;
+	video_tick();
+	if (video_pipe != NULL)
+		f = video_pipe;
+	video_pipe = NULL;
+
+	if (pclose(f) == 0)
+		printf("saved video %s\n", video_file);
+	else
+		printf("video %s failed\n", video_file);
+	free(video_file);
+	video_file = NULL;
+	video_fbwin = NULL;
+}
+
+
+/*
  *  x11_check_event():
  *
  *  Check for X11 events.
@@ -1007,6 +1352,9 @@ void x11_check_event(struct emul *emul)
 
 	for (i=0; i<emul->n_machines; i++)
 		x11_check_events_machine(emul, emul->machines[i]);
+
+	/*  If a framebuffer is being recorded, send any frames that are due:  */
+	video_tick();
 }
 
 #endif	/*  WITH_X11  */

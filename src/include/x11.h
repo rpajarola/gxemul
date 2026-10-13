@@ -94,6 +94,9 @@ void x11_putpixel_fb(struct machine *, int, int x, int y, int color);
 void x11_putimage_fb(struct machine *, int);
 #endif
 void x11_init(struct machine *);
+int x11_grab(struct machine *, const char *file);
+int x11_video_start(struct machine *, const char *file);
+void x11_video_stop(void);
 void x11_fb_resize(struct fb_window *win, int new_xsize, int new_ysize);
 void x11_set_standard_properties(struct fb_window *fb_window);
 struct fb_window *x11_fb_init(int xsize, int ysize, char *name,
