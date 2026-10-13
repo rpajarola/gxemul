@@ -278,6 +278,9 @@ int net_ethernet_rx_avail(struct net *net, struct nic_data *nic)
 			    sizeof(buf), 0, (struct sockaddr *)&si, &si_len);
 
 			if (res != -1) {
+				unsigned char *frame;
+				int len = res;
+
 				nreceived ++;
 
 				debugmsg(SUBSYS_NET, "RX avail", VERBOSITY_DEBUG,
@@ -286,17 +289,23 @@ int net_ethernet_rx_avail(struct net *net, struct nic_data *nic)
 				    inet_ntoa(si.sin_addr),
 				    ntohs(si.sin_port));
 
+				frame = net_distributed_decode(net, buf, &len);
+				if (frame == NULL)
+					continue;
+
 				/*  Add the packet to all "our" NICs on this
 				    network:  */
 				for (i=0; i<net->n_nics; i++) {
 					struct ethernet_packet_link *lp;
 					lp = net_allocate_ethernet_packet_link(
-					    net, net->nic_data[i], res);
-					memcpy(lp->data, buf, res);
+					    net, net->nic_data[i], len);
+					memcpy(lp->data, frame, len);
 				}
 			}
 		} while (res != -1 && nreceived < 100);
 	}
+
+	net_distributed_keepalive(net);
 
 	/*  IP protocol specific:  */
 	net_udp_rx_avail(net, nic);
@@ -426,7 +435,7 @@ void net_ethernet_tx(struct net *net, struct nic_data *nic,
 	if (!for_the_gateway && net->remote_nets != NULL) {
 		struct remote_net *rnp = net->remote_nets;
 		while (rnp != NULL) {
-			send_udp(&rnp->ipv4_addr, rnp->portnr, packet, len);
+			net_distributed_send(net, rnp, packet, len);
 			rnp = rnp->next;
 		}
 	}
@@ -701,6 +710,10 @@ void net_dumpinfo(struct net *net)
 	if (net->local_port != 0)
 		debug("distributed network: local port = %i\n",
 		    net->local_port);
+	if (net->l2tp)
+		debug("L2TPv3: session %u, %i byte cookie, %s\n",
+		    (unsigned)net->l2tp_session, (int)net->l2tp_cookie_len,
+		    net->l2tp_counter ? "counter" : "no counter");
 	debug_indentation(iadd);
 	while (rnp != NULL) {
 		debug("remote \"%s\": ", rnp->name);

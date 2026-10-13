@@ -113,6 +113,9 @@ through an example is good enough:
 	<b>ipv4len(16)</b>          <font color="#2020cf">!  it can be overridden like this.</font>
 	<font color="#2020cf">!  local_port(12345)</font>
 	<font color="#2020cf">!  add_remote("localhost:12346")</font>
+	<font color="#2020cf">!  l2tp(yes)                          ! L2TPv3 instead of raw</font>
+	<font color="#2020cf">!  l2tp_session(1)                    ! frames, see <a href="networking.html#multihost">networking</a></font>
+	<font color="#2020cf">!  l2tp_cookie("0x0123456789abcdef")</font>
 <b>)</b>
 
 <font color="#2020cf">!  This creates a machine:</font>

@@ -32,6 +32,7 @@
  */
 
 #include <stdbool.h>
+#include <time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -162,7 +163,26 @@ struct net {
 	int		local_port;
 	int		local_port_socket;
 	struct remote_net *remote_nets;
+	time_t		next_keepalive;
+
+	/*  Static L2TPv3 framing for the distributed network:  */
+	bool		l2tp;
+	uint32_t	l2tp_session;
+	uint8_t		l2tp_cookie[8];
+	size_t		l2tp_cookie_len;
+	bool		l2tp_counter;
+	uint32_t	l2tp_seq;
+	bool		l2tp_warned;
 };
+
+/*  net_l2tp.c:  */
+bool net_l2tp_init(struct net *net, uint32_t session, const char *cookie,
+	bool counter);
+void net_distributed_send(struct net *net, struct remote_net *rnp,
+	const unsigned char *packet, int len);
+unsigned char *net_distributed_decode(struct net *net, unsigned char *buf,
+	int *lenp);
+void net_distributed_keepalive(struct net *net);
 
 /*  net_tap.c:  */
 void net_tap_rx_avail(struct net *net);

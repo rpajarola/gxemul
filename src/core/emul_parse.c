@@ -201,6 +201,10 @@ static char cur_net_tapdev[50];
 static char cur_net_ipv4net[50];
 static char cur_net_ipv4len[50];
 static char cur_net_local_port[10];
+static char cur_net_l2tp[10];
+static char cur_net_l2tp_session[20];
+static char cur_net_l2tp_cookie[30];
+static char cur_net_l2tp_counter[10];
 #define	MAX_N_REMOTE		20
 #define	MAX_REMOTE_LEN		100
 static char *cur_net_remote[MAX_N_REMOTE];
@@ -326,6 +330,10 @@ static void parse__emul(struct emul *e, FILE *f, int *in_emul, int *line,
 		snprintf(cur_net_ipv4len, sizeof(cur_net_ipv4len), "%i",
 		    NET_DEFAULT_IPV4_LEN);
 		strlcpy(cur_net_local_port, "", sizeof(cur_net_local_port));
+		cur_net_l2tp[0] = '\0';
+		cur_net_l2tp_session[0] = '\0';
+		cur_net_l2tp_cookie[0] = '\0';
+		cur_net_l2tp_counter[0] = '\0';
 		cur_net_n_remote = 0;
 		return;
 	}
@@ -374,7 +382,8 @@ static void parse__emul(struct emul *e, FILE *f, int *in_emul, int *line,
 /*
  *  parse__net():
  *
- *  Simple words: ipv4net, ipv4len, local_port
+ *  Simple words: ipv4net, ipv4len, local_port, l2tp, l2tp_session,
+ *  l2tp_cookie, l2tp_counter
  *
  *  Complex: add_remote
  *
@@ -410,6 +419,21 @@ static void parse__net(struct emul *e, FILE *f, int *in_emul, int *line,
 			exit(1);
 		}
 
+		if (cur_net_l2tp[0] && parse_on_off(cur_net_l2tp)) {
+			if (!net_l2tp_init(e->net, cur_net_l2tp_session[0] ?
+			    strtoul(cur_net_l2tp_session, NULL, 0) : 1,
+			    cur_net_l2tp_cookie, cur_net_l2tp_counter[0] ?
+			    parse_on_off(cur_net_l2tp_counter) : true)) {
+				fatal("line %i: bad L2TPv3 settings\n", *line);
+				exit(1);
+			}
+		} else if (cur_net_l2tp_session[0] || cur_net_l2tp_cookie[0] ||
+		    cur_net_l2tp_counter[0]) {
+			fatal("line %i: l2tp_session, l2tp_cookie and "
+			    "l2tp_counter need l2tp(yes)\n", *line);
+			exit(1);
+		}
+
 		for (i=0; i<cur_net_n_remote; i++) {
 			free(cur_net_remote[i]);
 			cur_net_remote[i] = NULL;
@@ -423,6 +447,10 @@ static void parse__net(struct emul *e, FILE *f, int *in_emul, int *line,
 	WORD("ipv4net", cur_net_ipv4net);
 	WORD("ipv4len", cur_net_ipv4len);
 	WORD("local_port", cur_net_local_port);
+	WORD("l2tp", cur_net_l2tp);
+	WORD("l2tp_session", cur_net_l2tp_session);
+	WORD("l2tp_cookie", cur_net_l2tp_cookie);
+	WORD("l2tp_counter", cur_net_l2tp_counter);
 
 	if (strcmp(word, "add_remote") == 0) {
 		read_one_word(f, word, maxbuflen,

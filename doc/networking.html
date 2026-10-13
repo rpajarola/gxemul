@@ -280,10 +280,46 @@ acting as the nfs server. Note that the nfs server has ports 15000 and
 <p>"<tt>localhost</tt>" can be changed to the Internet hostname of a 
 remote machine, to run the simulation across a physical network.
 
-<p><font color="#ff0000"><b>NOTE:</b> There is no error checking or
+<p>Each UDP datagram carries one raw Ethernet frame with no other
+header, which is also the format of the HECnet bridge, simh
+(<tt>attach xq udp:...</tt>), QEMU (<tt>-netdev dgram</tt>) and
+gobootd's <tt>bootbridge</tt>. Frames are sent from <tt>local_port</tt>,
+so peers that learn their peers from incoming frames can answer.
+
+<p><font color="#ff0000"><b>NOTE:</b> In this raw mode there is no
 security checking of any kind. All UDP packets arriving at the input port
-are added to the emulated ethernet. This is not very good of course; use 
-this feature at your own risk.</font>
+are added to the emulated ethernet. Use L2TPv3 with a cookie (below) for
+anything but a trusted network.</font>
+
+<p><b>L2TPv3:</b> With <tt>l2tp(yes)</tt>, frames are carried in static
+L2TPv3 over UDP (RFC 3931, Ethernet as in RFC 4719), as Linux's
+<tt>ip l2tp</tt>, QEMU's <tt>-netdev l2tpv3</tt> and <tt>bootbridge
+-l2tp</tt> speak it, without the control connection:
+
+<p><table border="0"><tr><td width="40">&nbsp;</td><td><pre>
+<b>net(</b>
+	<b>local_port(1701)</b>
+	<b>add_remote(<font color="#ff003f">"192.168.1.10:1701"</font>)</b>
+	<b>l2tp(yes)</b>
+	<b>l2tp_session(1)</b>			<font color="#2020cf">!  default 1, used in both directions</font>
+	<b>l2tp_cookie(<font color="#ff003f">"0x0123456789abcdef"</font>)</b>	<font color="#2020cf">!  8 or 16 hex digits, or none</font>
+	<font color="#2020cf">!  l2tp_counter(no)		!  default yes: L2-specific sublayer</font>
+<b>)</b>
+</pre></td></tr></table>
+
+<p>Datagrams with another session ID or cookie are dropped (a warning is
+printed for the first one), so the cookie works as a password against
+anyone who cannot see the traffic. It is sent in clear, so across
+untrusted networks carry the UDP over WireGuard or an SSH tunnel.
+Both ends must agree on the session, the cookie and <tt>l2tp_counter</tt>.
+
+<p>In both modes, a keepalive (an Ethernet loopback frame addressed to
+the first NIC itself) is sent to the remotes every minute, so that a
+bridge which learns its peers keeps sending broadcasts to an idle
+machine. Keepalives received are dropped.
+
+<p>Note that the simulated gateway (10.0.0.254 by default, with DHCP and
+NAT) is still active in this mode, and answers DHCP requests.
 
 
 
