@@ -10,7 +10,7 @@ all: $(OBJS)
 
 $(OBJS): Makefile
 
-debugger.c: debugger_cmds.c
+debugger.o: debugger_cmds.c
 
 clean:
 	rm -f $(OBJS) *core tmp_*.*c
