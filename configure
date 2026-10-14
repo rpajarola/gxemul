@@ -138,8 +138,12 @@ printf "/*
 \n#ifndef CONFIG_H\n#define CONFIG_H\n\n" > config.h
 
 
-#  Figure out if VERSION should be defined.
+#  Figure out if VERSION should be defined: from GXEMUL_VERSION, or from
+#  the directory name (gxemul-0.7.0).
 X=`basename \`pwd\`|cut -d \- -f 2-`
+if [ -n "$GXEMUL_VERSION" ]; then
+	X="$GXEMUL_VERSION"
+fi
 if [ z"$X" = zgxemul ]; then
 	printf "#define VERSION \"(unknown version)\"\n" >> config.h
 else
@@ -330,19 +334,35 @@ if [ z$NOX11 = z ]; then
 
 	XOK=0
 
-	XINCLUDE=-I/usr/X11R6/include
-	$CC $CFLAGS _test_x11.c -c -o _test_x11.o $XINCLUDE 2> /dev/null
-
-	XLIB="-L/usr/X11R6/lib -lX11 -Wl,-rpath,/usr/X11R6/lib"
-	$CC $CFLAGS _test_x11.o -o _test_x11 $XLIB 2> /dev/null
-
-	if [ -x _test_x11 ]; then
-		if [ 1 = `./_test_x11` ]; then
-			XOK=1
+	#  pkg-config knows where X11 is, e.g. with Homebrew's libx11:
+	if pkg-config --exists x11 2> /dev/null; then
+		XINCLUDE=`pkg-config --cflags x11`
+		XLIB=`pkg-config --libs x11`
+		$CC $CFLAGS _test_x11.c -c -o _test_x11.o $XINCLUDE 2> /dev/null
+		$CC $CFLAGS _test_x11.o -o _test_x11 $XLIB 2> /dev/null
+		if [ -x _test_x11 ]; then
+			if [ 1 = `./_test_x11` ]; then
+				XOK=1
+			fi
 		fi
+		rm -f _test_x11 _test_x11.o
 	fi
 
-	rm -f _test_x11 _test_x11.o
+	if [ z$XOK = z0 ]; then
+		XINCLUDE=-I/usr/X11R6/include
+		$CC $CFLAGS _test_x11.c -c -o _test_x11.o $XINCLUDE 2> /dev/null
+
+		XLIB="-L/usr/X11R6/lib -lX11 -Wl,-rpath,/usr/X11R6/lib"
+		$CC $CFLAGS _test_x11.o -o _test_x11 $XLIB 2> /dev/null
+
+		if [ -x _test_x11 ]; then
+			if [ 1 = `./_test_x11` ]; then
+				XOK=1
+			fi
+		fi
+
+		rm -f _test_x11 _test_x11.o
+	fi
 
 	if [ z$XOK = z0 ]; then
 		XINCLUDE=-I/usr/X11R7/include
