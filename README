@@ -73,9 +73,18 @@ GXemul's limitations
 Quick start
 -----------
 
-Packages for Debian and Ubuntu (an apt repository) and macOS (Homebrew,
-or an installer package that needs no Homebrew) are described in
-packaging/README.md:  brew install rpajarola/tap/gxemul
+Packages, and the source, are attached to each release at
+https://github.com/rpajarola/gxemul/releases, and are available from:
+
+  Debian and Ubuntu (amd64, arm64): the apt repository at
+  https://rpajarola.github.io/apt/, then  sudo apt install gxemul
+
+  macOS: the Homebrew tap at https://github.com/rpajarola/homebrew-tap,
+  brew install rpajarola/tap/gxemul, or the installer package from a
+  release, which needs no Homebrew.
+
+packaging/README.md describes what is installed and how the packages
+are built.
 
 To compile, type './configure' and then 'make'. This should work on most
 Unix-like systems. If it does not, then please mail me a bug report.
