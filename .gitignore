@@ -25,3 +25,4 @@
 # Regenerated on every build
 /src/devices/autodev.c
 /src/machines/automachine.c
+/dist/
