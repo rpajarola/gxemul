@@ -75,7 +75,7 @@ jobs:
             echo "PACKAGES_TOKEN is not set; skipping"
             exit 0
           fi
-          packaging/update-tap.sh gxemul "$TAG"
+          packaging/update-tap.sh gxemul-rp "$TAG"
 
   apt:
     needs: deb

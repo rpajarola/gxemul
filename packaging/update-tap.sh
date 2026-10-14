@@ -9,7 +9,7 @@ set -euo pipefail
 
 formula=$1
 tag=$2
-repo=${GITHUB_REPOSITORY:-rpajarola/$formula}
+repo=${GITHUB_REPOSITORY:-rpajarola/gxemul}
 tap=${TAP_REPO:-rpajarola/homebrew-tap}
 url="https://github.com/$repo/archive/refs/tags/$tag.tar.gz"
 

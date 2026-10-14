@@ -77,10 +77,10 @@ Packages, and the source, are attached to each release at
 https://github.com/rpajarola/gxemul/releases, and are available from:
 
   Debian and Ubuntu (amd64, arm64): the apt repository at
-  https://rpajarola.github.io/apt/, then  sudo apt install gxemul
+  https://rpajarola.github.io/apt/, then  sudo apt install gxemul-rp
 
   macOS: the Homebrew tap at https://github.com/rpajarola/homebrew-tap,
-  brew install rpajarola/tap/gxemul, or the installer package from a
+  brew install rpajarola/tap/gxemul-rp, or the installer package from a
   release, which needs no Homebrew.
 
 packaging/README.md describes what is installed and how the packages

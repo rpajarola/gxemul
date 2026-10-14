@@ -33,7 +33,7 @@ pkgbuild --root "$root" --identifier io.github.rpajarola.gxemul --version "$VERS
   --install-location / --ownership recommended "$work/gxemul.pkg"
 mkdir -p dist
 arch=$(uname -m)
-out="dist/gxemul-$VERSION-$arch.pkg"
+out="dist/gxemul-rp-$VERSION-$arch.pkg"
 sign=()
 [ -n "${PKG_SIGN_IDENTITY:-}" ] && sign=(--sign "$PKG_SIGN_IDENTITY")
 productbuild --package "$work/gxemul.pkg" ${sign[@]+"${sign[@]}"} "$out"

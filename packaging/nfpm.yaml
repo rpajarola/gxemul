@@ -1,6 +1,6 @@
 # build-deb.sh adds the depends list, which dpkg-shlibdeps works out from
 # the program.
-name: gxemul
+name: gxemul-rp
 arch: "${ARCH}"
 platform: linux
 version: "${VERSION}"
@@ -9,11 +9,20 @@ priority: optional
 maintainer: "Rico Pajarola <rp@servium.ch>"
 homepage: "https://github.com/rpajarola/gxemul"
 license: BSD-3-Clause
+# Replaces the gxemul package, its name before 1.0.0, and the gxemul of
+# Debian and Ubuntu, which install the same files.
+provides:
+  - gxemul
+conflicts:
+  - gxemul
+replaces:
+  - gxemul
 description: |
-  Full-system emulator for MIPS, ARM, PowerPC, Motorola 88K, SuperH and
-  more: DECstation, SGI, Luna 88K, Dreamcast, PlayStation 2 and other
-  machines, with framebuffers on X11. This build adds SIMH tape images,
-  TURBOchannel option ROMs and L2TPv3 networking.
+  Full-system emulator for MIPS, ARM, PowerPC, M88K, SuperH and others
+  GXemul emulates DECstation, SGI, Luna 88K, Dreamcast, PlayStation 2
+  and other machines, with framebuffers on X11. This is the rpajarola
+  fork of GXemul 0.7.0, which adds SIMH tape images, TURBOchannel option
+  ROMs and L2TPv3 networking.
 
 contents:
   - src: dist/stage/usr/bin/gxemul
@@ -23,7 +32,7 @@ contents:
   - src: dist/stage/usr/share/man/man1/gxemul.1.gz
     dst: /usr/share/man/man1/gxemul.1.gz
   - src: dist/stage/usr/share/doc/gxemul
-    dst: /usr/share/doc/gxemul
+    dst: /usr/share/doc/gxemul-rp
     type: tree
   - src: LICENSE
-    dst: /usr/share/doc/gxemul/copyright
+    dst: /usr/share/doc/gxemul-rp/copyright

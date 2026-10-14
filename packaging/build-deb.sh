@@ -36,5 +36,5 @@ depends=$(cd "$work" && dpkg-shlibdeps -O -e "$root/dist/stage/usr/bin/gxemul" |
 } > "$work/nfpm.yaml"
 
 VERSION="$VERSION" ARCH="$ARCH" nfpm pkg --config "$work/nfpm.yaml" --packager deb \
-  --target "dist/gxemul_${VERSION}_${ARCH}.deb"
-ls -l "dist/gxemul_${VERSION}_${ARCH}.deb"
+  --target "dist/gxemul-rp_${VERSION}_${ARCH}.deb"
+ls -l "dist/gxemul-rp_${VERSION}_${ARCH}.deb"

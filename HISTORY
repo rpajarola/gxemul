@@ -5115,3 +5115,12 @@ Changelog for GXemul:
 
 ==============  RELEASE 0.7.0-rp1  ==============
 
+20261014	This fork now has its own version numbers, starting at 1.0.0
+		(still based on GXemul 0.7.0). The packages are now called
+		gxemul-rp; the .deb conflicts with, replaces and provides
+		gxemul, so it never competes with Debian's and Ubuntu's
+		gxemul package, and the Homebrew formula is renamed from
+		gxemul. The program is still called gxemul.
+
+==============  RELEASE 1.0.0  ==============
+

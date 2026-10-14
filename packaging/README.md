@@ -1,9 +1,13 @@
 # Packages
 
-gxemul is packaged as a `.deb` for Debian and Ubuntu (amd64 and arm64,
-built on Ubuntu 24.04, published in the shared apt repository
-[rpajarola/apt](https://github.com/rpajarola/apt)), a `.pkg` for macOS, and a Homebrew formula in
+gxemul is packaged as `gxemul-rp` (called `gxemul` before 1.0.0): a
+`.deb` for Debian and Ubuntu (amd64 and arm64, built on Ubuntu 24.04,
+published in the shared apt repository [rpajarola/apt](https://github.com/rpajarola/apt)),
+a `.pkg` for macOS, and a Homebrew formula in
 [rpajarola/homebrew-tap](https://github.com/rpajarola/homebrew-tap).
+The `.deb` conflicts with, replaces and provides `gxemul`, so it replaces
+an installed `gxemul` package, including Debian's and Ubuntu's, and
+never competes with it for upgrades. The program is still `gxemul`.
 Publishing a GitHub release builds all of them
 ([`.github/workflows/release.yml`](../.github/workflows/release.yml)).
 
@@ -17,18 +21,18 @@ sudo curl -fsSLo /usr/share/keyrings/rpajarola.gpg https://rpajarola.github.io/a
 echo "deb [signed-by=/usr/share/keyrings/rpajarola.gpg] https://rpajarola.github.io/apt stable main" \
   | sudo tee /etc/apt/sources.list.d/rpajarola.list
 sudo apt update
-sudo apt install gxemul
+sudo apt install gxemul-rp
 ```
 
-or a downloaded package: `sudo apt install ./gxemul_<version>_<arch>.deb`.
+or a downloaded package: `sudo apt install ./gxemul-rp_<version>_<arch>.deb`.
 
 **macOS** with Homebrew:
 
 ```
-brew install rpajarola/tap/gxemul
+brew install rpajarola/tap/gxemul-rp
 ```
 
-or the `.pkg` from a release: `sudo installer -pkg gxemul-<version>-arm64.pkg -target /`
+or the `.pkg` from a release: `sudo installer -pkg gxemul-rp-<version>-arm64.pkg -target /`
 (the package is not signed, so double-clicking it needs right-click → Open).
 
 ## What is installed
@@ -65,19 +69,19 @@ Debian or Ubuntu:
 
 ```
 sudo apt install build-essential pkg-config libx11-dev dpkg-dev
-packaging/build-deb.sh      # dist/gxemul_<version>_<arch>.deb
+packaging/build-deb.sh      # dist/gxemul-rp_<version>_<arch>.deb
 ```
 
 macOS:
 
 ```
 brew install pkgconf libx11
-packaging/build-pkg.sh      # dist/gxemul-<version>-<arch>.pkg
+packaging/build-pkg.sh      # dist/gxemul-rp-<version>-<arch>.pkg
 ```
 
 The `.deb` needs nfpm (`go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest`,
 or a release binary). The version is the git tag without its `v`, or
-`0.7.0~git<sha>`; set `VERSION` to override it, and `configure` takes it
+`1.0.0~git<sha>`; set `VERSION` to override it, and `configure` takes it
 from `GXEMUL_VERSION`.
 
 ## Releasing
@@ -85,8 +89,8 @@ from `GXEMUL_VERSION`.
 Tag, then publish a GitHub release for the tag:
 
 ```
-git tag v0.7.0-rp1 && git push origin v0.7.0-rp1
-gh release create v0.7.0-rp1 --generate-notes
+git tag v1.0.0 && git push origin v1.0.0
+gh release create v1.0.0 --generate-notes
 ```
 
 The release workflow then attaches the `.deb`s and the `.pkg`, has
