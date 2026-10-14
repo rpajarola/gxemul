@@ -609,4 +609,10 @@ struct pci_vpd {
  *	Z0-ZZ		User/Product Specific
  */
 
+
+/*  Keep the empty __attribute__ and __noreturn__ above out of the
+    system headers included after this one.  */
+#undef __attribute__
+#undef __noreturn__
+
 #endif /* _DEV_PCI_PCIREG_H_ */

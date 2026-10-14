@@ -356,4 +356,10 @@ struct sonic_cda32 {
 
 #define	SONIC_NREGS	0x40
 
+
+/*  Keep the empty __attribute__ and __noreturn__ above out of the
+    system headers included after this one.  */
+#undef __attribute__
+#undef __noreturn__
+
 #endif /* _DEV_IC_DP83932REG_H_ */

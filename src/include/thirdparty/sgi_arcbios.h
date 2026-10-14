@@ -541,4 +541,10 @@ struct arcbios_fv {
 #endif
 };
 
+
+/*  Keep the empty __attribute__ and __noreturn__ above out of the
+    system headers included after this one.  */
+#undef __attribute__
+#undef __noreturn__
+
 #endif	/*  SGI_ARCBIOS_H  */
