@@ -5052,3 +5052,66 @@ Changelog for GXemul:
 
 ==============  RELEASE 0.7.0  ==============
 
+(The entries below are from the fork at github.com/rpajarola/gxemul.)
+
+20261006	The per-directory .index files are no longer generated,
+		and configure removes its _test*.dSYM directories on macOS.
+		Adding SIMH .tap tape image support: image files ending in
+		.tap are read as SIMH images, with block boundaries and
+		filemarks. READ returns exactly one block (with ILI and the
+		residue when lengths differ), filemarks, end of data and BOT
+		are reported, REQUEST SENSE returns the sense key, flags and
+		information field, and SPACE handles blocks, filemarks and
+		end of data in both directions. Writing .tap images is not
+		implemented; raw tape images work as before.
+		Fixing all compiler warnings (host ARM register helpers are
+		only built on 32-bit ARM hosts, no more VLAs from "const int"
+		array sizes, unused header fields removed, etc).
+20261008	Adding tc_rom("slot:filename") to load a dump of a real
+		TURBOchannel option ROM into a slot, mapped with stride 4 at
+		the option ROM address, so that a real DEC PROM (with
+		prom_emulation(no)) can run the option's diagnostics and
+		firmware.
+		LANCE (le): the station address ROM is now also mapped at
+		slot offset 0x180000 and holds the checksum the PMAD-AA ROM
+		expects. STOP resets CSR0 as on a real Am7990, STRT restarts
+		the transmitter and receiver, received packets include the
+		FCS, loopback mode (with address filtering, DTCR and CRC
+		errors) and forced collisions are implemented. All of the
+		PMAD-AA V5.3a option ROM diagnostics now pass.
+20261009	Fixing an X11 crash when the cursor is partly or entirely
+		outside the framebuffer.
+		BT459 (PMAG-BA): vertical retrace interrupts at about 72 Hz
+		of emulated time, the registers are mirrored throughout the
+		1 MB range, 24-bit overlay and cursor color registers, and
+		the test register's analog comparator. The PMAG-BA V5.3a
+		ROM's console runs on the framebuffer, and its vdac, vram
+		and int diagnostics pass. (The signature analysis registers
+		are still not emulated.)
+20261010	The grabbed X11 mouse pointer is now kept inside the
+		framebuffer window, instead of the middle of the screen, so
+		that clicks don't reach other windows with rootless X servers
+		such as XQuartz. The grab is only released on normal focus
+		changes.
+20261013	Adding static L2TPv3 (RFC 3931/4719, without the control
+		connection) to the distributed network: l2tp(yes),
+		l2tp_session, l2tp_cookie and l2tp_counter in the net()
+		block. Datagrams with another session or cookie are dropped.
+		A keepalive goes to the remotes every minute, and frames are
+		now sent from local_port, so that peers which learn from
+		source addresses (e.g. gobootd's bootbridge) can answer.
+		Adding "grab" and "video" debugger commands, for screenshots
+		(PNG via ffmpeg, or PPM) and MP4 recordings of the first
+		framebuffer window.
+		Fixing the debugger's Makefile dependency on debugger_cmds.c.
+		Fixing the build on Linux: the thirdparty headers' empty
+		__attribute__ and __noreturn__ definitions are undefined at
+		the end of each header, so that glibc's _FORTIFY_SOURCE
+		inline functions keep their attributes.
+		configure finds X11 with pkg-config (e.g. Homebrew's libx11),
+		and takes the version from GXEMUL_VERSION if set.
+		Adding Debian/Ubuntu (.deb) and macOS (.pkg) packages, built
+		by a GitHub release workflow, and a Homebrew formula.
+
+==============  RELEASE 0.7.0-rp1  ==============
+
