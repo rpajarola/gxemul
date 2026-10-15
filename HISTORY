@@ -5131,3 +5131,6 @@ Changelog for GXemul:
 		Alt/Option or Meta/Command ungrabs the mouse. F1..F12 send
 		the xterm escape sequences (F9 and F10 were wrong, and F5..F12
 		lacked the final ~).
+		Adding experiments/dump_tc_rom.py, which dumps a TURBOchannel
+		option ROM over a DECstation's serial console, into an image
+		for tc_rom() (e.g. the 5000/200's soldered SCSI ROM).
