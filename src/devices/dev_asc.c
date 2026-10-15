@@ -825,9 +825,6 @@ DEVICE_ACCESS(asc)
 		regnr = relative_addr;
 	}
 
-	/*  Controller's ID is fixed:  */
-	d->reg_ro[NCR_CFG1] = (d->reg_ro[NCR_CFG1] & ~7) | ASC_SCSI_ID;
-
 	d->reg_ro[NCR_FFLAG] = ((d->reg_ro[NCR_STEP] & 0x7) << 5)
 	    + d->n_bytes_in_fifo;
 
@@ -1166,14 +1163,15 @@ break;
 			break;
 
 		default:
-			fatal("(unimplemented asc cmd 0x%02x)", (int)idata);
+			/*
+			 *  The target mode commands, and anything else
+			 *  that isn't implemented, give an Illegal Command
+			 *  interrupt (the 5000/1xx PROM's self-test issues
+			 *  a target command to check for that):
+			 */
+			debug("(unimplemented asc cmd 0x%02x)", (int)idata);
 			d->reg_ro[NCR_STAT] |= NCRSTAT_INT;
 			d->reg_ro[NCR_INTR] |= NCRINTR_ILL;
-			/*
-			 *  TODO:  exit or continue with Illegal command
-			 *  interrupt?
-			 */
-			exit(1);
 		}
 	}
 
@@ -1239,6 +1237,10 @@ void dev_asc_init(struct machine *machine, struct memory *mem,
 	d->mode         = mode;
 
 	d->reg_ro[NCR_CFG3] = NCRF9XCFG3_CDB;
+
+	/*  The controller's ID is in CFG1, which reads back what was
+	    written to it (the 5000/1xx PROM's self-test checks that):  */
+	d->reg_wo[NCR_CFG1] = d->reg_ro[NCR_CFG1] = ASC_SCSI_ID;
 
 	CHECK_ALLOCATION(d->dma_address_reg_memory = (unsigned char *)
 	    malloc(machine->arch_pagesize));

@@ -105,8 +105,11 @@ struct dec_ioasic_data {
 	int		rackmount_flag;
 	struct interrupt *irq;
 	int		int_asserted;
+	struct cpu	*cpu;
 };
 void dec_ioasic_reassert(struct dec_ioasic_data*);
+size_t dec_ioasic_scsi_dma(void *dma_controller_data, unsigned char *data,
+	size_t len, int writeflag);
 int dev_dec_ioasic_access(struct cpu *cpu, struct memory *mem, uint64_t relative_addr, unsigned char *data, size_t len, int writeflag, void *);
 struct dec_ioasic_data *dev_dec_ioasic_init(struct cpu *cpu, struct memory *mem, uint64_t baseaddr, int rackmount_flag, struct interrupt* irq);
 

@@ -70,6 +70,7 @@ MACHINE_SETUP(pmax)
 	} xx;
 	char tmpstr[1000];
 	struct vfb_data *fb;
+	struct dec_ioasic_data *kmin_ioasic;
 	struct memory *mem = machine->memory;
 	uint64_t addr;
 
@@ -263,7 +264,8 @@ MACHINE_SETUP(pmax)
 		/*  KN02BA "3min" TurboChannel interrupt controller:  */
 		snprintf(tmpstr, sizeof(tmpstr), "kn02ba irq=%s.cpu[%i].%i",
 		    machine->path, machine->bootstrap_cpu, KMIN_INT_TC3);
-		device_add(machine, tmpstr);
+		kmin_ioasic = (struct dec_ioasic_data *)
+		    device_add(machine, tmpstr);
 
 		/*
 		 *  tc0 at mainbus0: 12.5 MHz clock  (0x10000000,slotsize=64MB)
@@ -307,7 +309,7 @@ MACHINE_SETUP(pmax)
 		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn02ba.0x%x",
 		    machine->path, machine->bootstrap_cpu, KMIN_INT_TC3, KMIN_INTR_SCSI);
 		dev_asc_init(machine, mem, 0x1c300000, tmpstr,
-		    NULL, DEV_ASC_DEC, NULL, NULL);
+		    NULL, DEV_ASC_DEC, dec_ioasic_scsi_dma, kmin_ioasic);
 
 		/*
 		 *  TURBOchannel slots 0, 1, and 2 are free for

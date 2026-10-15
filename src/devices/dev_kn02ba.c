@@ -204,6 +204,8 @@ DEVINIT(kn02ba)
 
 	d->msr = KMIN_MSR_SIZE_16Mb;
 
+	devinit->return_ptr = d->dec_ioasic;
+
 	return 1;
 }
 

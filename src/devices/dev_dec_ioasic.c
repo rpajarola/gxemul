@@ -63,6 +63,140 @@ void dec_ioasic_reassert(struct dec_ioasic_data* d)
 }
 
 
+/*
+ *  The DMA pointer registers hold a physical address, shifted left by 3,
+ *  with the address bits above 28 in the low bits:
+ */
+static uint64_t dma_ptr_to_addr(uint32_t ptr)
+{
+	return ((ptr >> 3) & 0x1ffffffc) | ((uint64_t)(ptr & 7) << 29);
+}
+
+static uint32_t dma_addr_to_ptr(uint64_t addr)
+{
+	return IOASIC_DMA_ADDR((uint32_t)addr);
+}
+
+
+/*
+ *  dec_ioasic_scsi_dma():
+ *
+ *  The SCSI DMA engine, for the 53C94 (dev_asc) on a 5000/1xx (3MIN).
+ *  writeflag is non-zero for data from the SCSI bus going to memory.
+ *
+ *  DMA starts at SCSI_DMAPTR and continues to the end of its 4 KB page;
+ *  then SCSI_NEXTPTR is loaded into SCSI_DMAPTR (giving a "pointer loaded"
+ *  interrupt), or if there is no next page (all ones), the transfer
+ *  stops with an overrun.
+ *
+ *  The real IOASIC moves data to and from memory in 8-byte units, and
+ *  keeps a partial unit in SDR0/SDR1, with SCR telling how many 16-bit
+ *  halfwords of it are valid:
+ *
+ *    o)  A transfer to the SCSI bus that starts in the middle of a unit
+ *	  sends the halfwords from SDR0/SDR1 starting at (SCR & 3), when
+ *	  SCR bit 2 is set, and then continues at SCSI_DMAPTR (the next
+ *	  unit).
+ *
+ *    o)  A transfer to memory that starts in the middle of a unit
+ *	  (SCSI_DMAPTR is the start of the unit) starts (SCR & 3) halfwords
+ *	  into it.
+ *
+ *    o)  A transfer to memory that ends in the middle of a unit leaves
+ *	  that unit's halfwords in SDR0/SDR1 and their number in SCR, with
+ *	  SCSI_DMAPTR pointing to the unit, for the driver to copy.  Here,
+ *	  the data is written to memory anyway, so that copying it again
+ *	  does no harm.
+ */
+size_t dec_ioasic_scsi_dma(void *dma_controller_data, unsigned char *data,
+	size_t len, int writeflag)
+{
+	struct dec_ioasic_data *d =
+	    (struct dec_ioasic_data *) dma_controller_data;
+	struct cpu *cpu = d->cpu;
+	uint64_t addr;
+	size_t done = 0;
+
+	if (!(d->csr & IOASIC_CSR_DMAEN_SCSI)) {
+		fatal("[ dec_ioasic: SCSI DMA of %i bytes, but SCSI DMA is"
+		    " not enabled ]\n", (int)len);
+		return 0;
+	}
+	if (((d->csr & IOASIC_CSR_SCSI_DIR) != 0) != (writeflag != 0))
+		fatal("[ dec_ioasic: SCSI DMA %s memory, but the direction"
+		    " bit says otherwise ]\n", writeflag? "to" : "from");
+
+	addr = dma_ptr_to_addr(d->scsi_dmaptr);
+
+	if (d->scsi_scr & IOASIC_SCR_WORD) {
+		int skip = (d->scsi_scr & IOASIC_SCR_WORD) * 2;
+
+		if (writeflag) {
+			addr += skip;
+		} else if (d->scsi_scr & IOASIC_SCR_STATUS) {
+			unsigned char sdr[8];
+			int i;
+
+			for (i = 0; i < 4; i++) {
+				sdr[i] = d->scsi_sdr0 >> (8 * i);
+				sdr[i + 4] = d->scsi_sdr1 >> (8 * i);
+			}
+			while (skip < 8 && done < len)
+				data[done++] = sdr[skip++];
+		}
+		d->scsi_scr = 0;
+	}
+
+	while (done < len) {
+		size_t n = IOASIC_DMA_BLOCKSIZE -
+		    (addr & (IOASIC_DMA_BLOCKSIZE - 1));
+
+		if (n > len - done)
+			n = len - done;
+
+		cpu->memory_rw(cpu, cpu->mem, addr, data + done, n,
+		    writeflag? MEM_WRITE : MEM_READ, PHYSICAL | NO_EXCEPTIONS);
+		done += n;
+		addr += n;
+
+		/*  At the end of a page, go on to the next one:  */
+		if (done < len && (addr & (IOASIC_DMA_BLOCKSIZE - 1)) == 0) {
+			if (d->scsi_nextptr == 0xffffffff) {
+				fatal("[ dec_ioasic: SCSI DMA overrun ]\n");
+				d->intr |= IOASIC_INTR_SCSI_OVRUN;
+				break;
+			}
+			addr = dma_ptr_to_addr(d->scsi_nextptr);
+			d->scsi_nextptr = 0xffffffff;
+			d->intr |= IOASIC_INTR_SCSI_PTR_LOAD;
+		}
+	}
+
+	/*  A partial 8-byte unit at the end of a transfer to memory:  */
+	if (writeflag && (addr & 7) != 0) {
+		unsigned char sdr[8];
+
+		memset(sdr, 0, sizeof(sdr));
+		cpu->memory_rw(cpu, cpu->mem, addr & ~7, sdr, addr & 7,
+		    MEM_READ, PHYSICAL | NO_EXCEPTIONS);
+		d->scsi_sdr0 = sdr[0] | (sdr[1] << 8) | (sdr[2] << 16)
+		    | ((uint32_t)sdr[3] << 24);
+		d->scsi_sdr1 = sdr[4] | (sdr[5] << 8) | (sdr[6] << 16)
+		    | ((uint32_t)sdr[7] << 24);
+		d->scsi_scr = (addr & 7) >> 1;
+		addr &= ~7;
+	}
+
+	d->scsi_dmaptr = dma_addr_to_ptr(addr);
+	dec_ioasic_reassert(d);
+
+	debug("[ dec_ioasic: SCSI DMA, %i bytes %s memory ]\n", (int)done,
+	    writeflag? "to" : "from");
+
+	return done;
+}
+
+
 DEVICE_ACCESS(dec_ioasic)
 {
 	struct dec_ioasic_data *d = (struct dec_ioasic_data *) extra;
@@ -467,6 +601,7 @@ struct dec_ioasic_data *dev_dec_ioasic_init(struct cpu *cpu,
 
 	d->rackmount_flag = rackmount_flag;
 	d->irq = irqp;
+	d->cpu = cpu;
 
 	memory_device_register(mem, "dec_ioasic", baseaddr,
 	    DEV_DEC_IOASIC_LENGTH, dev_dec_ioasic_access, (void *)d,

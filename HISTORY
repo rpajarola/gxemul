@@ -5134,3 +5134,8 @@ Changelog for GXemul:
 		Adding experiments/dump_tc_rom.py, which dumps a TURBOchannel
 		option ROM over a DECstation's serial console, into an image
 		for tc_rom() (e.g. the 5000/200's soldered SCSI ROM).
+		5000/1xx (3MIN): SCSI DMA through the IOASIC, so the real
+		KN02-BA PROM finds disks and boots from them. Only SCC 1
+		takes console input, so no xterms are needed. The 53C94 reads
+		back what was written to CFG1, and gives an Illegal Command
+		interrupt for unimplemented commands instead of exiting.

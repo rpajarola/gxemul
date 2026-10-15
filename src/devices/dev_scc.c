@@ -490,7 +490,10 @@ void *dev_scc_init(struct machine *machine, struct memory *mem,
 	d->scc_nr  = scc_nr;
 	d->use_fb  = use_fb;
 	d->addrmul = addrmul;
-	d->console_handle = console_start_slave(machine, "SCC", 1);
+	/*  Only SCC 1 reads keystrokes from its console (see the tick
+	    function), so SCC 0's console is not an input, and does not
+	    need an xterm of its own:  */
+	d->console_handle = console_start_slave(machine, "SCC", scc_nr == 1);
 
 	d->scc_register_r[SCC_RR0] |= SCC_RR0_TX_UNDERRUN;
 
