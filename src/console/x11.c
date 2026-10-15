@@ -68,9 +68,29 @@ void x11_video_stop(void) { }
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/cursorfont.h>
+#include <X11/keysym.h>
 
-static bool left_ctrl = false;
-static bool left_alt = false;
+/*
+ *  CTRL+ALT ungrabs the mouse.  On macOS (XQuartz), Option is Alt (or
+ *  Mode_switch, depending on the XQuartz settings), and Command is
+ *  Meta; any of these work as the "ALT" key, on either side.
+ */
+#ifdef __APPLE__
+#define	UNGRAB_KEYS	"Ctrl+Option"
+#else
+#define	UNGRAB_KEYS	"CTRL+ALT"
+#endif
+
+static bool ctrl_down = false;
+static bool alt_down = false;
+
+static bool is_ungrab_alt(KeySym key)
+{
+	return key == XK_Alt_L || key == XK_Alt_R ||
+	    key == XK_Meta_L || key == XK_Meta_R ||
+	    key == XK_Mode_switch;
+}
+
 static struct fb_window *grabbed = NULL;
 static bool mouseExplicityMoved = false;
 static int mouseXbeforeGrab = 0;
@@ -490,7 +510,7 @@ void x11_set_standard_properties(struct fb_window *fb_window)
 	CHECK_ALLOCATION(title = malloc(title_maxlen));
 
 	snprintf(title, title_maxlen, "%s%s", fb_window->name,
-	    grabbed != NULL ? " (Left CTRL+ALT to ungrab)" : "");
+	    grabbed != NULL ? " (" UNGRAB_KEYS " to ungrab)" : "");
 
 	XSetStandardProperties(fb_window->x11_display,
 	    fb_window->x11_fb_window, title, "GXemul " VERSION,
@@ -791,157 +811,109 @@ static void x11_check_events_machine(struct emul *emul, struct machine *m)
 				grab(fbwin);
 			}
 
-			if (event.type==KeyRelease) {
-				XKeyPressedEvent *ke = &event.xkey;
-				int x = ke->keycode;
-				switch (x) {
-					case 37:left_ctrl = false;
-						break;
-					case 64:left_alt = false;
-						break;
-					//default:
-						// 37 = left CTRL, 64 = left ALT
-						//debugmsg(SUBSYS_X11, "event", VERBOSITY_DEBUG,
-						//    "RELEASE: unimplemented keycode %i", x);
-				}
+			if (event.type == KeyRelease) {
+				KeySym key = XLookupKeysym(&event.xkey, 0);
+
+				if (key == XK_Control_L || key == XK_Control_R)
+					ctrl_down = false;
+				if (is_ungrab_alt(key))
+					alt_down = false;
 			}
 
-			if (event.type==KeyPress) {
+			if (event.type == KeyPress) {
 				char text[15];
 				KeySym key;
-				XKeyPressedEvent *ke = &event.xkey;
 
 				memset(text, 0, sizeof(text));
 
+				/*
+				 *  Keys are recognized by their keysyms, not
+				 *  their keycodes, since keycodes differ
+				 *  between X servers (XQuartz on macOS uses
+				 *  the Mac's own key numbers, so for example
+				 *  its Right Shift has the keycode that F2
+				 *  has on Linux).
+				 */
 				if (XLookupString(&event.xkey, text,
 				    sizeof(text), &key, 0) == 1) {
 					console_makeavail(
 					    m->main_console_handle, text[0]);
 				} else {
-					int x = ke->keycode;
 					/*
-					 *  Special key codes:
-					 *
-					 *  NOTE/TODO: I'm hardcoding these to
-					 *  work with my key map. Maybe they
-					 *  should be read from some file...
-					 *
-					 *  Important TODO 2:  It would be MUCH
-					 *  better if these were converted into
-					 *  'native scancodes', for example for
-					 *  the DECstation's keyboard or the
+					 *  TODO:  It would be MUCH better if
+					 *  these were converted into 'native
+					 *  scancodes', for example for the
+					 *  DECstation's keyboard or the
 					 *  PC-style 8042 controller.
 					 */
-					switch (x) {
-					case 9:	/*  Escape  */
+					switch (key) {
+					case XK_Escape:
 						console_makeavail(m->
 						    main_console_handle, 27);
 						break;
-#if 0
-					/*  TODO  */
-
-					/*  The numeric keypad:  */
-					90=Ins('0')  91=Del(',')
-
-					/*  Above the cursor keys:  */
-					106=Ins  107=Del
-#endif
-					/*  F1..F4:  */
-					case 67:	/*  F1  */
-					case 68:	/*  F2  */
-					case 69:	/*  F3  */
-					case 70:	/*  F4  */
+					/*  F1..F4 send ESC O P..S, and F5..F12
+					    send ESC [ n ~, as on an xterm:  */
+					case XK_F1:
+					case XK_F2:
+					case XK_F3:
+					case XK_F4:
 						console_makeavail(m->
 						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, '[');
 						console_makeavail(m->
 						    main_console_handle, 'O');
 						console_makeavail(m->
 						    main_console_handle, 'P' +
-						    x - 67);
+						    key - XK_F1);
 						break;
-					case 71:	/*  F5  */
+					case XK_F5:
+					case XK_F6:
+					case XK_F7:
+					case XK_F8:
+					case XK_F9:
+					case XK_F10:
+					case XK_F11:
+					case XK_F12:
+						{
+							static const char *codes[] = {
+							    "15", "17", "18", "19",
+							    "20", "21", "23", "24" };
+							const char *c =
+							    codes[key - XK_F5];
+
+							console_makeavail(m->
+							    main_console_handle, 27);
+							console_makeavail(m->
+							    main_console_handle, '[');
+							for (; *c != '\0'; c++)
+								console_makeavail(m->
+								    main_console_handle, *c);
+							console_makeavail(m->
+							    main_console_handle, '~');
+						}
+						break;
+					/*  Cursor keys, and the numeric
+					    keypad's:  */
+					case XK_Up:
+					case XK_KP_Up:
+					case XK_Down:
+					case XK_KP_Down:
+					case XK_Left:
+					case XK_KP_Left:
+					case XK_Right:
+					case XK_KP_Right:
 						console_makeavail(m->
 						    main_console_handle, 27);
 						console_makeavail(m->
 						    main_console_handle, '[');
 						console_makeavail(m->
-						    main_console_handle, '1');
-						console_makeavail(m->
-						    main_console_handle, '5');
-						break;
-					case 72:	/*  F6  */
-					case 73:	/*  F7  */
-					case 74:	/*  F8  */
-						console_makeavail(m->
-						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, '[');
-						console_makeavail(m->
-						    main_console_handle, '1');
-						console_makeavail(m->
-						    main_console_handle, '7' +
-						    x - 72);
-						break;
-					case 75:	/*  F9  */
-					case 76:	/*  F10  */
-						console_makeavail(m->
-						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, '[');
-						console_makeavail(m->
-						    main_console_handle, '2');
-						console_makeavail(m->
-						    main_console_handle, '1' +
-						    x - 68);
-						break;
-					case 95:	/*  F11  */
-					case 96:	/*  F12  */
-						console_makeavail(m->
-						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, '[');
-						console_makeavail(m->
-						    main_console_handle, '2');
-						console_makeavail(m->
-						    main_console_handle, '3' +
-						    x - 95);
-						break;
-					/*  Cursor keys:  */
-					case 98:	/*  Up  */
-					case 104:	/*  Down  */
-					case 100:	/*  Left  */
-					case 102:	/*  Right  */
-						console_makeavail(m->
-						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, '[');
-						console_makeavail(m->
-						    main_console_handle, 
-						    x == 98? 'A' : (
-						    x == 104? 'B' : (
-						    x == 102? 'C' : (
+						    main_console_handle,
+						    (key == XK_Up || key == XK_KP_Up)? 'A' : (
+						    (key == XK_Down || key == XK_KP_Down)? 'B' : (
+						    (key == XK_Right || key == XK_KP_Right)? 'C' : (
 						    'D'))));
 						break;
-					/*  Numeric keys:  */
-					case 80:	/*  Up  */
-					case 88:	/*  Down  */
-					case 83:	/*  Left  */
-					case 85:	/*  Right  */
-						console_makeavail(m->
-						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, '[');
-						console_makeavail(m->
-						    main_console_handle, 
-						    x == 80? 'A' : (
-						    x == 88? 'B' : (
-						    x == 85? 'C' : (
-						    'D'))));
-						break;
-					case 97:	/*  Cursor  Home  */
-					case 79:	/*  Numeric Home  */
+					case XK_Home:
+					case XK_KP_Home:
 						console_makeavail(m->
 						    main_console_handle, 27);
 						console_makeavail(m->
@@ -949,8 +921,8 @@ static void x11_check_events_machine(struct emul *emul, struct machine *m)
 						console_makeavail(m->
 						    main_console_handle, 'H');
 						break;
-					case 103:	/*  Cursor  End  */
-					case 87:	/*  Numeric End  */
+					case XK_End:
+					case XK_KP_End:
 						console_makeavail(m->
 						    main_console_handle, 27);
 						console_makeavail(m->
@@ -958,8 +930,8 @@ static void x11_check_events_machine(struct emul *emul, struct machine *m)
 						console_makeavail(m->
 						    main_console_handle, 'F');
 						break;
-					case 99:	/*  Cursor  PgUp  */
-					case 81:	/*  Numeric PgUp  */
+					case XK_Page_Up:
+					case XK_KP_Page_Up:
 						console_makeavail(m->
 						    main_console_handle, 27);
 						console_makeavail(m->
@@ -969,8 +941,8 @@ static void x11_check_events_machine(struct emul *emul, struct machine *m)
 						console_makeavail(m->
 						    main_console_handle, '~');
 						break;
-					case 105:	/*  Cursor  PgUp  */
-					case 89:	/*  Numeric PgDn  */
+					case XK_Page_Down:
+					case XK_KP_Page_Down:
 						console_makeavail(m->
 						    main_console_handle, 27);
 						console_makeavail(m->
@@ -981,18 +953,20 @@ static void x11_check_events_machine(struct emul *emul, struct machine *m)
 						    main_console_handle, '~');
 						break;
 
-					case 37:left_ctrl = true;
-						if (left_ctrl && left_alt)
-							ungrab();
-						break;
-					case 64:left_alt = true;
-						if (left_ctrl && left_alt)
+					case XK_Control_L:
+					case XK_Control_R:
+						ctrl_down = true;
+						if (ctrl_down && alt_down)
 							ungrab();
 						break;
 
-					//default:
-						//debugmsg(SUBSYS_X11, "event", VERBOSITY_DEBUG,
-						//    "unimplemented keycode %i", x);
+					default:
+						if (is_ungrab_alt(key)) {
+							alt_down = true;
+							if (ctrl_down && alt_down)
+								ungrab();
+						}
+						break;
 					}
 				}
 			}

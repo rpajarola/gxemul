@@ -5124,3 +5124,10 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.0  ==============
 
+
+20261015	X11: keys are recognized by keysym instead of by keycode, so
+		they work under XQuartz on macOS (where Right Shift sent F2,
+		and Control never ungrabbed the mouse). Either Ctrl with
+		Alt/Option or Meta/Command ungrabs the mouse. F1..F12 send
+		the xterm escape sequences (F9 and F10 were wrong, and F5..F12
+		lacked the final ~).
