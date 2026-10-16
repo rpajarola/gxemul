@@ -85,6 +85,20 @@ struct mc_data {
 
 	int		ugly_netbsd_prep_hack_done;
 	int		ugly_netbsd_prep_hack_sec;
+
+	int		dec_year_done;	/*  register 63 has been set  */
+
+	/*
+	 *  A time set by the guest (by clearing the SET bit), which then
+	 *  runs on from there with the host's clock.  The day of the week
+	 *  counts on from what was set, like on the real chip.
+	 */
+	int		guest_time_set;
+	time_t		guest_base;
+	time_t		host_base;
+	int		guest_dow;
+
+	time_t		last_update;	/*  for the Update-ended flag  */
 };
 
 
@@ -112,10 +126,58 @@ static void timer_tick(struct timer *timer, void *extra)
 }
 
 
+/*
+ *  mc146818_set_guest_time():
+ *
+ *  Called when the guest clears the SET bit on a DECstation, to make the
+ *  clock run on from the time in the registers.  (The 5000/1xx PROM's
+ *  self-test sets 1999-12-31 23:59:59 and checks that it becomes
+ *  2000-01-01.)
+ */
+static void mc146818_set_guest_time(struct mc_data *d)
+{
+	struct tm tm;
+	int r[10], i, year;
+
+	for (i = MC_SEC; i <= MC_YEAR; i++)
+		r[i] = d->use_bcd? from_bcd(d->reg[4 * i]) : d->reg[4 * i];
+
+	year = r[MC_YEAR] % 100;
+	memset(&tm, 0, sizeof(tm));
+	tm.tm_sec  = r[MC_SEC];
+	tm.tm_min  = r[MC_MIN];
+	tm.tm_hour = r[MC_HOUR];
+	tm.tm_mday = r[MC_DOM];
+	tm.tm_mon  = r[MC_MONTH] - 1;
+	tm.tm_year = year < 70? year + 100 : year;
+
+	d->guest_base = timegm(&tm);
+	d->host_base = time(NULL);
+	d->guest_dow = r[MC_DOW] >= 1 && r[MC_DOW] <= 7? r[MC_DOW] : 1;
+	d->guest_time_set = 1;
+	d->last_update = d->host_base;
+}
+
+
 DEVICE_TICK(mc146818)
 {
 	struct mc_data *d = (struct mc_data *) extra;
 	int pti = d->pending_timer_interrupts;
+	time_t now = time(NULL);
+
+	/*
+	 *  Once a second (unless SET stops the updates), the time is
+	 *  updated, and the Update-ended flag set, with an interrupt if
+	 *  UIE is enabled:
+	 */
+	if (now != d->last_update) {
+		d->last_update = now;
+		if (!(d->reg[MC_REGB * 4] & MC_REGB_SET)) {
+			d->reg[MC_REGC * 4] |= MC_REGC_UF;
+			if (d->reg[MC_REGB * 4] & MC_REGB_UIE)
+				INTERRUPT_ASSERT(d->irq);
+		}
+	}
 
 	if ((d->reg[MC_REGB * 4] & MC_REGB_PIE) && pti > 0) {
 #if 0
@@ -187,6 +249,29 @@ static void mc146818_update_time(struct mc_data *d)
 	struct tm *tmp;
 	time_t timet;
 
+	if (d->guest_time_set) {
+		int days;
+
+		timet = d->guest_base + (time(NULL) - d->host_base);
+		tmp = gmtime(&timet);
+		days = timet / 86400 - d->guest_base / 86400;
+
+		d->reg[4 * MC_SEC]   = tmp->tm_sec;
+		d->reg[4 * MC_MIN]   = tmp->tm_min;
+		d->reg[4 * MC_HOUR]  = tmp->tm_hour;
+		d->reg[4 * MC_DOW]   = (d->guest_dow - 1 + days) % 7 + 1;
+		d->reg[4 * MC_DOM]   = tmp->tm_mday;
+		d->reg[4 * MC_MONTH] = tmp->tm_mon + 1;
+		d->reg[4 * MC_YEAR]  = tmp->tm_year % 100;
+
+		if (d->use_bcd) {
+			int r;
+			for (r = MC_SEC; r <= MC_YEAR; r++)
+				d->reg[4 * r] = to_bcd(d->reg[4 * r]);
+		}
+		return;
+	}
+
 	timet = time(NULL);
 	tmp = gmtime(&timet);
 
@@ -253,9 +338,16 @@ static void mc146818_update_time(struct mc_data *d)
 
 		/*
 		 *  Linux on DECstation stores the year in register 63,
-		 *  but no other DECstation OS does? (Hm.)
+		 *  but no other DECstation OS does? (Hm.)  It is NVRAM,
+		 *  though, which the 5000/1xx PROM's self-test writes
+		 *  and reads back, so it's only set here at first.
 		 */
-		d->reg[4 * 63]  = tmp->tm_year - 100;
+		if (!d->dec_year_done) {
+			d->reg[4 * 63] = tmp->tm_year - 100;
+			if (d->use_bcd)
+				d->reg[4 * 63] = to_bcd(d->reg[4 * 63]);
+			d->dec_year_done = 1;
+		}
 		break;
 	}
 
@@ -267,9 +359,6 @@ static void mc146818_update_time(struct mc_data *d)
 		d->reg[4 * MC_DOM]   = to_bcd(d->reg[4 * MC_DOM]);
 		d->reg[4 * MC_MONTH] = to_bcd(d->reg[4 * MC_MONTH]);
 		d->reg[4 * MC_YEAR]  = to_bcd(d->reg[4 * MC_YEAR]);
-
-		/*  Used by Linux on DECstation: (Hm)  */
-		d->reg[4 * 63]       = to_bcd(d->reg[4 * 63]);
 
 		/*  Used on SGI:  */
 		d->reg[4 * 72]       = to_bcd(d->reg[4 * 72]);
@@ -457,6 +546,12 @@ DEVICE_ACCESS(mc146818)
 			    data[0] & (MC_REGA_RSMASK | MC_REGA_DVMASK);
 			break;
 		case MC_REGB*4:
+			/*  (Other machines have their own year formats,
+			    which mc146818_set_guest_time() doesn't know.)  */
+			if (d->access_style == MC146818_DEC &&
+			    (d->reg[MC_REGB*4] & MC_REGB_SET) &&
+			    !(data[0] & MC_REGB_SET))
+				mc146818_set_guest_time(d);
 			d->reg[MC_REGB*4] = data[0];
 			if (!(data[0] & MC_REGB_PIE)) {
 				INTERRUPT_DEASSERT(d->irq);

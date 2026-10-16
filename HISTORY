@@ -5153,3 +5153,7 @@ Changelog for GXemul:
 		sends SCC 0 channel A's characters to the keyboard line.
 		SCC 0's console is created output only. The KN02-BA PROM's
 		scc self-tests pass.
+		MC146818 RTC: register 63 (NVRAM on DECstations) is no
+		longer overwritten on every access. DECstations can set the
+		time, which then runs on from the time set, and the once a
+		second update-ended interrupt works. 3/rtc/nvr passes.
