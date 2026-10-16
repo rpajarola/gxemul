@@ -67,7 +67,7 @@ void dec_ioasic_reassert(struct dec_ioasic_data* d)
  *  The DMA pointer registers hold a physical address, shifted left by 3,
  *  with the address bits above 28 in the low bits:
  */
-static uint64_t dma_ptr_to_addr(uint32_t ptr)
+uint64_t dec_ioasic_dma_ptr_to_addr(uint32_t ptr)
 {
 	return ((ptr >> 3) & 0x1ffffffc) | ((uint64_t)(ptr & 7) << 29);
 }
@@ -126,7 +126,7 @@ size_t dec_ioasic_scsi_dma(void *dma_controller_data, unsigned char *data,
 		fatal("[ dec_ioasic: SCSI DMA %s memory, but the direction"
 		    " bit says otherwise ]\n", writeflag? "to" : "from");
 
-	addr = dma_ptr_to_addr(d->scsi_dmaptr);
+	addr = dec_ioasic_dma_ptr_to_addr(d->scsi_dmaptr);
 
 	if (d->scsi_scr & IOASIC_SCR_WORD) {
 		int skip = (d->scsi_scr & IOASIC_SCR_WORD) * 2;
@@ -166,7 +166,7 @@ size_t dec_ioasic_scsi_dma(void *dma_controller_data, unsigned char *data,
 				d->intr |= IOASIC_INTR_SCSI_OVRUN;
 				break;
 			}
-			addr = dma_ptr_to_addr(d->scsi_nextptr);
+			addr = dec_ioasic_dma_ptr_to_addr(d->scsi_nextptr);
 			d->scsi_nextptr = 0xffffffff;
 			d->intr |= IOASIC_INTR_SCSI_PTR_LOAD;
 		}
@@ -394,8 +394,13 @@ DEVICE_ACCESS(dec_ioasic)
 
 	case IOASIC_INTR:
 		if (writeflag == MEM_WRITE) {
-			/*  Clear bits on write?  */
-			d->intr &= ~idata;
+			/*
+			 *  The high 16 bits (DMA events and errors) are
+			 *  cleared by writing zeroes to them, as e.g.
+			 *  NetBSD's asc_ioasic does.  The low 16 bits are
+			 *  the devices' interrupt lines, and read only.
+			 */
+			d->intr &= idata | 0x0000ffff;
 			dec_ioasic_reassert(d);
 		} else {
 			odata = d->intr;
@@ -541,10 +546,44 @@ DEVICE_ACCESS(dec_ioasic)
 	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x0c:
 	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x10:
 	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x14:
-		/*  Station's ethernet address:  */
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x18:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x1c:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x20:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x24:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x28:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x2c:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x30:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x34:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x38:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x3c:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x40:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x44:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x48:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x4c:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x50:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x54:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x58:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x5c:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x60:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x64:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x68:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x6c:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x70:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x74:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x78:
+	case IOASIC_SYS_ETHER_ADDRESS(0) + 0x7c:
+		/*
+		 *  The station address ROM: the ethernet address, its
+		 *  checksum, a copy of those in reverse and forward order,
+		 *  and a test pattern; one byte per word (see dev_le.c):
+		 */
 		if (writeflag == MEM_WRITE) {
 			fatal("[ dec_ioasic: attempt to write to the station's"
 			    " ethernet address. ignored for now. ]\n");
+		} else if (d->esar != NULL) {
+			uint32_t b = d->esar[(relative_addr -
+			    IOASIC_SYS_ETHER_ADDRESS(0)) / 4];
+			odata = b * 0x01010101;
 		} else {
 			odata = ((relative_addr - IOASIC_SYS_ETHER_ADDRESS(0)) / 4 + 1) * 0x10;
 		}

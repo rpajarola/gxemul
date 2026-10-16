@@ -106,8 +106,10 @@ struct dec_ioasic_data {
 	struct interrupt *irq;
 	int		int_asserted;
 	struct cpu	*cpu;
+	const uint8_t	*esar;		/*  the LANCE's station address ROM  */
 };
 void dec_ioasic_reassert(struct dec_ioasic_data*);
+uint64_t dec_ioasic_dma_ptr_to_addr(uint32_t ptr);
 size_t dec_ioasic_scsi_dma(void *dma_controller_data, unsigned char *data,
 	size_t len, int writeflag);
 int dev_dec_ioasic_access(struct cpu *cpu, struct memory *mem, uint64_t relative_addr, unsigned char *data, size_t len, int writeflag, void *);
@@ -300,6 +302,8 @@ int dev_le_access(struct cpu *cpu, struct memory *mem,
 void dev_le_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, uint64_t buf_start, uint64_t buf_end,
 	const char *irq_path, int len);
+void dev_le_ioasic_init(struct machine *machine, struct memory *mem,
+	uint64_t baseaddr, const char *irq_path, struct dec_ioasic_data *ioasic);
 
 /*  dev_mc146818.c:  */
 #define	DEV_MC146818_LENGTH		0x0000000000000100

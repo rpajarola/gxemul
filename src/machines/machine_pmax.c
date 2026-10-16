@@ -285,10 +285,9 @@ MACHINE_SETUP(pmax)
 		 *  dma for asc0			(0x1c380000) slot 14
 		 */
 
-////fatal("TODO: kmin dev_le_init.\n");
-////abort();
-//		dev_le_init(machine, mem, 0x1c0c0000, 0, 0,
-//		    KMIN_INTR_LANCE + 8, 4 * 65536);
+		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn02ba.0x%x",
+		    machine->path, machine->bootstrap_cpu, KMIN_INT_TC3, KMIN_INTR_LANCE);
+		dev_le_ioasic_init(machine, mem, 0x1c0c0000, tmpstr, kmin_ioasic);
 
 		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn02ba.0x%x",
 		    machine->path, machine->bootstrap_cpu, KMIN_INT_TC3, KMIN_INTR_SCC_0);

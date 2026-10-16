@@ -44,6 +44,23 @@
  *  tries to read TURBOchannel rom data from 0x1c03f0, and that is provided
  *  by the turbochannel device, not this device.
  *
+ *  On the DECstation 5000/1xx (3MIN), the LANCE is behind the IOASIC
+ *  (see dev_le_ioasic_init()), and has no SRAM.  Its memory is a 128KB
+ *  region of main memory at the IOASIC's LANCE_DMAPTR, which the IOASIC
+ *  maps in two ways:
+ *
+ *	o)  Single 16-bit words, which the LANCE uses for the
+ *	    initialization block and the descriptors, are each in their own
+ *	    32-bit word ("gap2"): LANCE address A is at offset 2 * A.
+ *
+ *	o)  Buffer data, which the LANCE moves in bursts of 16 bytes from
+ *	    the start of the buffer, has each burst at twice the LANCE
+ *	    address of its start, so that 16 bytes of data are followed by
+ *	    16 bytes of padding ("gap16").  With the buffers aligned to 16
+ *	    bytes, as NetBSD and Linux have them, LANCE address A is at
+ *	    offset 2 * (A & ~15) + (A & 15); the 5000/1xx PROM's loopback
+ *	    test also uses buffers that are not aligned.
+ *
  *
  *  TODO:  Error conditions (such as when there are not enough receive
  *	   buffers) are not emulated yet.
@@ -107,6 +124,9 @@ struct le_data {
 
 	unsigned char	*sram;
 
+	/*  On a 3MIN, the IOASIC whose DMA the LANCE uses instead of SRAM:  */
+	struct dec_ioasic_data *ioasic;
+
 	/*  Initialization block:  */
 	uint32_t	init_block_addr;
 
@@ -135,12 +155,87 @@ struct le_data {
 
 
 /*
+ *  le_ioasic_dma():
+ *
+ *  Reads or writes LANCE memory on a 3MIN, which is in main memory, at
+ *  the IOASIC's LANCE_DMAPTR.  gap16 selects the mapping of buffer data,
+ *  with addr the start of the buffer; otherwise, it's the mapping of
+ *  single words (see the top of this file).
+ */
+static void le_ioasic_dma(struct le_data *d, uint32_t addr,
+	unsigned char *buf, size_t len, int writeflag, int gap16)
+{
+	struct cpu *cpu = d->ioasic->cpu;
+	uint64_t base = dec_ioasic_dma_ptr_to_addr(d->ioasic->lance_dmaptr);
+
+	while (len > 0) {
+		uint64_t paddr;
+		size_t n;
+
+		if (gap16) {
+			paddr = base + ((uint64_t)addr << 1);
+			n = 16;
+		} else {
+			paddr = base + ((addr & ~1) << 1) + (addr & 1);
+			n = 2 - (addr & 1);
+		}
+		if (n > len)
+			n = len;
+
+		cpu->memory_rw(cpu, cpu->mem, paddr, buf, n,
+		    writeflag? MEM_WRITE : MEM_READ, PHYSICAL | NO_EXCEPTIONS);
+		addr += n;
+		buf += n;
+		len -= n;
+	}
+}
+
+
+/*
+ *  le_read_buf(), le_write_buf():
+ *
+ *  Read or write buffer data in the LANCE's memory.
+ */
+static void le_read_buf(struct le_data *d, uint32_t addr,
+	unsigned char *buf, size_t len)
+{
+	size_t i;
+
+	if (d->ioasic != NULL) {
+		le_ioasic_dma(d, addr, buf, len, 0, 1);
+		return;
+	}
+	for (i=0; i<len; i++)
+		buf[i] = d->sram[(addr + i) & (SRAM_SIZE-1)];
+}
+
+static void le_write_buf(struct le_data *d, uint32_t addr,
+	const unsigned char *buf, size_t len)
+{
+	size_t i;
+
+	if (d->ioasic != NULL) {
+		le_ioasic_dma(d, addr, (unsigned char *) buf, len, 1, 1);
+		return;
+	}
+	for (i=0; i<len; i++)
+		d->sram[(addr + i) & (SRAM_SIZE-1)] = buf[i];
+}
+
+
+/*
  *  le_read_16bit():
  *
  *  Read a 16-bit word from the SRAM.
  */
 static uint64_t le_read_16bit(struct le_data *d, int addr)
 {
+	if (d->ioasic != NULL) {
+		unsigned char w[2];
+		le_ioasic_dma(d, addr, w, 2, 0, 0);
+		return w[0] + (w[1] << 8);
+	}
+
 	if (d->is_bigendian)
 		return (d->sram[addr & (SRAM_SIZE-1)] << 8) +
 			(d->sram[(addr+1) & (SRAM_SIZE-1)]);
@@ -157,6 +252,13 @@ static uint64_t le_read_16bit(struct le_data *d, int addr)
  */
 static void le_write_16bit(struct le_data *d, int addr, uint16_t x)
 {
+	if (d->ioasic != NULL) {
+		unsigned char w[2] = { (unsigned char) x,
+		    (unsigned char) (x >> 8) };
+		le_ioasic_dma(d, addr, w, 2, 1, 0);
+		return;
+	}
+
 	if (d->is_bigendian)
 	{
 		d->sram[addr & (SRAM_SIZE-1)] = (x >> 8) & 0xff;
@@ -380,7 +482,6 @@ static void le_tx(struct net *net, struct le_data *d)
 	int start_txp = d->txp;
 	uint16_t tx_descr[4];
 	int stp, enp, cur_packet_offset;
-	size_t i;
 	uint32_t bufaddr, buflen;
 
 	/*  TODO: This is just a guess:  */
@@ -446,11 +547,8 @@ static void le_tx(struct net *net, struct le_data *d)
 		}
 
 		/*  Copy data from SRAM into the tx packet:  */
-		for (i=0; i<buflen; i++) {
-			unsigned char ch;
-			ch = d->sram[(bufaddr + i) & (SRAM_SIZE-1)];
-			d->tx_packet[cur_packet_offset + i] = ch;
-		}
+		le_read_buf(d, bufaddr, d->tx_packet + cur_packet_offset,
+		    buflen);
 
 		/*
 		 *  Is this the last buffer in a packet? Then transmit
@@ -544,12 +642,10 @@ static void le_rx(struct net *net, struct le_data *d)
 		    bufaddr, buflen);
 
 		/*  Copy data from the packet into SRAM:  */
-		for (i=0; i<buflen; i++) {
-			if (d->rx_packet_offset+(ssize_t)i >= d->rx_packet_len)
-				break;
-			d->sram[(bufaddr + i) & (SRAM_SIZE-1)] =
-			    d->rx_packet[d->rx_packet_offset + i];
-		}
+		i = buflen;
+		if (d->rx_packet_offset + (ssize_t)i > d->rx_packet_len)
+			i = d->rx_packet_len - d->rx_packet_offset;
+		le_write_buf(d, bufaddr, d->rx_packet + d->rx_packet_offset, i);
 
 		/*  Here, i is the number of bytes copied.  */
 		d->rx_packet_offset += i;
@@ -815,9 +911,15 @@ void le_register_write(struct le_data *d, int r, uint32_t x)
 		d->reg[r] |= (x & LE_INEA);
 		break;
 
+	case 1:	/*  CSR1: the init block address is word aligned  */
+		d->reg[r] = x & 0xfffe;
+		break;
+	case 2:	/*  CSR2: only the high 8 bits of the address  */
+		d->reg[r] = x & 0x00ff;
+		break;
 	default:
-		/*  CSR1, CSR2, and CSR3:  */
-		d->reg[r] = x;
+		/*  CSR3: BSWP, ACON, and BCON  */
+		d->reg[r] = x & 0x0007;
 	}
 }
 
@@ -981,13 +1083,12 @@ do_return:
 
 
 /*
- *  dev_le_init():
+ *  le_new():
+ *
+ *  Allocates a LANCE, with its station address ROM.
  */
-void dev_le_init(struct machine *machine, struct memory *mem, uint64_t baseaddr,
-	uint64_t buf_start, uint64_t buf_end, const char *irq_path, int len)
+static struct le_data *le_new(struct machine *machine, const char *irq_path)
 {
-	char *name2;
-	size_t nlen = 55;
 	struct le_data *d;
 
 	CHECK_ALLOCATION(d = (struct le_data *) malloc(sizeof(struct le_data)));
@@ -998,14 +1099,6 @@ void dev_le_init(struct machine *machine, struct memory *mem, uint64_t baseaddr,
 	d->is_bigendian = machine->cpus[0]->byte_order == EMUL_BIG_ENDIAN;
 
 	INTERRUPT_CONNECT(irq_path, d->irq);
-
-	CHECK_ALLOCATION(d->sram = (unsigned char *) malloc(SRAM_SIZE));
-	memset(d->sram, 0, SRAM_SIZE);
-
-	/*  TODO:  Are these actually used yet?  */
-	d->len       = len;
-	d->buf_start = buf_start;
-	d->buf_end   = buf_end;
 
 	/*  Initial register contents:  */
 	d->reg[0] = LE_STOP;
@@ -1047,6 +1140,31 @@ void dev_le_init(struct machine *machine, struct memory *mem, uint64_t baseaddr,
 	d->rom[26] = d->rom[30] = 0x55;
 	d->rom[27] = d->rom[31] = 0xaa;
 
+	memcpy(d->nic.mac_address, &d->rom[0], sizeof(d->nic.mac_address));
+	net_add_nic(machine->emul->net, &d->nic);
+
+	return d;
+}
+
+
+/*
+ *  dev_le_init():
+ */
+void dev_le_init(struct machine *machine, struct memory *mem, uint64_t baseaddr,
+	uint64_t buf_start, uint64_t buf_end, const char *irq_path, int len)
+{
+	char *name2;
+	size_t nlen = 55;
+	struct le_data *d = le_new(machine, irq_path);
+
+	CHECK_ALLOCATION(d->sram = (unsigned char *) malloc(SRAM_SIZE));
+	memset(d->sram, 0, SRAM_SIZE);
+
+	/*  TODO:  Are these actually used yet?  */
+	d->len       = len;
+	d->buf_start = buf_start;
+	d->buf_end   = buf_end;
+
 	memory_device_register(mem, "le_sram", baseaddr,
 	    SRAM_SIZE, dev_le_sram_access, (void *)d,
 	    DM_DYNTRANS_OK | DM_DYNTRANS_WRITE_OK
@@ -1060,8 +1178,33 @@ void dev_le_init(struct machine *machine, struct memory *mem, uint64_t baseaddr,
 	    len - 0x100000, dev_le_access, (void *)d, DM_DEFAULT, NULL);
 
 	machine_add_tickfunction(machine, dev_le_tick, d, LE_TICK_SHIFT);
+}
 
-	memcpy(d->nic.mac_address, &d->rom[0], sizeof(d->nic.mac_address));
-	net_add_nic(machine->emul->net, &d->nic);
+
+/*
+ *  dev_le_ioasic_init():
+ *
+ *  A LANCE behind an IOASIC (DECstation 5000/1xx), with its registers at
+ *  baseaddr, its memory in main memory (see the top of this file), and
+ *  its station address ROM read through the IOASIC.
+ */
+void dev_le_ioasic_init(struct machine *machine, struct memory *mem,
+	uint64_t baseaddr, const char *irq_path, struct dec_ioasic_data *ioasic)
+{
+	char *name2;
+	size_t nlen = 55;
+	struct le_data *d = le_new(machine, irq_path);
+
+	d->ioasic = ioasic;
+	ioasic->esar = d->rom;
+
+	CHECK_ALLOCATION(name2 = (char *) malloc(nlen));
+	snprintf(name2, nlen, "le [%02x:%02x:%02x:%02x:%02x:%02x]",
+	    d->rom[0], d->rom[1], d->rom[2], d->rom[3], d->rom[4], d->rom[5]);
+
+	memory_device_register(mem, name2, baseaddr, 0x40000,
+	    dev_le_access, (void *)d, DM_DEFAULT, NULL);
+
+	machine_add_tickfunction(machine, dev_le_tick, d, LE_TICK_SHIFT);
 }
 

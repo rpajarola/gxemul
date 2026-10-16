@@ -5139,3 +5139,9 @@ Changelog for GXemul:
 		takes console input, so no xterms are needed. The 53C94 reads
 		back what was written to CFG1, and gives an Illegal Command
 		interrupt for unimplemented commands instead of exiting.
+		5000/1xx (3MIN): the LANCE ethernet works, with its buffers
+		in main memory through the IOASIC, and the station address
+		ROM in the IOASIC; the PROM's ni self-tests pass, and it
+		sends BOOTP requests. Writing the IOASIC's interrupt register
+		no longer clears the devices' interrupt lines. The LANCE's
+		CSR1..3 keep only the bits that the chip has.
