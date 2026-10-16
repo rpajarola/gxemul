@@ -5145,3 +5145,11 @@ Changelog for GXemul:
 		sends BOOTP requests. Writing the IOASIC's interrupt register
 		no longer clears the devices' interrupt lines. The LANCE's
 		CSR1..3 keep only the bits that the chip has.
+		Z8530 SCC: the WR0 register pointer and commands are decoded
+		as on the chip, WR9 resets a channel, interrupts stay pending
+		until serviced or disabled (reading RR3 no longer clears
+		them), Send Abort and the baud rate generator's zero count
+		raise external/status interrupts, and loopback no longer
+		sends SCC 0 channel A's characters to the keyboard line.
+		SCC 0's console is created output only. The KN02-BA PROM's
+		scc self-tests pass.

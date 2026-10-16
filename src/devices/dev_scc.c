@@ -118,12 +118,32 @@ int dev_scc_space_available_in_queue(void *e, int portnr)
 
 
 /*
+ *  rx_enqueue():
+ *
+ *  Add a character to the receive queue of one of this SCC's channels.
+ */
+static void rx_enqueue(struct scc_data *d, int portnr, int ch)
+{
+        d->rx_queue_char[portnr * MAX_QUEUE_LEN +
+	    d->cur_rx_queue_pos_write[portnr]] = ch; 
+        d->cur_rx_queue_pos_write[portnr] ++;
+        if (d->cur_rx_queue_pos_write[portnr] == MAX_QUEUE_LEN)
+                d->cur_rx_queue_pos_write[portnr] = 0;
+
+        if (d->cur_rx_queue_pos_write[portnr] ==
+	    d->cur_rx_queue_pos_read[portnr])
+                fatal("warning: add_to_rx_queue(): rx_queue overrun!\n");
+}
+
+
+/*
  *  dev_scc_add_to_rx_queue():
  *
- *  Add a character to the receive queue.
+ *  Add a character to the receive queue, for a port numbered like the
+ *  DC7085's (scc_nr * 2 + channel, but with the keyboard as port 0).
  */
 void dev_scc_add_to_rx_queue(void *e, int ch, int portnr)
-{ 
+{
 	struct scc_data *d = (struct scc_data *) e;
 	int scc_nr;
 
@@ -135,17 +155,7 @@ void dev_scc_add_to_rx_queue(void *e, int ch, int portnr)
 	if (scc_nr != d->scc_nr)
 		return;
 
-	portnr &= (N_SCC_PORTS - 1);
-
-        d->rx_queue_char[portnr * MAX_QUEUE_LEN +
-	    d->cur_rx_queue_pos_write[portnr]] = ch; 
-        d->cur_rx_queue_pos_write[portnr] ++;
-        if (d->cur_rx_queue_pos_write[portnr] == MAX_QUEUE_LEN)
-                d->cur_rx_queue_pos_write[portnr] = 0;
-
-        if (d->cur_rx_queue_pos_write[portnr] ==
-	    d->cur_rx_queue_pos_read[portnr])
-                fatal("warning: add_to_rx_queue(): rx_queue overrun!\n");
+	rx_enqueue(d, portnr & (N_SCC_PORTS - 1), ch);
 }
 
 
@@ -165,6 +175,84 @@ static unsigned char rx_nextchar(struct scc_data *d, int portnr)
 	if (d->cur_rx_queue_pos_read[portnr] == MAX_QUEUE_LEN)
 		d->cur_rx_queue_pos_read[portnr] = 0;
 	return ch;
+}
+
+
+/*
+ *  scc_clear_ip():
+ *
+ *  Clears interrupt pending bits in RR3, and the interrupt when none are
+ *  left.
+ */
+static void scc_clear_ip(struct scc_data *d, int bits)
+{
+	d->scc_register_r[N_SCC_REGS + SCC_RR3] &= ~bits;
+	if (d->scc_register_r[N_SCC_REGS + SCC_RR3] == 0)
+		INTERRUPT_DEASSERT(d->irq);
+}
+
+
+/*
+ *  scc_channel_reset():
+ *
+ *  Resets a channel (from a WR9 channel or hardware reset): interrupts,
+ *  the receiver, transmitter, and baud rate generator are disabled, and
+ *  no interrupts are pending.
+ */
+static void scc_channel_reset(struct scc_data *d, int port)
+{
+	unsigned char *w = &d->scc_register_w[port * N_SCC_REGS];
+
+	w[SCC_WR1] = w[SCC_WR3] = w[SCC_WR5] = w[SCC_WR14] = 0;
+	w[SCC_WR15] = 0xf8;
+
+	d->scc_register_r[port * N_SCC_REGS + SCC_RR0] =
+	    SCC_RR0_TX_EMPTY | SCC_RR0_TX_UNDERRUN;
+	scc_clear_ip(d, port == SCC_CHANNEL_A?
+	    SCC_RR3_EXT_IP_A | SCC_RR3_TX_IP_A | SCC_RR3_RX_IP_A :
+	    SCC_RR3_EXT_IP_B | SCC_RR3_TX_IP_B | SCC_RR3_RX_IP_B);
+}
+
+
+/*
+ *  scc_wr0_command():
+ *
+ *  The commands in a write to WR0.  (The 5000/1xx PROM's self-test uses
+ *  Send Abort, which ends the message, to get a Tx Underrun/EOM
+ *  external/status interrupt.)
+ */
+static void scc_wr0_command(struct scc_data *d, int port, int wr0)
+{
+	int ext_ip = port == SCC_CHANNEL_A? SCC_RR3_EXT_IP_A : SCC_RR3_EXT_IP_B;
+
+	switch ((wr0 >> 3) & 7) {
+	case 2:		/*  Reset external/status interrupts  */
+		scc_clear_ip(d, ext_ip);
+		break;
+	case 3:		/*  Send abort  */
+		d->scc_register_r[port * N_SCC_REGS + SCC_RR0] |=
+		    SCC_RR0_TX_UNDERRUN;
+		if (d->scc_register_w[port * N_SCC_REGS + SCC_WR15] &
+		    SCC_WR15_TX_UNDERRUN_IE &&
+		    d->scc_register_w[port * N_SCC_REGS + SCC_WR1] &
+		    SCC_WR1_EXT_IE) {
+			d->scc_register_r[N_SCC_REGS + SCC_RR3] |= ext_ip;
+			if (d->scc_register_w[N_SCC_REGS + SCC_WR9] &
+			    SCC_WR9_MASTER_IE)
+				INTERRUPT_ASSERT(d->irq);
+		}
+		break;
+	case 5:		/*  Reset Tx interrupt pending  */
+		scc_clear_ip(d, port == SCC_CHANNEL_A? SCC_RR3_TX_IP_A :
+		    SCC_RR3_TX_IP_B);
+		break;
+	}
+
+	/*  Reset Tx underrun/EOM latch (until the next character has been
+	    sent; see the data register write):  */
+	if ((wr0 & 0xc0) == 0xc0)
+		d->scc_register_r[port * N_SCC_REGS + SCC_RR0] &=
+		    ~SCC_RR0_TX_UNDERRUN;
 }
 
 
@@ -193,6 +281,26 @@ DEVICE_TICK(scc)
 		if (rx_avail(d, i))
 			d->scc_register_r[i * N_SCC_REGS + SCC_RR0] |=
 			    SCC_RR0_RX_AVAIL;
+
+		/*
+		 *  A running baud rate generator counts down to zero
+		 *  many times between ticks, which gives an external/
+		 *  status interrupt if Zero Count interrupts are enabled.
+		 *  (The 5000/1xx PROM's self-test checks for that.)
+		 */
+		if (d->scc_register_w[i * N_SCC_REGS + SCC_WR14] &
+		    SCC_WR14_BAUDR_ENABLE &&
+		    d->scc_register_w[i * N_SCC_REGS + SCC_WR15] &
+		    SCC_WR15_ZERO_COUNT_IE &&
+		    d->scc_register_w[i * N_SCC_REGS + SCC_WR1] &
+		    SCC_WR1_EXT_IE) {
+			d->scc_register_r[N_SCC_REGS + SCC_RR3] |=
+			    i == SCC_CHANNEL_A? SCC_RR3_EXT_IP_A :
+			    SCC_RR3_EXT_IP_B;
+			if (d->scc_register_w[N_SCC_REGS + SCC_WR9] &
+			    SCC_WR9_MASTER_IE)
+				INTERRUPT_ASSERT(d->irq);
+		}
 
 		/*
 		 *  Interrupts:
@@ -281,8 +389,7 @@ int dev_scc_dma_func(struct cpu *cpu, void *extra, uint64_t addr,
 			/*  Loopback:  */
 			if (d->scc_register_w[port * N_SCC_REGS + SCC_WR14]
 			    & SCC_WR14_LOCAL_LOOPB)
-				dev_scc_add_to_rx_queue(d, word[1],
-				    d->scc_nr * 2 + port);
+				rx_enqueue(d, port, word[1]);
 
 			addr += sizeof(word);
 		} while ((addr & 0xffc) != 0);
@@ -360,16 +467,12 @@ DEVICE_ACCESS(scc)
 			odata = d->scc_register_r[port * N_SCC_REGS +
 			    d->register_selected[port]];
 
-			if (d->register_selected[port] == SCC_RR3) {
-				if (port == SCC_CHANNEL_B)
-					fatal("WARNING! scc channel B has "
-					    "no RR3\n");
-
-				d->scc_register_r[port * N_SCC_REGS +
-				    SCC_RR3] = 0;
-
-				INTERRUPT_DEASSERT(d->irq);
-			}
+			/*  Reading RR3 doesn't clear the interrupts; they
+			    are cleared by reading the received character,
+			    and by the WR0 commands (scc_wr0_command()).  */
+			if (d->register_selected[port] == SCC_RR3 &&
+			    port == SCC_CHANNEL_B)
+				fatal("WARNING! scc channel B has no RR3\n");
 
 #ifdef SCC_DEBUG
 			fatal("[ scc: port %i, register %i, read value "
@@ -381,15 +484,57 @@ DEVICE_ACCESS(scc)
 			/*  debug("[ scc: (port %i) read from 0x%08lx ]\n",
 			    port, (long)relative_addr);  */
 		} else {
-			/*  If no register is selected, then select one.
-			    Otherwise, write to the selected register.  */
+			/*
+			 *  If no register is selected, then this is a write
+			 *  to WR0, whose low 3 bits select the register for
+			 *  the next access (plus 8 with the "point high"
+			 *  command), and whose other bits are commands.  WR0
+			 *  commands with register 0 select nothing; e.g.
+			 *  0x10 (reset ext/status) or 0xc0 (reset TX
+			 *  underrun) are followed by another WR0 write.
+			 *  Otherwise, write to the selected register.
+			 */
 			if (d->register_select_in_progress[port] == 0) {
-				d->register_select_in_progress[port] = 1;
-				d->register_selected[port] = idata;
-				d->register_selected[port] &= (N_SCC_REGS-1);
+				int reg = idata & 7;
+
+				if ((idata & 0x38) == 0x08)
+					reg += 8;
+				d->scc_register_w[port * N_SCC_REGS + SCC_WR0] =
+				    idata;
+				d->register_selected[port] = reg;
+				d->register_select_in_progress[port] = reg != 0;
+				scc_wr0_command(d, port, idata);
 			} else {
 				d->scc_register_w[port * N_SCC_REGS +
 				    d->register_selected[port]] = idata;
+
+				/*  WR9 resets (the 5000/1xx PROM's self-test
+				    expects them to leave no interrupts):  */
+				if (d->register_selected[port] == SCC_WR9) {
+					if (idata & 0x80)
+						scc_channel_reset(d,
+						    SCC_CHANNEL_A);
+					if (idata & 0x40)
+						scc_channel_reset(d,
+						    SCC_CHANNEL_B);
+				}
+
+				/*  Disabling an interrupt source in WR1 also
+				    clears its interrupt pending bit:  */
+				if (d->register_selected[port] == SCC_WR1) {
+					int a = port == SCC_CHANNEL_A, ip = 0;
+					if (!(idata & SCC_WR1_EXT_IE))
+						ip |= a? SCC_RR3_EXT_IP_A :
+						    SCC_RR3_EXT_IP_B;
+					if (!(idata & SCC_WR1_TX_IE))
+						ip |= a? SCC_RR3_TX_IP_A :
+						    SCC_RR3_TX_IP_B;
+					if (!(idata & (SCC_WR1_RXI_FIRST_CHAR |
+					    SCC_WR1_RXI_ALL_CHAR)))
+						ip |= a? SCC_RR3_RX_IP_A :
+						    SCC_RR3_RX_IP_B;
+					scc_clear_ip(d, ip);
+				}
 #ifdef SCC_DEBUG
 				fatal("[ scc: port %i, register %i, write "
 				    "value 0x%02x ]\n", port,
@@ -413,10 +558,11 @@ DEVICE_ACCESS(scc)
 			if (rx_avail(d, port))
 				odata = rx_nextchar(d, port);
 
-			/*  TODO:  perhaps only clear the RX part of RR3?  */
-			d->scc_register_r[N_SCC_REGS + SCC_RR3] = 0;
-
-			INTERRUPT_DEASSERT(d->irq);
+			/*  The receive interrupt is pending until all the
+			    received characters have been read:  */
+			if (!rx_avail(d, port))
+				scc_clear_ip(d, port == SCC_CHANNEL_A?
+				    SCC_RR3_RX_IP_A : SCC_RR3_RX_IP_B);
 
 //			debug("[ scc: (port %i) read from 0x%08lx: 0x%02x ]\n",
 //			    port, (long)relative_addr, (int)odata);
@@ -428,11 +574,15 @@ DEVICE_ACCESS(scc)
 			/*  Send the character:  */
 			lk201_tx_data(&d->lk201, d->scc_nr * 2 + port, idata);
 
+			/*  It is sent at once, so the transmitter then
+			    underruns (see scc_wr0_command()):  */
+			d->scc_register_r[port * N_SCC_REGS + SCC_RR0] |=
+			    SCC_RR0_TX_UNDERRUN;
+
 			/*  Loopback:  */
 			if (d->scc_register_w[port * N_SCC_REGS + SCC_WR14]
 			    & SCC_WR14_LOCAL_LOOPB)
-				dev_scc_add_to_rx_queue(d, idata, d->scc_nr
-				    * 2 + port);
+				rx_enqueue(d, port, idata);
 
 			/*  TX interrupt:  */
 			if (d->scc_register_w[port * N_SCC_REGS + SCC_WR9] &
@@ -491,9 +641,10 @@ void *dev_scc_init(struct machine *machine, struct memory *mem,
 	d->use_fb  = use_fb;
 	d->addrmul = addrmul;
 	/*  Only SCC 1 reads keystrokes from its console (see the tick
-	    function), so SCC 0's console is not an input, and does not
+	    function), so SCC 0's console is output only, and does not
 	    need an xterm of its own:  */
-	d->console_handle = console_start_slave(machine, "SCC", scc_nr == 1);
+	d->console_handle = console_start_slave(machine, "SCC",
+	    scc_nr == 1? 1 : CONSOLE_OUTPUT_ONLY);
 
 	d->scc_register_r[SCC_RR0] |= SCC_RR0_TX_UNDERRUN;
 
