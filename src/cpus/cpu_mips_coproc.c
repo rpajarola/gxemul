@@ -32,6 +32,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <fenv.h>
+#include <float.h>
 
 #include "cop0.h"
 #include "cpu.h"
@@ -1044,7 +1046,22 @@ static void fpu_store_float_value(int fr_flag, struct mips_coproc *cp, int fd,
 	double nf, int fmt, int nan)
 {
 	int ieee_fmt = mips_fmt_to_ieee_fmt[fmt];
-	uint64_t r = ieee_store_float_value(nf, ieee_fmt);
+	uint64_t r;
+
+	/*
+	 *  Single and double precision values are encoded by the host,
+	 *  which rounds them correctly, and has infinities and denormals.
+	 *  (NaNs keep the encoding that ieee_store_float_value() gives.)
+	 */
+	if (!nan && fmt == COP1_FMT_S) {
+		float f = (float) nf;
+		uint32_t u;
+		memcpy(&u, &f, sizeof(u));
+		r = u;
+	} else if (!nan && fmt == COP1_FMT_D) {
+		memcpy(&r, &nf, sizeof(r));
+	} else
+		r = ieee_store_float_value(nf, ieee_fmt);
 
 	/*
 	 *  TODO: This is for 32-bit mode. It has to be updated later
@@ -1072,6 +1089,231 @@ static void fpu_store_float_value(int fr_flag, struct mips_coproc *cp, int fd,
 
 
 /*
+ *  The FCSR's rounding mode, and its Flags, Enables, and Cause fields,
+ *  which have one bit each for Inexact, Underflow, Overflow, Division by
+ *  zero, and inValid operation, in that order (and Cause also has one for
+ *  unimplemented operation).
+ */
+#define	FCSR_RM_MASK		3
+#define	FCSR_FLAGS_SHIFT	2
+#define	FCSR_ENABLES_SHIFT	7
+#define	FCSR_CAUSE_SHIFT	12
+#define	FCSR_CAUSE_MASK		(0x3f << FCSR_CAUSE_SHIFT)
+#define	FCSR_FS			(1 << 24)	/*  flush to zero (R4000)  */
+#define	FPE_I			0x01
+#define	FPE_U			0x02
+#define	FPE_O			0x04
+#define	FPE_Z			0x08
+#define	FPE_V			0x10
+#define	FPE_E			0x20	/*  (Cause only)  */
+
+
+/*
+ *  fpu_interpret_float_value():
+ *
+ *  Like ieee_interpret_float_value(), but single and double precision
+ *  values are decoded by the host (which gets denormals and -0 right).
+ */
+static void fpu_interpret_float_value(uint64_t v,
+	struct ieee_float_value *fvp, int fmt)
+{
+	ieee_interpret_float_value(v, fvp, mips_fmt_to_ieee_fmt[fmt]);
+	if (fvp->nan)
+		return;
+
+	if (fmt == COP1_FMT_S) {
+		uint32_t u = v;
+		float f;
+		memcpy(&f, &u, sizeof(f));
+		fvp->f = f;
+	} else if (fmt == COP1_FMT_D) {
+		double d;
+		memcpy(&d, &v, sizeof(d));
+		fvp->f = d;
+	}
+}
+
+
+/*
+ *  fpu_begin(), fpu_end():
+ *
+ *  Around an arithmetic operation done by the host: the host rounds as
+ *  the FCSR says, and fpu_end() returns the IEEE exceptions that the
+ *  operation raised, as FPE_* bits.
+ */
+static int fpu_begin(struct mips_coproc *cp)
+{
+	static const int modes[4] = { FE_TONEAREST, FE_TOWARDZERO,
+	    FE_UPWARD, FE_DOWNWARD };
+	int old = fegetround();
+
+	fesetround(modes[cp->fcr[MIPS_FPU_FCSR] & FCSR_RM_MASK]);
+	feclearexcept(FE_ALL_EXCEPT);
+	return old;
+}
+
+static int fpu_end(int old_round)
+{
+	int e = fetestexcept(FE_ALL_EXCEPT), r = 0;
+
+	fesetround(old_round);
+	if (e & FE_INEXACT)	r |= FPE_I;
+	if (e & FE_UNDERFLOW)	r |= FPE_U;
+	if (e & FE_OVERFLOW)	r |= FPE_O;
+	if (e & FE_DIVBYZERO)	r |= FPE_Z;
+	if (e & FE_INVALID)	r |= FPE_V;
+	return r;
+}
+
+
+/*
+ *  fpu_exceptions():
+ *
+ *  Puts the exceptions of an operation in the FCSR's Cause field.  If
+ *  any of them are enabled, or the operation is unimplemented, this
+ *  causes a Floating-Point exception and returns 1 (and the result must
+ *  not be stored); otherwise, they are added to the Flags, and 0 is
+ *  returned.
+ *
+ *  On MIPS I, the FPU (an R2010 or R3010) signals its exceptions with an
+ *  interrupt (hardware interrupt 5) instead, which stays asserted until
+ *  the Cause field is cleared (see fpu_update_interrupt()).
+ */
+static int fpu_exceptions(struct cpu *cpu, struct mips_coproc *cp, int e)
+{
+	uint64_t fcsr = cp->fcr[MIPS_FPU_FCSR] & ~FCSR_CAUSE_MASK;
+
+	fcsr |= (uint64_t)e << FCSR_CAUSE_SHIFT;
+	if (e & FPE_E || e & (fcsr >> FCSR_ENABLES_SHIFT) & 0x1f) {
+		cp->fcr[MIPS_FPU_FCSR] = fcsr;
+		if (cpu->cd.mips.cpu_type.isa_level <= 1)
+			INTERRUPT_ASSERT(cpu->cd.mips.irq_fpu);
+		else
+			mips_cpu_exception(cpu, EXCEPTION_FPE,
+			    0, 0, 0, 0, 0, 0);
+		return 1;
+	}
+	cp->fcr[MIPS_FPU_FCSR] = fcsr | ((uint64_t)e << FCSR_FLAGS_SHIFT);
+	return 0;
+}
+
+
+/*
+ *  fpu_update_interrupt():
+ *
+ *  On MIPS I, the FPU's interrupt is asserted while the FCSR's Cause
+ *  field has an enabled exception, or an unimplemented operation.
+ */
+static void fpu_update_interrupt(struct cpu *cpu, struct mips_coproc *cp)
+{
+	uint64_t fcsr = cp->fcr[MIPS_FPU_FCSR];
+	int cause = (fcsr >> FCSR_CAUSE_SHIFT) & 0x3f;
+
+	if (cpu->cd.mips.cpu_type.isa_level > 1)
+		return;
+	if (cause & FPE_E || cause & (fcsr >> FCSR_ENABLES_SHIFT) & 0x1f)
+		INTERRUPT_ASSERT(cpu->cd.mips.irq_fpu);
+	else
+		INTERRUPT_DEASSERT(cpu->cd.mips.irq_fpu);
+}
+
+
+/*
+ *  fpu_tiny():
+ *
+ *  Returns 1 if v is a denormal in format fmt (S or D).
+ */
+static int fpu_tiny(double v, int fmt)
+{
+	double min = fmt == COP1_FMT_S? FLT_MIN : DBL_MIN;
+
+	if (fmt != COP1_FMT_S && fmt != COP1_FMT_D)
+		return 0;
+	return v != 0.0 && fabs(v) < min;
+}
+
+
+/*
+ *  fpu_arith():
+ *
+ *  Does an arithmetic operation on the host (op is one of FPU_OP_ADD..
+ *  FPU_OP_SQRT, or FPU_OP_CVT), rounded to the output format, and stores
+ *  the result unless that causes an exception.
+ *
+ *  Like the R2010/R3010, denormals are not implemented: a denormal
+ *  operand, or a result too small to be normal (unless Underflow
+ *  exceptions are enabled), is an Unimplemented Operation, for the
+ *  operating system to emulate.  So is a conversion to an integer of a
+ *  NaN, an infinity, or a value out of range.  (The 5000/1xx PROM's
+ *  self-test checks for these.)
+ */
+static void fpu_arith(struct cpu *cpu, struct mips_coproc *cp, int fr,
+	int op, int fmt, double a, double b, int fd, int output_fmt)
+{
+	volatile double nf = 0.0;
+	int old, e, unimplemented = 0;
+	int binary = op != FPU_OP_SQRT && op != FPU_OP_CVT;
+
+	if (fpu_tiny(a, fmt) || (binary && fpu_tiny(b, fmt))) {
+		fpu_exceptions(cpu, cp, FPE_E);
+		return;
+	}
+
+	old = fpu_begin(cp);
+
+	switch (op) {
+	case FPU_OP_ADD:	nf = a + b; break;
+	case FPU_OP_SUB:	nf = a - b; break;
+	case FPU_OP_MUL:	nf = a * b; break;
+	case FPU_OP_DIV:	nf = a / b; break;
+	case FPU_OP_SQRT:	nf = sqrt(a); break;
+	case FPU_OP_CVT:	nf = a; break;
+	}
+
+	/*  Rounding to the output format can raise more exceptions:  */
+	switch (output_fmt) {
+	case COP1_FMT_S:
+		{
+			volatile float f = (float) nf;
+			nf = f;
+		}
+		break;
+	case COP1_FMT_W:
+	case COP1_FMT_L:
+		{
+			double lim = output_fmt == COP1_FMT_W?
+			    2147483648.0 : 9223372036854775808.0;
+			double r = nearbyint(nf);
+
+			if (r != nf)
+				feraiseexcept(FE_INEXACT);
+			if (isnan(nf) || r >= lim || r < -lim)
+				unimplemented = 1;
+			nf = r;
+		}
+		break;
+	}
+
+	e = fpu_end(old);
+
+	/*  MIPS III and later can flush denormal results to zero:  */
+	if (fpu_tiny(nf, output_fmt) && cpu->cd.mips.cpu_type.isa_level >= 3
+	    && cp->fcr[MIPS_FPU_FCSR] & FCSR_FS) {
+		nf = copysign(0.0, nf);
+		e |= FPE_U | FPE_I;
+	}
+
+	if (unimplemented || (fpu_tiny(nf, output_fmt) &&
+	    !((cp->fcr[MIPS_FPU_FCSR] >> FCSR_ENABLES_SHIFT) & FPE_U)))
+		e = FPE_E;
+	if (fpu_exceptions(cpu, cp, e))
+		return;
+
+	fpu_store_float_value(fr, cp, fd, nf, output_fmt, isnan(nf));
+}
+
+
+/*
  *  fpu_op():
  *
  *  Perform a floating-point operation. For those of fs and ft that are >= 0,
@@ -1085,7 +1327,7 @@ static int fpu_op(struct cpu *cpu, struct mips_coproc *cp, int op, int fmt,
 {
 	/*  Potentially two input registers, fs and ft  */
 	struct ieee_float_value float_value[2];
-	int unordered, nan, ieee_fmt = mips_fmt_to_ieee_fmt[fmt];
+	int unordered;
 	uint64_t fs_v = 0;
 	double nf;
 	int fr = cpu->cd.mips.coproc[0]->reg[COP0_STATUS] & STATUS_FR ? 1 : 0;
@@ -1100,7 +1342,7 @@ static int fpu_op(struct cpu *cpu, struct mips_coproc *cp, int op, int fmt,
 				    (cp->reg[(fs + 1) & 31] << 32);
 		}
 		// printf("    fs_v = 0x%016llx\n", (long long)fs_v);
-		ieee_interpret_float_value(fs_v, &float_value[0], ieee_fmt);
+		fpu_interpret_float_value(fs_v, &float_value[0], fmt);
 	}
 	if (ft >= 0) {
 		uint64_t v = cp->reg[ft];
@@ -1110,59 +1352,21 @@ static int fpu_op(struct cpu *cpu, struct mips_coproc *cp, int op, int fmt,
 				    (cp->reg[(ft + 1) & 31] << 32);
 		}
 		// printf("    ft_v = 0x%016llx\n", (long long)v);
-		ieee_interpret_float_value(v, &float_value[1], ieee_fmt);
+		fpu_interpret_float_value(v, &float_value[1], fmt);
 	}
 
 
 	switch (op) {
 	case FPU_OP_ADD:
-		nf = float_value[0].f + float_value[1].f;
-		/*  debug("  add: %f + %f = %f\n",
-		    float_value[0].f, float_value[1].f, nf);  */
-		fpu_store_float_value(fr, cp, fd, nf, output_fmt,
-		    float_value[0].nan || float_value[1].nan);
-		break;
 	case FPU_OP_SUB:
-		nf = float_value[0].f - float_value[1].f;
-		/*  debug("  sub: %f - %f = %f\n",
-		    float_value[0].f, float_value[1].f, nf);  */
-		fpu_store_float_value(fr, cp, fd, nf, output_fmt,
-		    float_value[0].nan || float_value[1].nan);
-		break;
 	case FPU_OP_MUL:
-		nf = float_value[0].f * float_value[1].f;
-		/*  debug("  mul: %f * %f = %f\n",
-		    float_value[0].f, float_value[1].f, nf);  */
-		fpu_store_float_value(fr, cp, fd, nf, output_fmt,
-		    float_value[0].nan || float_value[1].nan);
-		break;
 	case FPU_OP_DIV:
-		nan = float_value[0].nan || float_value[1].nan;
-		if (fabs(float_value[1].f) > 0.00000000001)
-			nf = float_value[0].f / float_value[1].f;
-		else {
-			fatal("DIV by zero !!!! TODO\n");
-			nf = 0.0;	/*  TODO  */
-			nan = 1;
-			// mips_cpu_exception(cpu, EXCEPTION_FPE, 0, 0, 1, 0, 0, 0);
-			return 0;
-		}
-		/*  debug("  div: %f / %f = %f\n",
-		    float_value[0].f, float_value[1].f, nf);  */
-		fpu_store_float_value(fr, cp, fd, nf, output_fmt, nan);
+		fpu_arith(cpu, cp, fr, op, fmt, float_value[0].f,
+		    float_value[1].f, fd, output_fmt);
 		break;
 	case FPU_OP_SQRT:
-		nan = float_value[0].nan;
-		if (float_value[0].f >= 0.0)
-			nf = sqrt(float_value[0].f);
-		else {
-			fatal("SQRT by less than zero, %f !!!!\n",
-			    float_value[0].f);
-			nf = 0.0;	/*  TODO  */
-			nan = 1;
-		}
-		/*  debug("  sqrt: %f => %f\n", float_value[0].f, nf);  */
-		fpu_store_float_value(fr, cp, fd, nf, output_fmt, nan);
+		fpu_arith(cpu, cp, fr, op, fmt, float_value[0].f, 0.0, fd,
+		    output_fmt);
 		break;
 	case FPU_OP_ABS:
 		nf = fabs(float_value[0].f);
@@ -1177,10 +1381,8 @@ static int fpu_op(struct cpu *cpu, struct mips_coproc *cp, int op, int fmt,
 		    float_value[0].nan);
 		break;
 	case FPU_OP_CVT:
-		nf = float_value[0].f;
-		/*  debug("  mov: %f => %f\n", float_value[0].f, nf);  */
-		fpu_store_float_value(fr, cp, fd, nf, output_fmt,
-		    float_value[0].nan);
+		fpu_arith(cpu, cp, fr, op, fmt, float_value[0].f, 0.0, fd,
+		    output_fmt);
 		break;
 	case FPU_OP_MOV:
 		/*  Non-arithmetic move:  */
@@ -2130,6 +2332,7 @@ void coproc_function(struct cpu *cpu, struct mips_coproc *cp, int cpnr,
 						    (((tmp >>
 						    MIPS_FCSR_FCC1_SHIFT)
 						    & 0x7f) << 1);
+						fpu_update_interrupt(cpu, cp);
 						break;
 					default:
 						;

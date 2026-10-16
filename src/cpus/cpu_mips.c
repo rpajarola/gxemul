@@ -254,8 +254,10 @@ int mips_cpu_new(struct cpu *cpu, struct memory *mem, struct machine *machine,
 		templ.interrupt_deassert = mips_cpu_interrupt_deassert;
 		interrupt_handler_register(&templ);
 
-		if (i == 7)
+		if (i == 7) {
 			INTERRUPT_CONNECT(name, cpu->cd.mips.irq_compare);
+			INTERRUPT_CONNECT(name, cpu->cd.mips.irq_fpu);
+		}
 	}
 
 	/*  System coprocessor (0), and FPU (1):  */

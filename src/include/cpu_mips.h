@@ -228,6 +228,9 @@ struct mips_cpu {
 	struct interrupt irq_compare;
 	struct timer	*timer;
 
+	/*  The R2010/R3010 FPU's interrupt (MIPS I):  */
+	struct interrupt irq_fpu;
+
 	/*  Read-Modify-Write (LL/SC):  */
 	int		rmw;		/*  1 = currently active  */
 	uint64_t	rmw_len;	/*  Length of rmw modification  */

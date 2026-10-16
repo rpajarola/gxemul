@@ -5157,3 +5157,10 @@ Changelog for GXemul:
 		longer overwritten on every access. DECstations can set the
 		time, which then runs on from the time set, and the once a
 		second update-ended interrupt works. 3/rtc/nvr passes.
+		MIPS FPU: IEEE exceptions set the cause and flag bits in
+		FCSR and follow the rounding mode. As on the R3010, denormal
+		operands and results, and conversions of NaN, infinity or
+		out of range values to integers, are unimplemented
+		operations; on MIPS I, FPU exceptions are interrupt 5
+		instead of a trap. A divisor below 1e-11 was treated as
+		zero. The KN02-BA PROM's fpu self-test passes.
