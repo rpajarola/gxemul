@@ -50,7 +50,7 @@
 #include "net.h"
 #include "settings.h"
 #include "timer.h"
-#include "x11.h"
+#include "display.h"
 
 
 extern int extra_argc;
@@ -115,7 +115,7 @@ char debugger_readchar(void)
 
 	while ((ch = console_readchar(MAIN_CONSOLE)) < 0 && !exit_debugger) {
 		/*  Check for X11 events:  */
-		x11_check_event(debugger_emul);
+		display_check_event(debugger_emul);
 
 		/*  Give up some CPU time:  */
 		usleep(10000);

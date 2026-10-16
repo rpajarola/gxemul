@@ -66,7 +66,7 @@ MACHINE_SETUP(playstation2)
 	if (machine->physical_ram_in_mb != 32)
 		fprintf(stderr, "WARNING! Playstation 2 machines are supposed "
 		    "to have exactly 32 MB RAM. Continuing anyway.\n");
-	if (!machine->x11_md.in_use)
+	if (!machine->display_md.in_use)
 		fprintf(stderr, "WARNING! Playstation 2 without -X is pretty "
 		    "meaningless. Continuing anyway.\n");
 

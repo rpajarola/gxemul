@@ -50,7 +50,7 @@
 #include "net.h"
 #include "settings.h"
 #include "timer.h"
-#include "x11.h"
+#include "display.h"
 
 
 extern int extra_argc;
@@ -446,8 +446,8 @@ bool emul_machine_setup(struct machine *m, int n_load, char **load_names,
 
 	cpu = m->cpus[m->bootstrap_cpu];
 
-	if (m->x11_md.in_use)
-		x11_init(m);
+	if (m->display_md.in_use)
+		display_init(m);
 
 	/*  Fill the directly addressable memory with random bytes:  */
 	if (m->random_mem_contents) {
@@ -924,7 +924,7 @@ void emul_run(struct emul *emul)
 		}
 
 		if (any_cpu_running && idling) {
-			x11_check_event(emul);
+			display_check_event(emul);
 			console_flush();
 
 			if (console_any_input_available(emul)) {
@@ -945,7 +945,7 @@ void emul_run(struct emul *emul)
 
 		/*  Flush X11 and serial console output every now and then:  */
 		if (bootcpu->ninstrs > bootcpu->ninstrs_flush + (1<<19)) {
-			x11_check_event(emul);
+			display_check_event(emul);
 			console_flush();
 			bootcpu->ninstrs_flush = bootcpu->ninstrs;
 		}

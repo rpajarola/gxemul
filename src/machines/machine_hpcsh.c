@@ -65,7 +65,7 @@ MACHINE_SETUP(hpcsh)
 	machine->machine_name = strdup("HPCsh");
 	cpu->byte_order = EMUL_LITTLE_ENDIAN;
 
-	if (!machine->x11_md.in_use)
+	if (!machine->display_md.in_use)
 		fprintf(stderr, "-------------------------------------"
 		    "------------------------------------------\n"
 		    "\n  WARNING!  You are emulating a HPCsh without -X."

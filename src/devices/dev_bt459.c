@@ -37,15 +37,10 @@
 #include "machine.h"
 #include "memory.h"
 #include "misc.h"
-#include "x11.h"
+#include "display.h"
 
 #include "thirdparty/bt459.h"
 
-
-#ifdef WITH_X11
-#include <X11/Xlib.h>     
-#include <X11/Xutil.h>
-#endif
 
 extern int quiet_mode;
 
@@ -123,9 +118,7 @@ struct bt459_data {
 static void bt459_update_X_cursor(struct cpu *cpu, struct bt459_data *d)
 {
 	int i, x,y, xmax=0, ymax=0;
-#ifdef WITH_X11
 	int bw_only = 1;
-#endif
 
 	/*  First, let's calculate the size of the cursor:  */
 	for (y=0; y<64; y++)
@@ -140,10 +133,8 @@ static void bt459_update_X_cursor(struct cpu *cpu, struct bt459_data *d)
 				int color = (data >> (6-2*i)) & 3;
 				if (color != 0)
 					xmax = x + i;
-#ifdef WITH_X11
 				if (color != 0 && color != 3)
 					bw_only = 0;
-#endif
 			}
 		}
 
@@ -160,8 +151,7 @@ static void bt459_update_X_cursor(struct cpu *cpu, struct bt459_data *d)
 	 *	BT459_REG_CCOLOR_2, 3 = reverse of color 1/2.
 	 */
 
-#ifdef WITH_X11
-	if (cpu->machine->x11_md.in_use && d->vfb_data->fb_window != NULL) {
+	if (d->vfb_data->fb_window != NULL) {
 		for (y=0; y<=ymax; y++) {
 			for (x=0; x<=xmax; x+=4) {
 				struct fb_window *win = d->vfb_data->fb_window;
@@ -224,7 +214,6 @@ printf("\n");
 		if (d->cursor_on)
 			d->cursor_on ++;
 	}
-#endif
 }
 
 

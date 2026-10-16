@@ -168,7 +168,7 @@ DEVICE_TICK(sgi_gbe)
 	int bytes_per_pixel = d->bitdepth / 8;
 	int partial_pixels, width_in_tiles;
 
-	if (!cpu->machine->x11_md.in_use)
+	if (!cpu->machine->display_md.in_use)
 		return;
 
 	// If not frozen...

@@ -2082,7 +2082,7 @@ static void arcbios_add_other_components(struct machine *machine,
 			    0xffffffffe2000000ULL, 0x090000000ULL,
 			    0x091000000ULL, 1, 1, 1, 1, 1, 0, 2, 2);
 
-			if (machine->x11_md.in_use) {
+			if (machine->display_md.in_use) {
 				ali_s3 = arcbios_addchild_manual(cpu,
 				    COMPONENT_CLASS_ControllerClass,
 				    COMPONENT_TYPE_DisplayController,
@@ -2101,7 +2101,7 @@ static void arcbios_add_other_components(struct machine *machine,
 			}
 			break;
 		case MACHINE_ARC_JAZZ_MAGNUM:
-			if (machine->x11_md.in_use) {
+			if (machine->display_md.in_use) {
 				vxl = arcbios_addchild_manual(cpu,
 				    COMPONENT_CLASS_ControllerClass,
 				    COMPONENT_TYPE_DisplayController,
@@ -2468,7 +2468,7 @@ static void arc_environment_setup(struct machine *machine, int is64bit,
 
 	if (machine->machine_type == MACHINE_SGI) {
 		/*  g for graphical mode. G for graphical mode with SGI logo visible on Irix?  */
-		if (machine->x11_md.in_use) {
+		if (machine->display_md.in_use) {
 			set_env(env, "ConsoleIn", "keyboard()");
 			set_env(env, "ConsoleOut", "video()");
 			set_env(env, "console", "g");
@@ -2534,7 +2534,7 @@ static void arc_environment_setup(struct machine *machine, int is64bit,
 		set_env(env, "debug_bigmem", "1");
 	} else {
 		//  General ARC:
-		if (machine->x11_md.in_use) {
+		if (machine->display_md.in_use) {
 			set_env(env, "ConsoleIn", "multi()key()keyboard()console()");
 			set_env(env, "ConsoleOut", "multi()video()monitor()console()");
 		} else {
@@ -2729,7 +2729,7 @@ void arcbios_init(struct machine *machine, int is64bit, uint64_t sgi_ram_offset,
 		machine->md.arc->current_seek_offset[i] = 0;
 	}
 
-	if (!machine->x11_md.in_use)
+	if (!machine->display_md.in_use)
 		machine->md.arc->vgaconsole = 0;
 
 	if (machine->md.arc->vgaconsole) {

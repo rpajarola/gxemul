@@ -405,7 +405,7 @@ static void vga_update_text(struct machine *machine, struct vga_data *d,
 	base = ((d->crtc_reg[VGA_CRTC_START_ADDR_HIGH] << 8)
 	    + d->crtc_reg[VGA_CRTC_START_ADDR_LOW]) * 2;
 
-	if (!machine->x11_md.in_use)
+	if (!machine->display_md.in_use)
 		vga_update_textmode(machine, d, base, start, end);
 
 	for (i=start; i<=end; i+=2) {
@@ -465,7 +465,7 @@ static void vga_update_text(struct machine *machine, struct vga_data *d,
 					continue;
 				dev_fb_access(machine->cpus[0],
 				    machine->memory, addr, rgb_line,
-				    3 * machine->x11_md.scaleup * font_width,
+				    3 * machine->display_md.scaleup * font_width,
 				    MEM_WRITE, d->fb);
 			}
 		}
@@ -554,7 +554,7 @@ DEVICE_TICK(vga)
 		}
 	}
 
-	if (!cpu->machine->x11_md.in_use) {
+	if (!cpu->machine->display_md.in_use) {
 		/*  NOTE: 2 > 0, so this only updates the cursor, no
 		    character cells.  */
 		vga_update_textmode(cpu->machine, d, 0, 2, 0);
@@ -782,8 +782,8 @@ static void vga_crtc_reg_write(struct machine *machine, struct vga_data *d,
 		case 0x01:
 			d->cur_mode = MODE_CHARCELL;
 			d->max_x = 40; d->max_y = 25;
-			d->pixel_repx = machine->x11_md.scaleup * 2;
-			d->pixel_repy = machine->x11_md.scaleup;
+			d->pixel_repx = machine->display_md.scaleup * 2;
+			d->pixel_repy = machine->display_md.scaleup;
 			d->font_width = 8;
 			d->font_height = 16;
 			d->font = font8x16;
@@ -794,7 +794,7 @@ static void vga_crtc_reg_write(struct machine *machine, struct vga_data *d,
 		case 0x03:
 			d->cur_mode = MODE_CHARCELL;
 			d->max_x = 80; d->max_y = 25;
-			d->pixel_repx = d->pixel_repy = machine->x11_md.scaleup;
+			d->pixel_repx = d->pixel_repy = machine->display_md.scaleup;
 			d->font_width = 8;
 			d->font_height = 16;
 			d->font = font8x16;
@@ -804,8 +804,8 @@ static void vga_crtc_reg_write(struct machine *machine, struct vga_data *d,
 			d->max_x = 160;	d->max_y = 200;
 			d->graphics_mode = GRAPHICS_MODE_4BIT;
 			d->bits_per_pixel = 4;
-			d->pixel_repx = 4 * machine->x11_md.scaleup;
-			d->pixel_repy = 2 * machine->x11_md.scaleup;
+			d->pixel_repx = 4 * machine->display_md.scaleup;
+			d->pixel_repy = 2 * machine->display_md.scaleup;
 			break;
 		case 0x09:
 		case 0x0d:
@@ -814,29 +814,29 @@ static void vga_crtc_reg_write(struct machine *machine, struct vga_data *d,
 			d->graphics_mode = GRAPHICS_MODE_4BIT;
 			d->bits_per_pixel = 4;
 			d->pixel_repx = d->pixel_repy =
-			    2 * machine->x11_md.scaleup;
+			    2 * machine->display_md.scaleup;
 			break;
 		case 0x0e:
 			d->cur_mode = MODE_GRAPHICS;
 			d->max_x = 640;	d->max_y = 200;
 			d->graphics_mode = GRAPHICS_MODE_4BIT;
 			d->bits_per_pixel = 4;
-			d->pixel_repx = machine->x11_md.scaleup;
-			d->pixel_repy = machine->x11_md.scaleup * 2;
+			d->pixel_repx = machine->display_md.scaleup;
+			d->pixel_repy = machine->display_md.scaleup * 2;
 			break;
 		case 0x10:
 			d->cur_mode = MODE_GRAPHICS;
 			d->max_x = 640; d->max_y = 350;
 			d->graphics_mode = GRAPHICS_MODE_4BIT;
 			d->bits_per_pixel = 4;
-			d->pixel_repx = d->pixel_repy = machine->x11_md.scaleup;
+			d->pixel_repx = d->pixel_repy = machine->display_md.scaleup;
 			break;
 		case 0x12:
 			d->cur_mode = MODE_GRAPHICS;
 			d->max_x = 640; d->max_y = 480;
 			d->graphics_mode = GRAPHICS_MODE_4BIT;
 			d->bits_per_pixel = 4;
-			d->pixel_repx = d->pixel_repy = machine->x11_md.scaleup;
+			d->pixel_repx = d->pixel_repy = machine->display_md.scaleup;
 			break;
 		case 0x13:
 			d->cur_mode = MODE_GRAPHICS;
@@ -844,7 +844,7 @@ static void vga_crtc_reg_write(struct machine *machine, struct vga_data *d,
 			d->graphics_mode = GRAPHICS_MODE_8BIT;
 			d->bits_per_pixel = 8;
 			d->pixel_repx = d->pixel_repy =
-			    2 * machine->x11_md.scaleup;
+			    2 * machine->display_md.scaleup;
 			break;
 		default:
 			fatal("TODO! video mode change hack (mode 0x%02x)\n",
@@ -1207,7 +1207,7 @@ void dev_vga_init(struct machine *machine, struct memory *mem,
 	d->charcells_size = 0x8000;
 	d->gfx_mem_size   = 64;	/*  Nothing, as we start in text mode,
 			but size large enough to make gfx_mem aligned.  */
-	d->pixel_repx = d->pixel_repy = machine->x11_md.scaleup;
+	d->pixel_repx = d->pixel_repy = machine->display_md.scaleup;
 
 	/*  Allocate in full pages, to make it possible to use dyntrans:  */
 	allocsize = ((d->charcells_size-1) | (machine->arch_pagesize-1)) + 1;

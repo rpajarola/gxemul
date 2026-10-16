@@ -82,7 +82,7 @@ MACHINE_SETUP(hpcmips)
 
 		/*  TODO: irq?  */
 		snprintf(tmpstr, sizeof(tmpstr), "ns16550 irq=0 addr=0x"
-		    "0a008680 addr_mult=4 in_use=%i", !machine->x11_md.in_use);
+		    "0a008680 addr_mult=4 in_use=%i", !machine->display_md.in_use);
 		machine->main_console_handle = (size_t)
 		    device_add(machine, tmpstr);
 
@@ -112,7 +112,7 @@ MACHINE_SETUP(hpcmips)
 
 		/*  TODO: irq?  */
 		snprintf(tmpstr, sizeof(tmpstr), "ns16550 irq=0 addr=0x"
-		    "0a008680 addr_mult=4 in_use=%i", !machine->x11_md.in_use);
+		    "0a008680 addr_mult=4 in_use=%i", !machine->display_md.in_use);
 		machine->main_console_handle = (size_t)
 		    device_add(machine, tmpstr);
 
@@ -242,7 +242,7 @@ MACHINE_SETUP(hpcmips)
 			    "ns16550 irq=%i addr=0x0c000010", 8+VRIP_INTR_SIU);
 			x = (size_t)device_add(machine, tmpstr);
 
-			if (!machine->x11_md.in_use)
+			if (!machine->display_md.in_use)
 				machine->main_console_handle = x;
 		}
 
@@ -345,7 +345,7 @@ MACHINE_SETUP(hpcmips)
 		    "res:240,bpp:4,gray,hpck:3084,inv ether=0,0x03fe0300,eth0");
 		tmp[tmplen-1] = '\0';
 
-		if (!machine->x11_md.in_use)
+		if (!machine->display_md.in_use)
 			snprintf(tmp+strlen(tmp), tmplen-strlen(tmp),
 			    " console=ttyS0,115200");
 		tmp[tmplen-1] = '\0';
@@ -389,7 +389,7 @@ MACHINE_SETUP(hpcmips)
 	store_16bit_word_in_host(cpu, (unsigned char *)&hpc_bootinfo.fb_type,
 	    hpc_fb_encoding);
 	store_16bit_word_in_host(cpu, (unsigned char *)&hpc_bootinfo.bi_cnuse,
-	    machine->x11_md.in_use? BI_CNUSE_BUILTIN : BI_CNUSE_SERIAL);
+	    machine->display_md.in_use? BI_CNUSE_BUILTIN : BI_CNUSE_SERIAL);
 
 	/*  printf("hpc_bootinfo.platid_cpu     = 0x%08x\n",
 	    hpc_bootinfo.platid_cpu);

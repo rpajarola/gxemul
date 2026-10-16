@@ -71,7 +71,7 @@ MACHINE_SETUP(prep)
 		bus_pci_add(machine, pci_data, machine->memory,
 		    0, 13, 0, "dec21143");
 
-		if (machine->x11_md.in_use) {
+		if (machine->display_md.in_use) {
 			bus_pci_add(machine, pci_data, machine->memory,
 			    0, 14, 0, "s3_virge");
 		}
@@ -131,7 +131,7 @@ MACHINE_SETUP(prep)
 	store_32bit_word(cpu, cpu->cd.ppc.gpr[6]+12, 20);
 	store_32bit_word(cpu, cpu->cd.ppc.gpr[6]+16, 1);
 	store_buf(cpu, cpu->cd.ppc.gpr[6]+20,
-	    machine->x11_md.in_use? "vga":"com", 4);
+	    machine->display_md.in_use? "vga":"com", 4);
 	store_32bit_word(cpu, cpu->cd.ppc.gpr[6]+24, 0x3f8);/*  addr  */
 	store_32bit_word(cpu, cpu->cd.ppc.gpr[6]+28, 9600);/*  speed  */
 

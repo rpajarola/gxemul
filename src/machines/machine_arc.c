@@ -136,13 +136,13 @@ MACHINE_SETUP(arc)
 		    machine->bootstrap_cpu);
 		i = dev_pckbc_init(machine, mem, 0x80005000ULL,
 		    PCKBC_JAZZ, tmpstr, tmpstr2,
-		    machine->x11_md.in_use, 0);
+		    machine->display_md.in_use, 0);
 
 		/*  Serial controllers at JAZZ irq 8 and 9:  */
 		snprintf(tmpstr, sizeof(tmpstr),
 		    "ns16550 irq=%s.cpu[%i].jazz.8 addr=0x80006000"
 		    " in_use=%i name2=tty0", machine->path,
-		    machine->bootstrap_cpu, machine->x11_md.in_use? 0 : 1);
+		    machine->bootstrap_cpu, machine->display_md.in_use? 0 : 1);
 		j = (size_t)device_add(machine, tmpstr);
 		snprintf(tmpstr, sizeof(tmpstr),
 		    "ns16550 irq=%s.cpu[%i].jazz.9 addr=0x80007000"
@@ -150,14 +150,14 @@ MACHINE_SETUP(arc)
 		    machine->bootstrap_cpu);
 		device_add(machine, tmpstr);
 
-		if (machine->x11_md.in_use)
+		if (machine->display_md.in_use)
 			machine->main_console_handle = i;
 		else
 			machine->main_console_handle = j;
 
 		switch (machine->machine_subtype) {
 		case MACHINE_ARC_JAZZ_PICA:
-			if (machine->x11_md.in_use) {
+			if (machine->display_md.in_use) {
 				dev_vga_init(machine, mem, 0x400a0000ULL,
 				    0x600003c0ULL, machine->machine_name);
 				arcbios_console_init(machine,

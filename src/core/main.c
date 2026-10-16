@@ -438,19 +438,19 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			internal_w(optarg);
 			exit(0);
 		case 'X':
-			m->x11_md.in_use = 1;
+			m->display_md.in_use = 1;
 			machine_specific_options_used = true;
 			/*  FALL-THROUGH  */
 		case 'x':
 			console_allow_slaves(1);
 			break;
 		case 'Y':
-			m->x11_md.scaledown = atoi(optarg);
-			if (m->x11_md.scaledown < -1) {
-				m->x11_md.scaleup = - m->x11_md.scaledown;
-				m->x11_md.scaledown = 1;
+			m->display_md.scaledown = atoi(optarg);
+			if (m->display_md.scaledown < -1) {
+				m->display_md.scaleup = - m->display_md.scaledown;
+				m->display_md.scaledown = 1;
 			}
-			if (m->x11_md.scaledown < 1) {
+			if (m->display_md.scaledown < 1) {
 				fprintf(stderr, "Invalid scaledown value.\n");
 				exit(1);
 			}
@@ -462,12 +462,12 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			machine_specific_options_used = true;
 			break;
 		case 'z':
-			m->x11_md.n_display_names ++;
-			CHECK_ALLOCATION(m->x11_md.display_names = (char **) realloc(
-			    m->x11_md.display_names,
-			    m->x11_md.n_display_names * sizeof(char *)));
-			CHECK_ALLOCATION(m->x11_md.display_names[
-			    m->x11_md.n_display_names-1] = strdup(optarg));
+			m->display_md.n_display_names ++;
+			CHECK_ALLOCATION(m->display_md.display_names = (char **) realloc(
+			    m->display_md.display_names,
+			    m->display_md.n_display_names * sizeof(char *)));
+			CHECK_ALLOCATION(m->display_md.display_names[
+			    m->display_md.n_display_names-1] = strdup(optarg));
 			machine_specific_options_used = true;
 			break;
 		default:
@@ -566,7 +566,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 		exit(1);
 	}
 
-	if (!using_switch_Z && !m->x11_md.in_use)
+	if (!using_switch_Z && !m->display_md.in_use)
 		m->n_gfx_cards = 0;
 
 	return 0;

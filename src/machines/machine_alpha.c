@@ -133,7 +133,7 @@ MACHINE_SETUP(alpha)
 	/*  CTB: Console Terminal Block  */
 	memset(&ctb, 0, sizeof(struct ctb));
 	store_64bit_word_in_host(cpu, (unsigned char *)
-	    &(ctb.ctb_term_type), machine->x11_md.in_use?
+	    &(ctb.ctb_term_type), machine->display_md.in_use?
 	    CTB_GRAPHICS : CTB_PRINTERPORT);
 
 	/*  CRB: Console Routine Block  */

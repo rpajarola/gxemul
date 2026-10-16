@@ -84,7 +84,7 @@ MACHINE_SETUP(evbmips)
 		pci_data = dev_gt_init(machine, machine->memory, 0x1be00000,
 		    tmpstr, tmpstr2, 120);
 
-		if (machine->x11_md.in_use) {
+		if (machine->display_md.in_use) {
 			if (strlen(machine->boot_string_argument) < 3) {
 				fatal("WARNING: remember to use  -o 'console="
 				    "tty0'  if you are emulating Linux. (Not"

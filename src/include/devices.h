@@ -225,7 +225,7 @@ struct vfb_data {
 	int		visible_ysize;
 
 	size_t		framebuffer_size;
-	int		x11_xsize, x11_ysize;
+	int		win_xsize, win_ysize;	/*  window size  */
 
 	int		update_x1, update_y1, update_x2, update_y2;
 

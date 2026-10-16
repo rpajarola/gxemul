@@ -1225,7 +1225,7 @@ static void debugger_cmd_grab(struct machine *m, char *args)
 
 	while (end > args && end[-1] == ' ')
 		*--end = '\0';
-	x11_grab(m, *args ? args : NULL);
+	display_screenshot(m, *args ? args : NULL);
 }
 
 
@@ -1239,9 +1239,9 @@ static void debugger_cmd_video(struct machine *m, char *args)
 	while (end > args && end[-1] == ' ')
 		*--end = '\0';
 	if (strcmp(args, "stop") == 0)
-		x11_video_stop();
+		display_video_stop();
 	else
-		x11_video_start(m, *args ? args : NULL);
+		display_video_start(m, *args ? args : NULL);
 }
 
 
