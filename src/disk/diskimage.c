@@ -130,12 +130,20 @@ bool diskimage_add_overlay(struct diskimage *d, char *overlay_basename, bool rem
 	struct diskimage_overlay overlay;
 	size_t bitmap_name_len = strlen(overlay_basename) + 20;
 	char *bitmap_name;
+	const char *mode = d->writable? "r+b" : "rb";
+
+#ifdef _WIN32
+	/*  Open files can't be removed on Windows, so they are opened with
+	    "D", which removes them when they are closed:  */
+	if (remove_after_open)
+		mode = d->writable? "r+bD" : "rbD";
+#endif
 
 	CHECK_ALLOCATION(bitmap_name = (char *) malloc(bitmap_name_len));
 	snprintf(bitmap_name, bitmap_name_len, "%s.map", overlay_basename);
 
 	CHECK_ALLOCATION(overlay.overlay_basename = strdup(overlay_basename));
-	overlay.f_data = fopen(overlay_basename, d->writable? "r+" : "r");
+	overlay.f_data = fopen(overlay_basename, mode);
 	if (overlay.f_data == NULL) {
 		perror(overlay_basename);
 
@@ -148,7 +156,7 @@ bool diskimage_add_overlay(struct diskimage *d, char *overlay_basename, bool rem
 		return false;
 	}
 
-	overlay.f_bitmap = fopen(bitmap_name, d->writable? "r+" : "r");
+	overlay.f_bitmap = fopen(bitmap_name, mode);
 	if (overlay.f_bitmap == NULL) {
 		perror(bitmap_name);
 		fprintf(stderr, "Please create the map file first.\n");
@@ -170,6 +178,7 @@ bool diskimage_add_overlay(struct diskimage *d, char *overlay_basename, bool rem
 
 	d->overlays[d->nr_of_overlays - 1] = overlay;
 
+#ifndef _WIN32
 	if (remove_after_open) {
 		if (unlink(overlay_basename) != 0)
 			perror(overlay_basename);
@@ -177,6 +186,7 @@ bool diskimage_add_overlay(struct diskimage *d, char *overlay_basename, bool rem
 		if (unlink(bitmap_name) != 0)
 			perror(bitmap_name);
 	}
+#endif
 
 	free(bitmap_name);
 
@@ -1031,7 +1041,7 @@ int diskimage_add(struct machine *machine, char *fname)
 		}
 	}
 
-	d->f = fopen(fname, d->writable && !prefix_R ? "r+" : "r");
+	d->f = fopen(fname, d->writable && !prefix_R ? "r+b" : "rb");
 	if (d->f == NULL) {
 		debugmsg(SUBSYS_DISK, "", VERBOSITY_ERROR,
 		    "could not open '%s' for reading%s: %s",
@@ -1103,6 +1113,10 @@ int diskimage_add(struct machine *machine, char *fname)
 	if (prefix_R) {
 		char tmpname[1000];
 		const char* tmpdir = getenv("TMPDIR");
+#ifdef _WIN32
+		if (tmpdir == NULL)
+			tmpdir = getenv("TEMP");
+#endif
 		if (tmpdir == NULL)
 			tmpdir = "/tmp";
 		
@@ -1114,13 +1128,13 @@ int diskimage_add(struct machine *machine, char *fname)
 		snprintf(tmpname, sizeof(tmpname), "%s/gxemul.%i.temp-diskimage-overlay.%i.img.map",
 		    tmpdir, d->id, getpid());
 
-		FILE* f_img_map = fopen(tmpname, "w");
+		FILE* f_img_map = fopen(tmpname, "wb");
 		fclose(f_img_map);
 
 		snprintf(tmpname, sizeof(tmpname), "%s/gxemul.%i.temp-diskimage-overlay.%i.img",
 		    tmpdir, d->id, getpid());
 
-		FILE* f_img = fopen(tmpname, "w");
+		FILE* f_img = fopen(tmpname, "wb");
 		fclose(f_img);
 
 		umask(old_umask);

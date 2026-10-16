@@ -34,7 +34,12 @@
 #ifdef _WIN32
 
 #define	WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
 #include <windows.h>
+
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "compat_win32.h"
 
@@ -85,6 +90,236 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 int munmap(void *addr, size_t len)
 {
 	return VirtualFree(addr, 0, MEM_RELEASE) ? 0 : -1;
+}
+
+
+/*
+ *  win32_timer_*():
+ *
+ *  The timer framework (src/core/timer.c) uses these instead of SIGALRM
+ *  and setitimer().  The tick function runs on a thread pool thread, so
+ *  timer.c takes the lock when it changes its list of timers.
+ */
+static SRWLOCK timer_lock = SRWLOCK_INIT;
+static HANDLE timer_handle = NULL;
+static void (*timer_tick_function)(void);
+
+static VOID CALLBACK win32_timer_callback(PVOID param, BOOLEAN fired)
+{
+	win32_timer_lock();
+	timer_tick_function();
+	win32_timer_unlock();
+}
+
+void win32_timer_start(void (*tick)(void), double hz)
+{
+	DWORD ms = (DWORD) (1000.0 / hz);
+
+	if (ms < 1)
+		ms = 1;
+
+	timer_tick_function = tick;
+	CreateTimerQueueTimer(&timer_handle, NULL, win32_timer_callback,
+	    NULL, ms, ms, WT_EXECUTEDEFAULT);
+}
+
+void win32_timer_stop(void)
+{
+	if (timer_handle == NULL)
+		return;
+
+	/*  Waits for a running tick to finish:  */
+	DeleteTimerQueueTimer(NULL, timer_handle, INVALID_HANDLE_VALUE);
+	timer_handle = NULL;
+}
+
+void win32_timer_lock(void)
+{
+	AcquireSRWLockExclusive(&timer_lock);
+}
+
+void win32_timer_unlock(void)
+{
+	ReleaseSRWLockExclusive(&timer_lock);
+}
+
+
+/*
+ *  win32_console_*(), win32_stdin_*(), win32_set_ctrl_c_handler():
+ *
+ *  The console is put in raw mode (no line editing or echo), with VT input
+ *  (so arrow keys etc. arrive as escape sequences, as in a Unix terminal)
+ *  and VT output (for the guest's escape sequences).
+ *
+ *  select() only works with sockets on Windows, so a thread reads the
+ *  console's key presses into a buffer.  Ctrl-C arrives as a character
+ *  (as ENABLE_PROCESSED_INPUT is off), and the thread calls the Ctrl-C
+ *  handler for it, as SIGINT would on Unix.  Ctrl-Break, and Ctrl-C when
+ *  stdin isn't a console, come through SetConsoleCtrlHandler().
+ *
+ *  When stdin isn't a console (a pipe or a file), it is read as such.
+ */
+#define	STDIN_BUF_LEN	4096
+
+static HANDLE stdin_handle;
+static int stdin_is_console;
+static DWORD old_stdin_mode, old_stdout_mode;
+static int console_modes_saved;
+static void (*ctrl_c_handler)(int);
+
+static SRWLOCK stdin_lock = SRWLOCK_INIT;
+static unsigned char stdin_buf[STDIN_BUF_LEN];
+static int stdin_head, stdin_tail;
+static HANDLE stdin_thread;
+
+static DWORD WINAPI stdin_thread_main(LPVOID param)
+{
+	INPUT_RECORD r;
+	DWORD n;
+
+	for (;;) {
+		int repeat;
+		unsigned char ch;
+
+		if (!ReadConsoleInputA(stdin_handle, &r, 1, &n)) {
+			Sleep(100);
+			continue;
+		}
+
+		if (n == 0 || r.EventType != KEY_EVENT ||
+		    !r.Event.KeyEvent.bKeyDown ||
+		    r.Event.KeyEvent.uChar.AsciiChar == 0)
+			continue;
+
+		ch = r.Event.KeyEvent.uChar.AsciiChar;
+		repeat = r.Event.KeyEvent.wRepeatCount;
+
+		if (ch == 3) {
+			if (ctrl_c_handler != NULL)
+				ctrl_c_handler(SIGINT);
+			continue;
+		}
+
+		AcquireSRWLockExclusive(&stdin_lock);
+		while (repeat-- > 0 &&
+		    (stdin_head + 1) % STDIN_BUF_LEN != stdin_tail) {
+			stdin_buf[stdin_head] = ch;
+			stdin_head = (stdin_head + 1) % STDIN_BUF_LEN;
+		}
+		ReleaseSRWLockExclusive(&stdin_lock);
+	}
+
+	return 0;
+}
+
+void win32_console_init(void)
+{
+	HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+	DWORD mode;
+
+	stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
+	stdin_is_console = GetConsoleMode(stdin_handle, &old_stdin_mode);
+
+	if (stdin_is_console) {
+		mode = old_stdin_mode;
+		mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT |
+		    ENABLE_PROCESSED_INPUT);
+		mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
+		SetConsoleMode(stdin_handle, mode);
+
+		if (stdin_thread == NULL)
+			stdin_thread = CreateThread(NULL, 0,
+			    stdin_thread_main, NULL, 0, NULL);
+	}
+
+	if (GetConsoleMode(out, &old_stdout_mode))
+		SetConsoleMode(out, old_stdout_mode |
+		    ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+
+	console_modes_saved = 1;
+}
+
+void win32_console_restore(void)
+{
+	if (!console_modes_saved)
+		return;
+
+	if (stdin_is_console)
+		SetConsoleMode(stdin_handle, old_stdin_mode);
+	SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), old_stdout_mode);
+	console_modes_saved = 0;
+}
+
+int win32_stdin_avail(void)
+{
+	DWORD avail;
+	int res;
+
+	if (stdin_handle == NULL)
+		stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
+
+	if (!stdin_is_console) {
+		if (GetFileType(stdin_handle) == FILE_TYPE_PIPE)
+			return !PeekNamedPipe(stdin_handle, NULL, 0, NULL,
+			    &avail, NULL) || avail > 0;
+		return 1;
+	}
+
+	AcquireSRWLockShared(&stdin_lock);
+	res = stdin_head != stdin_tail;
+	ReleaseSRWLockShared(&stdin_lock);
+	return res;
+}
+
+int win32_stdin_read(unsigned char *buf, int len)
+{
+	DWORD n;
+	int got = 0;
+
+	if (!stdin_is_console) {
+		if (!ReadFile(stdin_handle, buf, len, &n, NULL))
+			return -1;
+		return n;
+	}
+
+	AcquireSRWLockExclusive(&stdin_lock);
+	while (got < len && stdin_tail != stdin_head) {
+		buf[got++] = stdin_buf[stdin_tail];
+		stdin_tail = (stdin_tail + 1) % STDIN_BUF_LEN;
+	}
+	ReleaseSRWLockExclusive(&stdin_lock);
+
+	return got;
+}
+
+static BOOL WINAPI win32_ctrl_handler(DWORD type)
+{
+	if (type != CTRL_C_EVENT && type != CTRL_BREAK_EVENT)
+		return FALSE;
+
+	ctrl_c_handler(SIGINT);
+	return TRUE;
+}
+
+void win32_set_ctrl_c_handler(void (*handler)(int))
+{
+	if (ctrl_c_handler == NULL)
+		SetConsoleCtrlHandler(win32_ctrl_handler, TRUE);
+	ctrl_c_handler = handler;
+}
+
+
+/*
+ *  win32_sockets_init():
+ */
+void win32_sockets_init(void)
+{
+	WSADATA wsadata;
+
+	if (WSAStartup(MAKEWORD(2, 2), &wsadata) != 0) {
+		fprintf(stderr, "Could not start Winsock\n");
+		exit(1);
+	}
 }
 
 #endif	/*  _WIN32  */

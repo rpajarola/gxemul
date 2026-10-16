@@ -64,20 +64,19 @@
  */
 
 #include <errno.h>
-#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <termios.h>
 #include <unistd.h>
-#include <sys/select.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <time.h>
+#ifndef _WIN32
+#include <termios.h>
+#endif
+
+#include "sockets.h"
 
 #include "console.h"
 #include "emul.h"
@@ -90,8 +89,10 @@ extern int verbose;
 extern struct settings *global_settings;
 
 
+#ifndef _WIN32
 static struct termios console_oldtermios;
 static struct termios console_curtermios;
+#endif
 
 static int console_initialized = 0;
 static struct settings *console_settings = NULL;
@@ -173,7 +174,11 @@ void console_deinit_main(void)
 	if (!console_initialized)
 		return;
 
+#ifdef _WIN32
+	win32_console_restore();
+#else
 	tcsetattr(STDIN_FILENO, TCSANOW, &console_oldtermios);
+#endif
 
 	console_initialized = 0;
 }
@@ -190,6 +195,7 @@ void console_deinit_main(void)
  */
 void console_sigcont(int x)
 {
+#ifdef SIGCONT
 	if (!console_initialized)
 		return;
 
@@ -198,6 +204,7 @@ void console_sigcont(int x)
 
 	/*  Reset the signal handler:  */
 	signal(SIGCONT, console_sigcont);
+#endif
 }
 
 
@@ -232,9 +239,10 @@ static void telnet_listen(int handle)
 		    sizeof(sin)) == 0)
 			break;
 
-		if (errno != EADDRINUSE || telnet_port >= 65535) {
-			fprintf(stderr, "console: can't listen on port %i: "
-			    "%s\n", telnet_port, strerror(errno));
+		if (socket_error() != SOCKET_EADDRINUSE ||
+		    telnet_port >= 65535) {
+			fprintf(stderr, "console: can't listen on port %i "
+			    "(error %i)\n", telnet_port, socket_error());
 			exit(1);
 		}
 
@@ -246,7 +254,7 @@ static void telnet_listen(int handle)
 		exit(1);
 	}
 
-	fcntl(chp->listen_fd, F_SETFL, O_NONBLOCK);
+	socket_set_nonblocking(chp->listen_fd);
 
 	chp->port = telnet_port ++;
 	chp->client_fd = -1;
@@ -301,7 +309,7 @@ static void telnet_disconnect(int handle)
 {
 	struct console_handle *chp = &console_handles[handle];
 
-	close(chp->client_fd);
+	socket_close(chp->client_fd);
 	chp->client_fd = -1;
 }
 
@@ -332,8 +340,8 @@ static void telnet_flush_backlog(int handle)
 		res = send(chp->client_fd, (const char *) chp->backlog + start,
 		    len, flags);
 		if (res < 0) {
-			if (errno != EAGAIN && errno != EWOULDBLOCK &&
-			    errno != EINTR)
+			int e = socket_error();
+			if (!socket_would_block(e) && e != SOCKET_EINTR)
 				telnet_disconnect(handle);
 			return;
 		}
@@ -371,11 +379,11 @@ static void telnet_accept(int handle)
 		static const char busy[] = "Already in use.\r\n";
 		telnet_send(fd, (const unsigned char *) busy,
 		    sizeof(busy) - 1);
-		close(fd);
+		socket_close(fd);
 		return;
 	}
 
-	fcntl(fd, F_SETFL, O_NONBLOCK);
+	socket_set_nonblocking(fd);
 
 	chp->client_fd = fd;
 	chp->telnet_state = TELNET_DATA;
@@ -548,6 +556,7 @@ static void telnet_output(int handle, int ch)
  *
  *  Returns 1 if anything is available on a descriptor.
  */
+#ifndef _WIN32
 static int d_avail(int d)
 {
 	fd_set rfds;
@@ -565,6 +574,7 @@ static int d_avail(int d)
 			return r;
 	}
 }
+#endif
 
 
 /*
@@ -597,8 +607,13 @@ static int console_stdin_avail(int handle)
 	if (!console_handles[handle].in_use_for_input)
 		return 0;
 
-	if (!console_handles[handle].using_telnet)
+	if (!console_handles[handle].using_telnet) {
+#ifdef _WIN32
+		return win32_stdin_avail();
+#else
 		return d_avail(STDIN_FILENO);
+#endif
+	}
 
 	return telnet_poll(handle);
 }
@@ -637,8 +652,9 @@ int console_charavail(int handle)
 			d = console_handles[handle].client_fd;
 			len = recv(d, (char *) ch, sizeof(ch), 0);
 			if (len <= 0) {
-				if (len == 0 || (errno != EAGAIN &&
-				    errno != EWOULDBLOCK && errno != EINTR))
+				int e = socket_error();
+				if (len == 0 || (!socket_would_block(e) &&
+				    e != SOCKET_EINTR))
 					telnet_disconnect(handle);
 				break;
 			}
@@ -647,8 +663,13 @@ int console_charavail(int handle)
 			continue;
 		}
 
-		d = STDIN_FILENO;
-		len = read(d, ch, sizeof(ch));
+#ifdef _WIN32
+		len = win32_stdin_read(ch, sizeof(ch));
+#else
+		len = read(STDIN_FILENO, ch, sizeof(ch));
+#endif
+		if (len <= 0)
+			break;
 
 		for (i=0; i<len; i++) {
 			/*  printf("[ %i: %i ]\n", i, ch[i]);  */
@@ -663,7 +684,7 @@ int console_charavail(int handle)
 			// well when running with -x, since noone checks
 			// for charavail at stdin then...
 			//
-			// if (ch[i] == 20 && d == STDIN_FILENO) {
+			// if (ch[i] == 20) {
 			//	printf("\n");
 			//	cpu_show_cycles(machine..., true);
 			// }
@@ -1017,6 +1038,11 @@ void console_init_main(struct emul *emul)
 	if (console_initialized)
 		return;
 
+#ifdef _WIN32
+	(void) i;
+	(void) tra;
+	win32_console_init();
+#else
 	tcgetattr(STDIN_FILENO, &console_oldtermios);
 	memcpy(&console_curtermios, &console_oldtermios,
 	    sizeof (struct termios));
@@ -1044,6 +1070,7 @@ void console_init_main(struct emul *emul)
 		console_curtermios.c_iflag &= ~ICRNL;
 
 	tcsetattr(STDIN_FILENO, TCSANOW, &console_curtermios);
+#endif
 
 	console_stdout_pending = 1;
 	console_handles[MAIN_CONSOLE].fifo_head = 0;

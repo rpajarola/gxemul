@@ -188,7 +188,7 @@ static void diskimage__switch_tape(struct diskimage *d)
 	if (d->f != NULL)
 		fclose(d->f);
 
-	d->f = fopen(tmpfname, d->writable? "r+" : "r");
+	d->f = fopen(tmpfname, d->writable? "r+b" : "rb");
 	if (d->f == NULL) {
 		debugmsg(SUBSYS_DISK, "scsi", VERBOSITY_ERROR,
 		    "diskimage__switch_tape(): could not "
@@ -1168,7 +1168,7 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		if (d->f != NULL)
 			fclose(d->f);
 
-		d->f = fopen(d->fname, d->writable? "r+" : "r");
+		d->f = fopen(d->fname, d->writable? "r+b" : "rb");
 		if (d->f == NULL) {
 			fprintf(stderr, "[ diskimage: could not (re)open "
 			    "'%s' ]\n", d->fname);

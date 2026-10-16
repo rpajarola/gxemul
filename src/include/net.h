@@ -33,9 +33,8 @@
 
 #include <stdbool.h>
 #include <time.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
+
+#include "sockets.h"
 
 struct emul;
 struct ethernet_packet_link;

@@ -214,7 +214,10 @@ int mymkstemp(char *templ)
 		p++;
 	}
 
-	h = open(templ, O_RDWR | O_CREAT | O_EXCL, 0600);
+#ifndef O_BINARY
+#define	O_BINARY	0
+#endif
+	h = open(templ, O_RDWR | O_CREAT | O_EXCL | O_BINARY, 0600);
 	return h;
 }
 

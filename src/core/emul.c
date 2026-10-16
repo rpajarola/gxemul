@@ -503,7 +503,7 @@ bool emul_machine_setup(struct machine *m, int n_load, char **load_names,
 		 *  gzipped files are automagically gunzipped:
 		 *  NOTE/TODO: This isn't secure. system() is used.
 		 */
-		tmp_f = fopen(name_to_load, "r");
+		tmp_f = fopen(name_to_load, "rb");
 		if (tmp_f != NULL) {
 			unsigned char buf[2];		/*  gzip header  */
 			size_t res;
@@ -883,8 +883,14 @@ void emul_run(struct emul *emul)
 	 */
 	console_init_main(emul);
 
+#ifdef _WIN32
+	win32_set_ctrl_c_handler(debugger_activate);
+#else
 	signal(SIGINT, debugger_activate);
+#endif
+#ifdef SIGCONT
 	signal(SIGCONT, console_sigcont);
+#endif
 
 	/*  Initialize all CPUs in all machines:  */
 	for (int j = 0; j < emul->n_machines; j++)

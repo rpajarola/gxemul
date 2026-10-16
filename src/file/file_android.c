@@ -82,7 +82,7 @@ static void file_load_android(struct machine *m, struct memory *mem,
 	struct android_header android_header;
 	unsigned char buf[65536];
 
-	f = fopen(filename, "r");
+	f = fopen(filename, "rb");
 	if (f == NULL) {
 		perror(filename);
 		exit(1);

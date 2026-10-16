@@ -42,6 +42,20 @@
 /*  #define TEST  */
 
 
+/*
+ *  On Windows, timer_tick() runs on another thread (see compat_win32.c),
+ *  so changes to the list of timers are done holding a lock.  Elsewhere it
+ *  is a SIGALRM handler.
+ */
+#ifdef _WIN32
+#define	TIMER_LOCK()	win32_timer_lock()
+#define	TIMER_UNLOCK()	win32_timer_unlock()
+#else
+#define	TIMER_LOCK()
+#define	TIMER_UNLOCK()
+#endif
+
+
 struct timer {
 	struct timer	*next;
 
@@ -87,10 +101,12 @@ struct timer *timer_add(double freq, void (*timer_tick)(struct timer *timer,
 	newtimer->extra = extra;
 
 	newtimer->interval = 1.0 / freq;
-	newtimer->next_tick_at = timer_current_time + newtimer->interval;
 
+	TIMER_LOCK();
+	newtimer->next_tick_at = timer_current_time + newtimer->interval;
 	newtimer->next = first_timer;
 	first_timer = newtimer;
+	TIMER_UNLOCK();
 
 	return newtimer;
 }
@@ -103,8 +119,10 @@ struct timer *timer_add(double freq, void (*timer_tick)(struct timer *timer,
  */
 void timer_remove(struct timer *t)
 {
-	struct timer *prev = NULL, *cur = first_timer;
+	struct timer *prev = NULL, *cur;
 
+	TIMER_LOCK();
+	cur = first_timer;
 	while (cur != NULL && cur != t) {
 		prev = cur;
 		cur = cur->next;
@@ -115,6 +133,7 @@ void timer_remove(struct timer *t)
 			first_timer = cur->next;
 		else
 			prev->next = cur->next;
+		TIMER_UNLOCK();
 		free(cur);
 	} else {
 		fprintf(stderr, "attempt to remove timer %p which "
@@ -139,8 +158,10 @@ void timer_update_frequency(struct timer *t, double new_freq)
 	if (new_freq <= 0.00000001)
 		new_freq = 0.00000001;
 
+	TIMER_LOCK();
 	t->interval = 1.0 / new_freq;
 	t->next_tick_at = timer_current_time + t->interval;
+	TIMER_UNLOCK();
 }
 
 
@@ -198,6 +219,14 @@ static void timer_tick(int signal_nr)
 }
 
 
+#ifdef _WIN32
+static void timer_tick_win32(void)
+{
+	timer_tick(0);
+}
+#endif
+
+
 /*
  *  timer_start():
  *
@@ -206,8 +235,10 @@ static void timer_tick(int signal_nr)
 void timer_start(void)
 {
 	struct timer *timer = first_timer;
+#ifndef _WIN32
 	struct itimerval val;
 	struct sigaction saction;
+#endif
 
 	if (timer_is_running)
 		return;
@@ -222,6 +253,10 @@ void timer_start(void)
 		timer->next_tick_at = timer->interval;
 		timer = timer->next;
 	}
+
+#ifdef _WIN32
+	win32_timer_start(timer_tick_win32, timer_freq);
+#else
 	val.it_interval.tv_sec = 0;
 	val.it_interval.tv_usec = (int) (1000000.0 / timer_freq);
 	val.it_value.tv_sec = 0;
@@ -234,6 +269,7 @@ void timer_start(void)
 	sigaction(SIGALRM, &saction, NULL);
 
 	setitimer(ITIMER_REAL, &val, NULL);
+#endif
 }
 
 
@@ -244,14 +280,19 @@ void timer_start(void)
  */
 void timer_stop(void)
 {
+#ifndef _WIN32
 	struct itimerval val;
 	struct sigaction saction;
+#endif
 
 	if (!timer_is_running)
 		return;
 
 	timer_is_running = 0;
 
+#ifdef _WIN32
+	win32_timer_stop();
+#else
 	val.it_interval.tv_sec = 0;
 	val.it_interval.tv_usec = 0;
 	val.it_value.tv_sec = 0;
@@ -263,6 +304,7 @@ void timer_stop(void)
 	saction.sa_handler = NULL;
 
 	sigaction(SIGALRM, &saction, NULL);
+#endif
 }
 
 

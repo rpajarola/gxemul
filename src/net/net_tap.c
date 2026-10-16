@@ -39,7 +39,9 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/ioctl.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
@@ -163,6 +165,11 @@ void net_tap_tx(struct net *net, struct nic_data *nic,
  */
 bool net_tap_init(struct net *net, const char *tapdev)
 {
+#ifdef _WIN32
+	debugmsg(SUBSYS_NET, "tap", VERBOSITY_ERROR,
+	    "tap devices are not supported on Windows");
+	return false;
+#else
 	int fd;
 	int one = 1;
 
@@ -186,5 +193,6 @@ bool net_tap_init(struct net *net, const char *tapdev)
 	net->tap_fd = fd;
 
 	return true;
+#endif
 }
 

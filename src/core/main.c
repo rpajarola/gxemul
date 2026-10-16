@@ -595,6 +595,9 @@ int main(int argc, char *argv[])
 	    SETTINGS_TYPE_INT, SETTINGS_FORMAT_YESNO, (void *)&quiet_mode);
 
 	/*  Initialize various subsystems:  */
+#ifdef _WIN32
+	win32_sockets_init();
+#endif
 	console_init();
 	cpu_init();
 	device_init();

@@ -32,9 +32,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <unistd.h>
 
 #include "machine.h"
@@ -135,11 +132,11 @@ void send_udp(struct in_addr *addrp, int portnr, unsigned char *packet, size_t l
 	si.sin_addr = *addrp;
 	si.sin_port = htons(portnr);
 
-	if (sendto(s, packet, len, 0, (struct sockaddr *)&si,
+	if (sendto(s, (const char *) packet, len, 0, (struct sockaddr *)&si,
 	    sizeof(si)) != (ssize_t)len) {
 		perror("send_udp(): sendto");
 	}
 
-	close(s);
+	socket_close(s);
 }
 

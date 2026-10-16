@@ -5213,3 +5213,11 @@ Changelog for GXemul:
 		emulate what they check (3/cache/isol, 3/cache/seg,
 		3/rtc/time, and the Bt459 signature tests 0/curs and 0/ptrn)
 		always pass.
+		Windows (64-bit, built with mingw-w64): configure supports
+		cross-compiling (CC, CC_FOR_BUILD, CROSS_RUN, SDL2_CONFIG).
+		On Windows, memory is allocated with VirtualAlloc, the timer
+		is a Windows timer queue timer, the console is in raw VT mode
+		with a thread reading key presses (Ctrl-C enters the
+		debugger), and sockets use Winsock. Binary files (programs,
+		ROMs, disk images) are opened in binary mode. Tap devices
+		are not supported on Windows.

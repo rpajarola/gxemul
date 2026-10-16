@@ -157,8 +157,10 @@ void debugger_activate(int x)
 	/*  Clear the repeat-command buffer:  */
 	repeat_cmd[0] = '\0';
 
-	/*  Reactivate the signal handler:  */
+	/*  Reactivate the signal handler (on Windows, it stays active):  */
+#ifndef _WIN32
 	signal(SIGINT, debugger_activate);
+#endif
 }
 
 

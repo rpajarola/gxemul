@@ -42,11 +42,6 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <fcntl.h>
 #include <signal.h>
 
 #include "machine.h"
@@ -274,7 +269,7 @@ int net_ethernet_rx_avail(struct net *net, struct nic_data *nic)
 		unsigned char buf[60000];
 
 		do {
-			res = recvfrom(net->local_port_socket, buf,
+			res = recvfrom(net->local_port_socket, (char *) buf,
 			    sizeof(buf), 0, (struct sockaddr *)&si, &si_len);
 
 			if (res != -1) {
@@ -826,8 +821,7 @@ struct net *net_init(struct emul *emul, int init_flags,
 		}
 
 		/*  Set the socket to non-blocking:  */
-		res = fcntl(net->local_port_socket, F_GETFL);
-		fcntl(net->local_port_socket, F_SETFL, res | O_NONBLOCK);
+		socket_set_nonblocking(net->local_port_socket);
 	}
 	if (n_remote != 0) {
 		struct remote_net *rnp;
@@ -876,7 +870,9 @@ struct net *net_init(struct emul *emul, int init_flags,
 	net_dumpinfo(net);
 
 	/*  This is necessary when using the real network:  */
+#ifdef SIGPIPE
 	signal(SIGPIPE, SIG_IGN);
+#endif
 
 	return net;
 }

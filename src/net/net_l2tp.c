@@ -49,8 +49,6 @@
  */
 
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
@@ -168,7 +166,7 @@ void net_distributed_send(struct net *net, struct remote_net *rnp,
 	si.sin_family = AF_INET;
 	si.sin_addr = rnp->ipv4_addr;
 	si.sin_port = htons(rnp->portnr);
-	if (sendto(net->local_port_socket, buf, hlen + len, 0,
+	if (sendto(net->local_port_socket, (const char *) buf, hlen + len, 0,
 	    (struct sockaddr *)&si, sizeof(si)) < 0)
 		debugmsg(SUBSYS_NET, "distributed", VERBOSITY_DEBUG,
 		    "send to %s failed", rnp->name);

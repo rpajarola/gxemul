@@ -83,7 +83,7 @@ static void file_load_ecoff(struct machine *m, struct memory *mem,
 	int relocated = 0;
 	uint32_t relocationOffset = 0; // TODO: separate for text and data?
 
-	f = fopen(filename, "r");
+	f = fopen(filename, "rb");
 	if (f == NULL) {
 		perror(filename);
 		exit(1);

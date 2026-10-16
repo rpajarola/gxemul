@@ -214,7 +214,7 @@ int MEMORY_RW(struct cpu *cpu, struct memory *mem, uint64_t vaddr,
 				static int n = 0;
 				char name[40];
 				snprintf(name, sizeof(name), "memory_%05i.ppm", n++);
-				FILE* f = fopen(name, "w");
+				FILE* f = fopen(name, "wb");
 				printf("writing out %s\n", name);
 				fprintf(f, "P6\n%i %i\n255\n", (int)xsize, (int)ysize);
 				fwrite((char*)buf, 1, (int)(xsize*ysize*3), f);

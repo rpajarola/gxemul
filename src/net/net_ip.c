@@ -33,11 +33,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <errno.h>
-#include <fcntl.h>
 
 #include "misc.h"
 #include "net.h"
@@ -209,7 +207,7 @@ static void net_ip_icmp(struct net *net, struct nic_data *nic,
  */
 static void tcp_closeconnection(struct net *net, int con_id)
 {
-	close(net->tcp_connections[con_id].socket);
+	socket_close(net->tcp_connections[con_id].socket);
 	net->tcp_connections[con_id].state = TCP_OUTSIDE_DISCONNECTED;
 	net->tcp_connections[con_id].in_use = 0;
 	net->tcp_connections[con_id].incoming_buf_len = 0;
@@ -558,9 +556,7 @@ static void net_ip_tcp(struct net *net, struct nic_data *nic,
 		net->tcp_connections[con_id].in_use = 1;
 
 		/*  Set the socket to non-blocking:  */
-		res = fcntl(net->tcp_connections[con_id].socket, F_GETFL);
-		fcntl(net->tcp_connections[con_id].socket, F_SETFL,
-		    res | O_NONBLOCK);
+		socket_set_nonblocking(net->tcp_connections[con_id].socket);
 
 		remote_ip.sin_family = AF_INET;
 		memcpy((unsigned char *)&remote_ip.sin_addr,
@@ -694,7 +690,7 @@ debug("  all acked\n");
 		FD_ZERO(&rfds);		/*  write  */
 		FD_SET(net->tcp_connections[con_id].socket, &rfds);
 		tv.tv_sec = tv.tv_usec = 0;
-		errno = 0;
+		socket_clear_error();
 		res = select(net->tcp_connections[con_id].socket+1,
 		    NULL, &rfds, NULL, &tv);
 		if (res < 1) {
@@ -704,17 +700,18 @@ debug("  all acked\n");
 			goto ret;
 		}
 
-		res = write(net->tcp_connections[con_id].socket,
-		    packet + send_ofs, len - send_ofs);
+		res = send(net->tcp_connections[con_id].socket,
+		    (const char *) packet + send_ofs, len - send_ofs, 0);
 
 		if (res > 0) {
 			net->tcp_connections[con_id].outside_acknr += res;
-		} else if (errno == EAGAIN) {
+		} else if (socket_would_block(socket_error())) {
 			/*  Just ignore this attempt.  */
 			return;
 		} else {
 			debug("[ error writing %i bytes to TCP connection %i:"
-			    " errno = %i ]\n", len - send_ofs, con_id, errno);
+			    " error %i ]\n", len - send_ofs, con_id,
+			    socket_error());
 			net->tcp_connections[con_id].state =
 			    TCP_OUTSIDE_DISCONNECTED;
 			debug("[ TCP: disconnect on write() ]\n");
@@ -807,7 +804,7 @@ static void net_ip_udp(struct net *net, struct nic_data *nic,
 					free_con_id = j;
 				}
 
-			close(net->udp_connections[free_con_id].socket);
+			socket_close(net->udp_connections[free_con_id].socket);
 		}
 		con_id = free_con_id;
 		memset(&net->udp_connections[con_id], 0,
@@ -835,9 +832,7 @@ static void net_ip_udp(struct net *net, struct nic_data *nic,
 		net->udp_connections[con_id].in_use = 1;
 
 		/*  Set the socket to non-blocking:  */
-		res = fcntl(net->udp_connections[con_id].socket, F_GETFL);
-		fcntl(net->udp_connections[con_id].socket, F_SETFL,
-		    res | O_NONBLOCK);
+		socket_set_nonblocking(net->udp_connections[con_id].socket);
 	}
 
 	debug(", connection id %i\n", con_id);
@@ -865,7 +860,8 @@ static void net_ip_udp(struct net *net, struct nic_data *nic,
 	remote_ip.sin_port = htons(
 	    net->udp_connections[con_id].outside_udp_port);
 
-	res = sendto(net->udp_connections[con_id].socket, packet + 42,
+	res = sendto(net->udp_connections[con_id].socket,
+	    (const char *) packet + 42,
 	    len - 42, 0, (const struct sockaddr *)&remote_ip,
 	    sizeof(remote_ip));
 
@@ -1293,7 +1289,7 @@ void net_udp_rx_avail(struct net *net, struct nic_data *nic)
 			continue;
 		}
 
-		res = recvfrom(net->udp_connections[con_id].socket, buf,
+		res = recvfrom(net->udp_connections[con_id].socket, (char *) buf,
 		    sizeof(buf), 0, (struct sockaddr *)&from, &from_len);
 
 		/*  No more incoming UDP on this connection?  */
@@ -1457,11 +1453,11 @@ void net_tcp_rx_avail(struct net *net, struct nic_data *nic)
 		FD_ZERO(&rfds);		/*  write  */
 		FD_SET(net->tcp_connections[con_id].socket, &rfds);
 		tv.tv_sec = tv.tv_usec = 0;
-		errno = 0;
+		socket_clear_error();
 		res = select(net->tcp_connections[con_id].socket+1,
 		    NULL, &rfds, NULL, &tv);
 
-		if (errno == ECONNREFUSED) {
+		if (socket_error() == SOCKET_ECONNREFUSED) {
 			fatal("[ ECONNREFUSED: TODO ]\n");
 			net->tcp_connections[con_id].state =
 			    TCP_OUTSIDE_DISCONNECTED;
@@ -1470,7 +1466,7 @@ void net_tcp_rx_avail(struct net *net, struct nic_data *nic)
 			continue;
 		}
 
-		if (errno == ETIMEDOUT) {
+		if (socket_error() == SOCKET_ETIMEDOUT) {
 			fatal("[ ETIMEDOUT: TODO ]\n");
 			/*  TODO  */
 			net->tcp_connections[con_id].state =
@@ -1546,7 +1542,8 @@ void net_tcp_rx_avail(struct net *net, struct nic_data *nic)
 		if (res2 < 1)
 			continue;
 
-		res = read(net->tcp_connections[con_id].socket, buf, 1400);
+		res = recv(net->tcp_connections[con_id].socket, (char *) buf,
+		    1400, 0);
 		if (res > 0) {
 			/*  debug("\n -{- %lli -}-\n", (long long)res);  */
 			net->tcp_connections[con_id].incoming_buf_len = res;
@@ -1572,7 +1569,7 @@ void net_tcp_rx_avail(struct net *net, struct nic_data *nic)
 			net->tcp_connections[con_id].state =
 			    TCP_OUTSIDE_DISCONNECTED;
 			fatal("CHANGING TO TCP_OUTSIDE_DISCONNECTED, "
-			    "read res<=0, errno = %i\n", errno);
+			    "read res<=0, error %i\n", socket_error());
 			net_ip_tcp_connectionreply(net, nic, con_id, 0,
 			    NULL, 0, 0);
 		}

@@ -43,6 +43,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include <time.h>
 
 /*  u_char, u_short, u_int, u_long (the same as Winsock's):  */
 #include <_bsd_types.h>
@@ -51,6 +52,7 @@ typedef unsigned int	uint;
 typedef char		*caddr_t;
 
 #define	fsync(fd)	_commit(fd)
+#define	timegm(tm)	_mkgmtime(tm)
 
 long random(void);
 void srandom(unsigned int seed);
@@ -63,6 +65,26 @@ void srandom(unsigned int seed);
 #define	MAP_FAILED	((void *) -1)
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset);
 int munmap(void *addr, size_t len);
+
+/*  A periodic timer instead of SIGALRM; tick() runs on another thread,
+    holding the lock:  */
+void win32_timer_start(void (*tick)(void), double hz);
+void win32_timer_stop(void);
+void win32_timer_lock(void);
+void win32_timer_unlock(void);
+
+/*  The host's console, instead of termios and select() on stdin:  */
+void win32_console_init(void);
+void win32_console_restore(void);
+int win32_stdin_avail(void);
+int win32_stdin_read(unsigned char *buf, int len);
+
+/*  Ctrl-C and Ctrl-Break call handler, on another thread (instead of
+    SIGINT):  */
+void win32_set_ctrl_c_handler(void (*handler)(int));
+
+/*  Starts Winsock:  */
+void win32_sockets_init(void);
 
 #endif	/*  _WIN32  */
 

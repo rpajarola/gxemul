@@ -622,6 +622,11 @@ rm -f _testns.c _testns _testns$EXEEXT
 
 #  -lresolv for inet_pton?
 printf "checking whether -lresolv is required for inet_pton... "
+if [ z$WINDOWS = zYES ]; then
+	#  Winsock (ws2_32) has inet_pton:
+	printf "no (Windows)\n"
+	printf "#define HAVE_INET_PTON\n" >> config.h
+else
 printf "int inet_pton(void); int main(int argc, " > _testr.c
 printf "char *argv[]) { return inet_pton(); }\n" >> _testr.c
 $CC $CFLAGS _testr.c -o _testr 2> /dev/null
@@ -646,6 +651,7 @@ if [ ! -x _testr$EXEEXT ]; then
 else
 	printf "no\n"
 	printf "#define HAVE_INET_PTON\n" >> config.h
+fi
 fi
 rm -f _testr.c _testr.o _testr _testr$EXEEXT
 
@@ -755,7 +761,11 @@ printf "checking for socklen_t... "
 printf "#include <stdlib.h>
 #include <stdio.h>
 #include <sys/types.h>
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#else
 #include <sys/socket.h>
+#endif
 int main(int argc, char *argv[]) { socklen_t x; return 0;}\n" > _tests.c
 $CC $CFLAGS _tests.c -o _tests 2> /dev/null
 if [ ! -x _tests$EXEEXT ]; then
