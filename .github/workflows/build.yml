@@ -1,0 +1,47 @@
+# Builds the Windows zip on every push and pull request (with MSYS2), runs
+# a short test with it, and keeps the zip as an artifact of the run.
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      # configure and the build's shell scripts need LF line endings:
+      - name: Keep line endings
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: >-
+            curl
+            git
+            make
+            unzip
+            zip
+            mingw-w64-ucrt-x86_64-gcc
+      - name: Build
+        run: packaging/build-win.sh
+      - name: Test
+        run: |
+          cd dist
+          unzip -q gxemul-rp-*.zip
+          cd gxemul-rp-*/
+          # Load a MIPS ELF program and step through its first instructions:
+          out=$(printf 'step 2\nquit\n' |
+            ./gxemul.exe -q -E testmips -V ../../test/FileLoader_ELF_MIPS 2>&1)
+          echo "$out"
+          grep -q 'ffffffff800100fc: 3c03cccc' <<< "$out"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gxemul-windows-x86_64
+          path: dist/*.zip

@@ -61,6 +61,36 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" dist/*.pkg --clobber
 
+  win:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      # configure and the build's shell scripts need LF line endings:
+      - name: Keep line endings
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: >-
+            curl
+            git
+            make
+            zip
+            mingw-w64-ucrt-x86_64-gcc
+      - name: Build
+        run: VERSION="${TAG#v}" packaging/build-win.sh
+      - name: Attach to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/*.zip --clobber
+
   tap:
     runs-on: ubuntu-latest
     steps:

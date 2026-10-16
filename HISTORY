@@ -5220,4 +5220,7 @@ Changelog for GXemul:
 		with a thread reading key presses (Ctrl-C enters the
 		debugger), and sockets use Winsock. Binary files (programs,
 		ROMs, disk images) are opened in binary mode. Tap devices
-		are not supported on Windows.
+		are not supported on Windows. packaging/build-win.sh builds
+		a zip with gxemul.exe and SDL2.dll (in MSYS2, or with
+		mingw-w64 and Wine), which releases include; every push
+		builds and tests it on Windows in GitHub Actions.
