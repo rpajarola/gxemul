@@ -5207,3 +5207,9 @@ Changelog for GXemul:
 		localhost (4000 and up, listed at startup), for telnet,
 		instead of starting an xterm. Output from before a client
 		connects (up to 64 KB) is sent when it does.
+		Adding experiments/patch_rom_tests.py, which makes a copy of
+		the KN02-BA V5.7j (5000/1xx) or PMAG-BA V5.3a ROM image in
+		which the self-tests that fail only because gxemul does not
+		emulate what they check (3/cache/isol, 3/cache/seg,
+		3/rtc/time, and the Bt459 signature tests 0/curs and 0/ptrn)
+		always pass.
