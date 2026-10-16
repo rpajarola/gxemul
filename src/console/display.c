@@ -30,7 +30,7 @@
  *  Framebuffer devices draw 0x00RRGGBB pixels into fb_window->pixels, and
  *  tell display_update() which part changed.  That part is copied to
  *  fb_window->screen, with the emulated cursor on top, and handed to the
- *  backend (display_x11.c) to show.
+ *  backend (display_sdl.c or display_x11.c) to show.
  */
 
 #include <stdio.h>
@@ -46,6 +46,21 @@
 #include "machine.h"
 #include "misc.h"
 #include "display.h"
+
+
+#ifndef	WITH_DISPLAY
+
+/*  Without a backend, there are no windows:  */
+bool display_backend_available(void) { return false; }
+bool display_backend_open(struct fb_window *win) { return false; }
+void display_backend_resize(struct fb_window *win) { }
+void display_backend_set_title(struct fb_window *win) { }
+void display_backend_update(struct fb_window *win, int x, int y,
+	int w, int h) { }
+void display_backend_flush(struct fb_window *win) { }
+void display_backend_check_events(struct machine *m) { }
+
+#endif
 
 
 /*
@@ -296,6 +311,43 @@ void display_flush(struct fb_window *win)
 
 	display_backend_flush(win);
 	win->need_flush = false;
+}
+
+
+/*
+ *  display_key():
+ *
+ *  Sends a key (enum display_key) to a machine's console, as the escape
+ *  sequence an xterm sends:  F1..F4 send ESC O P..S, F5..F12 send
+ *  ESC [ n ~, and the cursor keys ESC [ A..D.
+ */
+void display_key(struct machine *m, int key)
+{
+	static const char *f5_f12[] = { "15", "17", "18", "19",
+	    "20", "21", "23", "24" };
+	char seq[8];
+
+	if (key >= DISPLAY_KEY_F1 && key < DISPLAY_KEY_F1 + 4)
+		snprintf(seq, sizeof(seq), "\033O%c", 'P' + key - DISPLAY_KEY_F1);
+	else if (key >= DISPLAY_KEY_F1 + 4 && key < DISPLAY_KEY_F1 + 12)
+		snprintf(seq, sizeof(seq), "\033[%s~",
+		    f5_f12[key - DISPLAY_KEY_F1 - 4]);
+	else {
+		switch (key) {
+		case DISPLAY_KEY_UP:		strlcpy(seq, "\033[A", sizeof(seq)); break;
+		case DISPLAY_KEY_DOWN:		strlcpy(seq, "\033[B", sizeof(seq)); break;
+		case DISPLAY_KEY_RIGHT:		strlcpy(seq, "\033[C", sizeof(seq)); break;
+		case DISPLAY_KEY_LEFT:		strlcpy(seq, "\033[D", sizeof(seq)); break;
+		case DISPLAY_KEY_HOME:		strlcpy(seq, "\033[H", sizeof(seq)); break;
+		case DISPLAY_KEY_END:		strlcpy(seq, "\033[F", sizeof(seq)); break;
+		case DISPLAY_KEY_PAGE_UP:	strlcpy(seq, "\033[5~", sizeof(seq)); break;
+		case DISPLAY_KEY_PAGE_DOWN:	strlcpy(seq, "\033[6~", sizeof(seq)); break;
+		default:			return;
+		}
+	}
+
+	for (const char *c = seq; *c != '\0'; c++)
+		console_makeavail(m->main_console_handle, *c);
 }
 
 

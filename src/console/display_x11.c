@@ -40,21 +40,7 @@
 #include "display.h"
 
 
-#ifndef	WITH_X11
-
-
-/*  Dummy functions:  */
-bool display_backend_available(void) { return false; }
-bool display_backend_open(struct fb_window *win) { return false; }
-void display_backend_resize(struct fb_window *win) { }
-void display_backend_set_title(struct fb_window *win) { }
-void display_backend_update(struct fb_window *win, int x, int y,
-	int w, int h) { }
-void display_backend_flush(struct fb_window *win) { }
-void display_backend_check_events(struct machine *m) { }
-
-
-#else	/*  WITH_X11  */
+#ifdef	WITH_X11
 
 
 #include <X11/Xlib.h>
@@ -633,106 +619,46 @@ void display_backend_check_events(struct machine *m)
 						console_makeavail(m->
 						    main_console_handle, 27);
 						break;
-					/*  F1..F4 send ESC O P..S, and F5..F12
-					    send ESC [ n ~, as on an xterm:  */
-					case XK_F1:
-					case XK_F2:
-					case XK_F3:
-					case XK_F4:
-						console_makeavail(m->
-						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, 'O');
-						console_makeavail(m->
-						    main_console_handle, 'P' +
+					case XK_F1:	case XK_F2:	case XK_F3:
+					case XK_F4:	case XK_F5:	case XK_F6:
+					case XK_F7:	case XK_F8:	case XK_F9:
+					case XK_F10:	case XK_F11:	case XK_F12:
+						display_key(m, DISPLAY_KEY_F1 +
 						    key - XK_F1);
-						break;
-					case XK_F5:
-					case XK_F6:
-					case XK_F7:
-					case XK_F8:
-					case XK_F9:
-					case XK_F10:
-					case XK_F11:
-					case XK_F12:
-						{
-							static const char *codes[] = {
-							    "15", "17", "18", "19",
-							    "20", "21", "23", "24" };
-							const char *c =
-							    codes[key - XK_F5];
-
-							console_makeavail(m->
-							    main_console_handle, 27);
-							console_makeavail(m->
-							    main_console_handle, '[');
-							for (; *c != '\0'; c++)
-								console_makeavail(m->
-								    main_console_handle, *c);
-							console_makeavail(m->
-							    main_console_handle, '~');
-						}
 						break;
 					/*  Cursor keys, and the numeric
 					    keypad's:  */
 					case XK_Up:
 					case XK_KP_Up:
+						display_key(m, DISPLAY_KEY_UP);
+						break;
 					case XK_Down:
 					case XK_KP_Down:
+						display_key(m, DISPLAY_KEY_DOWN);
+						break;
 					case XK_Left:
 					case XK_KP_Left:
+						display_key(m, DISPLAY_KEY_LEFT);
+						break;
 					case XK_Right:
 					case XK_KP_Right:
-						console_makeavail(m->
-						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, '[');
-						console_makeavail(m->
-						    main_console_handle,
-						    (key == XK_Up || key == XK_KP_Up)? 'A' : (
-						    (key == XK_Down || key == XK_KP_Down)? 'B' : (
-						    (key == XK_Right || key == XK_KP_Right)? 'C' : (
-						    'D'))));
+						display_key(m, DISPLAY_KEY_RIGHT);
 						break;
 					case XK_Home:
 					case XK_KP_Home:
-						console_makeavail(m->
-						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, '[');
-						console_makeavail(m->
-						    main_console_handle, 'H');
+						display_key(m, DISPLAY_KEY_HOME);
 						break;
 					case XK_End:
 					case XK_KP_End:
-						console_makeavail(m->
-						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, '[');
-						console_makeavail(m->
-						    main_console_handle, 'F');
+						display_key(m, DISPLAY_KEY_END);
 						break;
 					case XK_Page_Up:
 					case XK_KP_Page_Up:
-						console_makeavail(m->
-						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, '[');
-						console_makeavail(m->
-						    main_console_handle, '5');
-						console_makeavail(m->
-						    main_console_handle, '~');
+						display_key(m, DISPLAY_KEY_PAGE_UP);
 						break;
 					case XK_Page_Down:
 					case XK_KP_Page_Down:
-						console_makeavail(m->
-						    main_console_handle, 27);
-						console_makeavail(m->
-						    main_console_handle, '[');
-						console_makeavail(m->
-						    main_console_handle, '6');
-						console_makeavail(m->
-						    main_console_handle, '~');
+						display_key(m, DISPLAY_KEY_PAGE_DOWN);
 						break;
 
 					case XK_Control_L:

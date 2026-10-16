@@ -28,8 +28,8 @@
  *  SUCH DAMAGE.
  *
  *
- *  Headerfile for src/console/display.c, and for the display backend
- *  (src/console/display_x11.c).
+ *  Headerfile for src/console/display.c, and for the display backends
+ *  (src/console/display_sdl.c and display_x11.c).
  *
  *  A framebuffer window shows an image of 0x00RRGGBB pixels, which the
  *  framebuffer device draws into fb_window->pixels.  display.c puts the
@@ -89,6 +89,20 @@ struct fb_window {
 };
 
 
+/*  Keys which display_key() turns into escape sequences:  */
+enum display_key {
+	DISPLAY_KEY_F1,		/*  .. DISPLAY_KEY_F1 + 11 for F12  */
+	DISPLAY_KEY_UP = DISPLAY_KEY_F1 + 12,
+	DISPLAY_KEY_DOWN,
+	DISPLAY_KEY_RIGHT,
+	DISPLAY_KEY_LEFT,
+	DISPLAY_KEY_HOME,
+	DISPLAY_KEY_END,
+	DISPLAY_KEY_PAGE_UP,
+	DISPLAY_KEY_PAGE_DOWN
+};
+
+
 /*  display.c:  */
 void display_init(struct machine *);
 struct fb_window *display_fb_init(int xsize, int ysize, const char *name,
@@ -99,13 +113,15 @@ void display_update(struct fb_window *win, int x1, int y1, int x2, int y2);
 void display_update_cursor(struct fb_window *win);
 void display_flush(struct fb_window *win);
 void display_check_event(struct emul *emul);
+void display_key(struct machine *m, int key);
 int display_screenshot(struct machine *, const char *file);
 int display_video_start(struct machine *, const char *file);
 void display_video_stop(void);
 
 
 /*
- *  The backend (display_x11.c):
+ *  The backend (display_sdl.c or display_x11.c; display.c has dummy
+ *  functions if there is none):
  *
  *  display_backend_open() creates a host window for a new fb_window, and
  *  returns false if that isn't possible.  display_backend_update() shows

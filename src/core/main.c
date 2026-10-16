@@ -210,10 +210,10 @@ static void usage(bool longusage)
 	printf("                o    overwrite instead of append\n");
 	printf("  -T        halt on non-existant memory accesses\n");
 	printf("  -t        show function trace tree\n");
-#ifdef WITH_X11
-	printf("  -X        use X11\n");
+#ifdef WITH_DISPLAY
+	printf("  -X        show framebuffers in windows\n");
 	printf("  -Y n      scale down framebuffer windows by n x n times\n");
-#endif /*  WITH_X11  */
+#endif /*  WITH_DISPLAY  */
 	printf("  -Z n      set nr of graphics cards, for emulating a "
 	    "dual-head or tripple-head\n"
 	    "            environment (only for DECstation emulation)\n");
@@ -237,11 +237,11 @@ static void usage(bool longusage)
 	printf("  -q        quiet mode (don't print startup messages)\n");
 	printf("  -V        start up in the interactive debugger, paused; this also sets -K\n");
 	printf("  -v        increase debug message verbosity\n");
-#ifdef WITH_X11
+#ifdef WITH_DISPLAY
 	printf("  -x        open up new xterms for emulated serial ports (default is on when\n"
 	       "            using configuration files with multiple machines specified, or\n"
-	       "            when X11 is used, off otherwise)\n");
-#endif /*  WITH_X11  */
+	       "            when framebuffer windows are used, off otherwise)\n");
+#endif /*  WITH_DISPLAY  */
 	printf("\n");
 	printf("If you are selecting a machine type to emulate directly "
 	    "on the command line,\nthen you must specify one or more names"
@@ -281,7 +281,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 
 	const char *opts =
 	    "AC:c:Dd:E:e:GHhI:iJj:k:KL:M:Nn:Oo:p:QqRrSs:TtVvW:"
-#ifdef WITH_X11
+#ifdef WITH_DISPLAY
 	    "XxY:"
 #endif
 	    "Z:z:";

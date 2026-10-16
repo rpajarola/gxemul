@@ -52,7 +52,7 @@
 #    o)  special hacks for some OSes
 #    o)  which compiler to use  (overridden by setting CC)
 #    o)  which compiler flags to use  (overridden by setting CFLAGS)
-#    o)  X11 flags and libraries  (TODO: should be possible to override
+#    o)  SDL2 or X11 flags and libraries  (TODO: should be possible to override
 #	 via command line options?)
 #
 #  The general philosophy regarding command line switches is that anything
@@ -97,10 +97,16 @@ if [ z"$*" != z ]; then
 	for a in $*; do
 		if [ z$a = z--disable-x ]; then
 			NOX11=YES
+		else if [ z$a = z--disable-sdl ]; then
+			NOSDL=YES
 		else if [ z$a = z--debug ]; then
 			DEBUG=YES
 		else if [ z$a = z--help ]; then
 			printf "usage: $0 [options]\n\n"
+			echo "  --disable-sdl         don't use SDL2 for framebuffer"\
+			    "windows, even if the host"
+			echo "                        supports it (X11 is used"\
+			    "instead, if available)"
 			echo "  --disable-x           don't include X11 support,"\
 			    "even if the host supports it"
 			echo "  --debug               configure for a" \
@@ -117,7 +123,7 @@ if [ z"$*" != z ]; then
 			echo "Run  $0 --help  to get a list of" \
 			    "available options."
 			exit
-		fi; fi; fi
+		fi; fi; fi; fi
 	done
 fi
 
@@ -318,6 +324,52 @@ if [ z"$DEBUG" != zYES ]; then
 fi
 
 
+#  Framebuffer windows use SDL2 if it is available, otherwise X11:
+if [ z$NOSDL = z ]; then
+	printf "checking for SDL2 headers and libs\n"
+
+	printf "#define SDL_MAIN_HANDLED
+	#include <SDL.h>
+	int main(int argc, char *argv[]) {
+		SDL_SetMainReady();
+		return SDL_WasInit(SDL_INIT_VIDEO) != 0;
+	}
+	" > _test_sdl.c
+
+	SDLOK=0
+	if pkg-config --exists sdl2 2> /dev/null; then
+		SDLINCLUDE=`pkg-config --cflags sdl2`
+		SDLLIB=`pkg-config --libs sdl2`
+	else if sdl2-config --version > /dev/null 2> /dev/null; then
+		SDLINCLUDE=`sdl2-config --cflags`
+		SDLLIB=`sdl2-config --libs`
+	fi; fi
+
+	#  gxemul has its own main(), so SDL2main isn't needed:
+	SDLLIB=`echo $SDLLIB | sed 's/-lSDL2main//'`
+
+	if [ "z$SDLLIB" != z ]; then
+		$CC $CFLAGS _test_sdl.c -o _test_sdl $SDLINCLUDE $SDLLIB \
+		    2> /dev/null
+		if [ -x _test_sdl ]; then
+			SDLOK=1
+		fi
+	fi
+	rm -f _test_sdl _test_sdl.c
+
+	if [ z$SDLOK = z0 ]; then
+		echo "SDL2 not found."
+	else
+		printf "   headers:   $SDLINCLUDE\n"
+		printf "   libraries: $SDLLIB\n"
+		echo "DISPLAYINCLUDE=$SDLINCLUDE" >> _Makefile.header
+		echo "DISPLAYLIB=$SDLLIB" >> _Makefile.header
+		printf "#define WITH_SDL\n" >> config.h
+		NOX11=YES
+	fi
+fi
+
+
 if [ z$NOX11 = z ]; then
 	printf "checking for X11 headers and libs\n"
 
@@ -445,8 +497,8 @@ if [ z$NOX11 = z ]; then
 	else
 		printf "   headers:   $XINCLUDE\n"
 		printf "   libraries: $XLIB\n"
-		echo "XINCLUDE=$XINCLUDE" >> _Makefile.header
-		echo "XLIB=$XLIB" >> _Makefile.header
+		echo "DISPLAYINCLUDE=$XINCLUDE" >> _Makefile.header
+		echo "DISPLAYLIB=$XLIB" >> _Makefile.header
 		printf "#define WITH_X11\n" >> config.h
 	fi
 

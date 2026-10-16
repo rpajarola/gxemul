@@ -45,6 +45,11 @@
 
 #include "../../config.h"
 
+/*  A display backend (src/console/display_*.c) shows framebuffers:  */
+#if defined(WITH_SDL) || defined(WITH_X11)
+#define	WITH_DISPLAY
+#endif
+
 #define	COPYRIGHT_MSG	"Copyright (C) 2003-2021  Anders Gavare"
 
 // The recommended way to add a specific message to the startup banner or

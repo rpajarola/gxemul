@@ -334,7 +334,9 @@ Halt if the emulated program attempts to access non-existing memory.
 .It Fl t
 Show a trace tree of all function calls being made.
 .It Fl X
-Use X11. This option enables graphical framebuffers.
+Show graphical framebuffers in windows (using SDL2, or X11 if GXemul was
+built without SDL2). Clicking in a window grabs the mouse; Ctrl+Alt
+releases it. With SDL2, a window can be resized, which scales its contents.
 .It Fl Y Ar n
 Scale down framebuffer windows by
 .Ar n
