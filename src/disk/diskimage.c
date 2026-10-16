@@ -1112,13 +1112,7 @@ int diskimage_add(struct machine *machine, char *fname)
 
 	if (prefix_R) {
 		char tmpname[1000];
-		const char* tmpdir = getenv("TMPDIR");
-#ifdef _WIN32
-		if (tmpdir == NULL)
-			tmpdir = getenv("TEMP");
-#endif
-		if (tmpdir == NULL)
-			tmpdir = "/tmp";
+		const char* tmpdir = temp_dir();
 		
 		int old_umask = umask(077);
 

@@ -499,10 +499,7 @@ bool emul_machine_setup(struct machine *m, int n_load, char **load_names,
 			remove_after_load = 1;
 		}
 
-		/*
-		 *  gzipped files are automagically gunzipped:
-		 *  NOTE/TODO: This isn't secure. system() is used.
-		 */
+		/*  gzipped files are automagically gunzipped:  */
 		tmp_f = fopen(name_to_load, "rb");
 		if (tmp_f != NULL) {
 			unsigned char buf[2];		/*  gzip header  */
@@ -510,56 +507,44 @@ bool emul_machine_setup(struct machine *m, int n_load, char **load_names,
 
 			memset(buf, 0, sizeof(buf));
 			res = fread(buf, 1, sizeof(buf), tmp_f);
+			fclose(tmp_f);
 
 			if (res == sizeof(buf) &&
 			    buf[0] == 0x1f && buf[1] == 0x8b) {
-				size_t zzlen = strlen(name_to_load)*2 + 100;
-				char *zz;
+				int tmpfile_handle;
+				char *new_temp_name;
 
-				CHECK_ALLOCATION(zz = (char*) malloc(zzlen));
 				debug("gunziping %s\n", name_to_load);
 
 				/*
-				 *  gzip header found.  If this was a file
-				 *  extracted from, say, a CDROM image, then it
-				 *  already has a temporary name. Otherwise we
-				 *  have to gunzip into a temporary file.
+				 *  gzip header found.  Gunzip into a new temp
+				 *  file.  (If this was a file extracted from,
+				 *  say, a CDROM image, then it already was a
+				 *  temporary file, which is removed.)
 				 */
-				if (remove_after_load) {
-					snprintf(zz, zzlen, "mv %s %s.gz",
-					    name_to_load, name_to_load);
-					if (system(zz) != 0)
-						perror(zz);
-					snprintf(zz, zzlen, "gunzip %s.gz",
-					    name_to_load);
-					if (system(zz) != 0)
-						perror(zz);
-				} else {
-					/*  gunzip into new temp file:  */
-					int tmpfile_handle;
-					char *new_temp_name;
-					const char *tmpdir = getenv("TMPDIR");
+				CHECK_ALLOCATION(new_temp_name =
+				    (char*) malloc(300));
+				snprintf(new_temp_name, 300,
+				    "%s/gxemul.XXXXXXXXXXXX", temp_dir());
 
-					if (tmpdir == NULL)
-						tmpdir = DEFAULT_TMP_DIR;
-
-					CHECK_ALLOCATION(new_temp_name =
-					    (char*) malloc(300));
-					snprintf(new_temp_name, 300,
-					    "%s/gxemul.XXXXXXXXXXXX", tmpdir);
-
-					tmpfile_handle = mkstemp(new_temp_name);
-					close(tmpfile_handle);
-					snprintf(zz, zzlen, "gunzip -c '%s' > "
-					    "%s", name_to_load, new_temp_name);
-					if (system(zz) != 0)
-						perror(zz);
-					name_to_load = new_temp_name;
-					remove_after_load = 1;
+				tmpfile_handle = mkstemp(new_temp_name);
+				if (tmpfile_handle < 0) {
+					perror(new_temp_name);
+					exit(1);
 				}
-				free(zz);
+				close(tmpfile_handle);
+
+				if (!gunzip_file(name_to_load,
+				    new_temp_name)) {
+					unlink(new_temp_name);
+					exit(1);
+				}
+
+				if (remove_after_load)
+					unlink(name_to_load);
+				name_to_load = new_temp_name;
+				remove_after_load = 1;
 			}
-			fclose(tmp_f);
 		}
 
 		byte_order = NO_BYTE_ORDER_OVERRIDE;

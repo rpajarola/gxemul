@@ -263,6 +263,7 @@ void dreamcast_descramble(char *from, char *to);
 
 /*  file.c:  */
 int file_n_executables_loaded(void);
+bool gunzip_file(const char *from, const char *to);
 void file_load(struct machine *machine, struct memory *mem,
 	char *filename, uint64_t *entrypointp,
 	int arch, uint64_t *gpp, int *byte_order, uint64_t *tocp);
@@ -285,6 +286,7 @@ const char* color_symbol_ptr();
 const char* color_normal_ptr();
 unsigned long long mystrtoull(const char *s, char **endp, int base);
 int mymkstemp(char *templ);
+const char *temp_dir(void);
 #ifdef USE_STRLCPY_REPLACEMENTS
 size_t mystrlcpy(char *dst, const char *src, size_t size);
 size_t mystrlcat(char *dst, const char *src, size_t size);

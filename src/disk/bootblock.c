@@ -81,9 +81,7 @@ int load_bootblock(struct machine *m, struct cpu *cpu,
 	uint64_t bootblock_offset, base_offset;
 	uint64_t bootblock_loadaddr, bootblock_pc;
 
-	const char *tmpdir = getenv("TMPDIR");
-	if (tmpdir == NULL)
-		tmpdir = DEFAULT_TMP_DIR;
+	const char *tmpdir = temp_dir();
 
 	int boot_disk_id = diskimage_bootdev(m, &boot_disk_type);
 	if (boot_disk_id < 0)

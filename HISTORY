@@ -5224,3 +5224,7 @@ Changelog for GXemul:
 		a zip with gxemul.exe and SDL2.dll (in MSYS2, or with
 		mingw-w64 and Wine), which releases include; every push
 		builds and tests it on Windows in GitHub Actions.
+		gzipped files are decompressed by gxemul itself (with puff.c
+		from zlib's contrib/puff, by Mark Adler), instead of running
+		gunzip through the shell, and temporary files go in $TMPDIR
+		(or %TEMP% on Windows).

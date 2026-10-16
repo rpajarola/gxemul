@@ -198,6 +198,28 @@ unsigned long long mystrtoull(const char *s, char **endp, int base)
 
 
 /*
+ *  temp_dir():
+ *
+ *  Where to put temporary files: \$TMPDIR, %TEMP% on Windows, or /tmp.
+ */
+const char *temp_dir(void)
+{
+	const char *dir = getenv("TMPDIR");
+
+#ifdef _WIN32
+	if (dir == NULL)
+		dir = getenv("TEMP");
+	if (dir == NULL)
+		dir = getenv("TMP");
+#endif
+	if (dir == NULL)
+		dir = DEFAULT_TMP_DIR;
+
+	return dir;
+}
+
+
+/*
  *  mymkstemp():
  *
  *  mkstemp() replacement for systems that lack that function. This is NOT

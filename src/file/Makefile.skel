@@ -4,7 +4,7 @@
 
 CFLAGS=$(CWARNINGS) $(COPTIM) $(DINCLUDE)
 
-OBJS=file.o
+OBJS=file.o gunzip.o puff.o
 
 all: $(OBJS)
 
@@ -12,6 +12,8 @@ $(OBJS): Makefile
 
 file.o: file.c file_android.c file_aout.c file_ecoff.c file_elf.c \
 	file_macho.c file_raw.c file_srec.c
+
+gunzip.o puff.o: puff.h
 
 
 clean:

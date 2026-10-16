@@ -123,8 +123,7 @@ void file_load(struct machine *machine, struct memory *mem,
 {
 	int old_quiet_mode;
 	FILE *f;
-	const char *tmpdir = getenv("TMPDIR") == NULL?
-	    DEFAULT_TMP_DIR : getenv("TMPDIR");
+	const char *tmpdir = temp_dir();
 	unsigned char buf[12];
 	unsigned char buf2[2];
 	char tmpname[400];

@@ -106,11 +106,8 @@ int iso_load_bootblock(struct machine *m, struct cpu *cpu,
 	unsigned char *dirbuf = NULL, *dp, *match_entry = NULL, *filebuf = NULL;
 	char *p, *filename_orig, *filename, *tmpfname = NULL;
 	char **new_array;
-	const char *tmpdir = getenv("TMPDIR");
+	const char *tmpdir = temp_dir();
 	int tmpfile_handle;
-
-	if (tmpdir == NULL)
-		tmpdir = DEFAULT_TMP_DIR;
 
 	CHECK_ALLOCATION(filename = strdup(cpu->machine->boot_kernel_filename));
 	filename_orig = filename;
