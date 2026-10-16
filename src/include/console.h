@@ -51,7 +51,6 @@ void console_flush(void);
 void console_mouse_coordinate_update(int dx, int dy, int fb_nr);
 void console_mouse_button(int, int);
 void console_getmouse(int *dx, int *dy, int *buttons, int *fb_nr);
-void console_slave(const char *arg);
 int console_are_slaves_allowed(void);
 int console_warn_if_slaves_are_needed(int init);
 int console_start_slave(struct machine *, const char *consolename, int use_for_input);

@@ -5203,3 +5203,7 @@ Changelog for GXemul:
 		(add_x11_display, -z) are ignored, and the debug message
 		subsystem "X11" is now called "display". configure
 		--disable-sdl (or --disable-x) builds without windows.
+		With -x, each emulated serial port listens on a TCP port on
+		localhost (4000 and up, listed at startup), for telnet,
+		instead of starting an xterm. Output from before a client
+		connects (up to 64 KB) is sent when it does.

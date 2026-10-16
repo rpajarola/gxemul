@@ -69,33 +69,6 @@ static bool skip_srandom_call = false;
 
 
 /*
- *  internal_w():
- *
- *  For internal use by gxemul itself. Currently only used to launch
- *  slave consoles.
- */
-void internal_w(char *arg)
-{
-	if (arg == NULL || strncmp(arg, "W@", 2) != 0) {
-		fprintf(stderr, "-W is for internal use by gxemul,"
-		    " not for manual use.\n");
-		exit(1);
-	}
-
-	arg += 2;
-
-	switch (arg[0]) {
-	case 'S':
-		console_slave(arg + 1);
-		break;
-	default:
-		fprintf(stderr, "internal_w(): UNIMPLEMENTED arg = '%s'\n",
-		    arg);
-	}
-}
-
-
-/*
  *  print_banner():
  *
  *  Prints program startup banner to stdout.
@@ -234,11 +207,10 @@ static void usage(bool longusage)
 	printf("  -q        quiet mode (don't print startup messages)\n");
 	printf("  -V        start up in the interactive debugger, paused; this also sets -K\n");
 	printf("  -v        increase debug message verbosity\n");
-#ifdef WITH_DISPLAY
-	printf("  -x        open up new xterms for emulated serial ports (default is on when\n"
-	       "            using configuration files with multiple machines specified, or\n"
-	       "            when framebuffer windows are used, off otherwise)\n");
-#endif /*  WITH_DISPLAY  */
+	printf("  -x        give each emulated serial port a TCP port on localhost, from\n"
+	       "            4000 and up, to connect to with telnet (default is on when\n"
+	       "            using configuration files with multiple machines specified,\n"
+	       "            or when -X is used, off otherwise)\n");
 	printf("\n");
 	printf("If you are selecting a machine type to emulate directly "
 	    "on the command line,\nthen you must specify one or more names"
@@ -277,9 +249,9 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 	struct machine *m = emul_add_machine(emul, NULL);
 
 	const char *opts =
-	    "AC:c:Dd:E:e:GHhI:iJj:k:KL:M:Nn:Oo:p:QqRrSs:TtVvW:"
+	    "AC:c:Dd:E:e:GHhI:iJj:k:KL:M:Nn:Oo:p:QqRrSs:TtVvx"
 #ifdef WITH_DISPLAY
-	    "XxY:"
+	    "XY:"
 #endif
 	    "Z:z:";
 
@@ -431,9 +403,6 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 		case 'v':
 			verbose ++;
 			break;
-		case 'W':
-			internal_w(optarg);
-			exit(0);
 		case 'X':
 			m->display_md.in_use = 1;
 			machine_specific_options_used = true;

@@ -176,11 +176,14 @@ framebuffer windows.)
 
 <p>There is no way to send CTRL-B to the emulated program, when 
 typing in the main controlling terminal window. However, by using the <tt>-x</tt>
-command line option, separate terminal windows will be launched
-for each serial I/O port being written to. (This also happens when you use
+command line option, each serial I/O port gets a TCP port of its own on
+localhost, from 4000 and up, which you connect to from another terminal
+window, e.g. with <tt>telnet localhost 4000</tt>. The ports are listed when
+the emulation starts. (This also happens when you use
 <a href="configfiles.html">configuration files</a> with <i>more than one</i>
 machine specified.) CTRL-B and CTRL-C both have their original meaning
-in those xterm windows.
+in those telnet sessions. (macOS no longer comes with telnet, but
+Homebrew has it: <tt>brew install telnet</tt>.)
 
 
 
