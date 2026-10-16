@@ -18,6 +18,46 @@ buildobjs: $(OBJS)
 $(OBJS): Makefile
 
 
+#  The tools run during the build, so they are built for the build host
+#  (which is not the same as the target when cross-compiling):
+
+generate_head: generate_head.c
+	$(CC_FOR_BUILD) generate_head.c -o generate_head
+
+generate_tail: generate_tail.c
+	$(CC_FOR_BUILD) generate_tail.c -o generate_tail
+
+generate_alpha_misc: generate_alpha_misc.c
+	$(CC_FOR_BUILD) generate_alpha_misc.c -o generate_alpha_misc
+
+generate_arm_dpi: generate_arm_dpi.c
+	$(CC_FOR_BUILD) generate_arm_dpi.c -o generate_arm_dpi
+
+generate_arm_r: generate_arm_r.c
+	$(CC_FOR_BUILD) generate_arm_r.c -o generate_arm_r
+
+generate_arm_loadstore: generate_arm_loadstore.c
+	$(CC_FOR_BUILD) generate_arm_loadstore.c -o generate_arm_loadstore
+
+generate_arm_multi: generate_arm_multi.c
+	$(CC_FOR_BUILD) generate_arm_multi.c -o generate_arm_multi
+
+generate_m88k_bcnd: generate_m88k_bcnd.c
+	$(CC_FOR_BUILD) generate_m88k_bcnd.c -o generate_m88k_bcnd
+
+generate_m88k_loadstore: generate_m88k_loadstore.c
+	$(CC_FOR_BUILD) generate_m88k_loadstore.c -o generate_m88k_loadstore
+
+generate_mips_loadstore: generate_mips_loadstore.c
+	$(CC_FOR_BUILD) generate_mips_loadstore.c -o generate_mips_loadstore
+
+generate_mips_loadstore_multi: generate_mips_loadstore_multi.c
+	$(CC_FOR_BUILD) generate_mips_loadstore_multi.c -o generate_mips_loadstore_multi
+
+generate_ppc_loadstore: generate_ppc_loadstore.c
+	$(CC_FOR_BUILD) generate_ppc_loadstore.c -o generate_ppc_loadstore
+
+
 
 ###############################################################################
 

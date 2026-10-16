@@ -113,6 +113,15 @@ if [ z"$*" != z ]; then
 			    "it will override the default"
 			echo "value, which on this platform is: $DEFAULTPREFIX"
 			echo
+			echo "To cross-compile (e.g. for Windows), set CC to the" \
+			    "cross-compiler,"
+			echo "CC_FOR_BUILD to a compiler for this host (for the" \
+			    "tools run during"
+			echo "the build), CROSS_RUN to a command which runs" \
+			    "the cross-compiled test"
+			echo "programs (e.g. wine), and SDL2_CONFIG to the" \
+			    "target's sdl2-config."
+			echo
 			exit
 		else
 			echo "Invalid option: $a"
@@ -268,19 +277,34 @@ int main(int argc, char* argv[])
 
 #  Try to detect which C compiler to use, if CC is not set:
 printf "checking which C compiler to use... "
-rm -f _testprog
+rm -f _testprog _testprog.exe
 if [ z"$CC" = z ]; then
 	CC=cc
 fi
+
+#  When cross-compiling, CROSS_RUN is how to run the test programs (for
+#  example CROSS_RUN=wine). Their output may end in CR LF.
+run_test()
+{
+	if [ "z$CROSS_RUN" = z ]; then
+		./$1$EXEEXT
+	else
+		$CROSS_RUN ./$1$EXEEXT
+	fi
+}
 
 printf "#!/bin/sh\n$CC $CFLAGS _testprog.c -o _testprog >" > _test.sh
 printf " /dev/null 2> /dev/null\n" >> _test.sh
 chmod 755 _test.sh
 ./_test.sh > /dev/null 2> /dev/null
+EXEEXT=
+if [ -f _testprog.exe ]; then
+	EXEEXT=.exe
+fi
 OK=0
-if [ -x _testprog ]; then
+if [ -x _testprog$EXEEXT ]; then
 	OK=1
-	if [ z`./_testprog` = z0,1,1,1,2 ]; then
+	if [ z`run_test _testprog | tr -d '\r'` = z0,1,1,1,2 ]; then
 		OK=2
 	fi
 fi
@@ -297,7 +321,7 @@ if [ z$OK = z1 ]; then
 	printf "The test program:\n\n"
 	cat _testprog.c
 	printf "should have resulted in  0,1,1,1,2  but the result was: "
-	./_testprog
+	run_test _testprog
 fi
 
 if [ z$OK != z2 ]; then
@@ -308,9 +332,8 @@ if [ z$OK != z2 ]; then
 	exit
 fi
 
-rm -f _testprog
+rm -f _testprog _testprog$EXEEXT
 rm -f _test.sh
-
 
 echo "$CC $CFLAGS"
 
@@ -333,26 +356,30 @@ if [ z$NOSDL = z ]; then
 	" > _test_sdl.c
 
 	SDLOK=0
-	if pkg-config --exists sdl2 2> /dev/null; then
+	if [ "z$SDL2_CONFIG" != z ]; then
+		SDLINCLUDE=`$SDL2_CONFIG --cflags`
+		SDLLIB=`$SDL2_CONFIG --libs`
+	else if pkg-config --exists sdl2 2> /dev/null; then
 		SDLINCLUDE=`pkg-config --cflags sdl2`
 		SDLLIB=`pkg-config --libs sdl2`
 	else if sdl2-config --version > /dev/null 2> /dev/null; then
 		SDLINCLUDE=`sdl2-config --cflags`
 		SDLLIB=`sdl2-config --libs`
-	fi; fi
+	fi; fi; fi
 
-	#  gxemul has its own main(), so SDL2main isn't needed:
-	SDLLIB=`echo $SDLLIB | sed 's/-lSDL2main//'`
+	#  gxemul has its own main(), so SDL2main isn't needed. On Windows,
+	#  -mwindows would make it a GUI program without a console:
+	SDLINCLUDE=`echo $SDLINCLUDE | sed 's/-Dmain=SDL_main//'`
+	SDLLIB=`echo $SDLLIB | sed -e 's/-lSDL2main//' -e 's/-mwindows//'`
 
 	if [ "z$SDLLIB" != z ]; then
 		$CC $CFLAGS _test_sdl.c -o _test_sdl $SDLINCLUDE $SDLLIB \
 		    2> /dev/null
-		if [ -x _test_sdl ]; then
+		if [ -x _test_sdl$EXEEXT ]; then
 			SDLOK=1
 		fi
 	fi
-	rm -f _test_sdl _test_sdl.c
-
+	rm -f _test_sdl _test_sdl$EXEEXT _test_sdl.c
 	if [ z$SDLOK = z0 ]; then
 		echo "SDL2 not found."
 	else
@@ -379,15 +406,15 @@ fi
 #  CWARNINGS:
 printf "checking whether -Wall can be used... "
 $CC $CFLAGS _testprog.c -o _testprog -Wall 2> /dev/null
-if [ -x _testprog ]; then
+if [ -x _testprog$EXEEXT ]; then
 	printf "yes\n"
 	CWARNINGS="-Wall $CWARNINGS"
 
 	if [ z"$DEBUG" = zYES ]; then
 		printf "checking whether -Werror can be used... "
-		rm -f _testprog
+		rm -f _testprog _testprog$EXEEXT
 		$CC $CWARNINGS $CFLAGS _testprog.c -o _testprog -Werror 2> _testprog.err
-		if [ -x _testprog ]; then
+		if [ -x _testprog$EXEEXT ]; then
 			printf "yes\n"
 			CWARNINGS="$CWARNINGS -Werror"
 		else
@@ -401,8 +428,7 @@ if [ -x _testprog ]; then
 else
 	printf "no\n"
 fi
-rm -f _testprog _testprog.err
-
+rm -f _testprog _testprog$EXEEXT _testprog.err
 
 #  -Wstrict-aliasing
 printf "checking whether -Wstrict-aliasing can be used... "
@@ -411,15 +437,14 @@ cat _testprog.stdout >> _testprog.error
 if grep strict _testprog.error > /dev/null 2>&1; then
 	printf "no\n"
 else
-	if [ -x _testprog ]; then
+	if [ -x _testprog$EXEEXT ]; then
 		CWARNINGS="-Wstrict-aliasing $CWARNINGS"
 		printf "yes\n"
 	else
 		printf "no\n"
 	fi
 fi
-rm -f _testprog _testprog.error _testprog.stdout
-
+rm -f _testprog _testprog$EXEEXT _testprog.error _testprog.stdout
 
 #  -Wextra -Wno-unused-parameter -Wno-cast-align
 printf "checking whether -Wextra -Wno-unused-parameter -Wno-cast-align can be used... "
@@ -428,15 +453,14 @@ cat _testprog.stdout >> _testprog.error
 if grep strict _testprog.error > /dev/null 2>&1; then
 	printf "no\n"
 else
-	if [ -x _testprog ]; then
+	if [ -x _testprog$EXEEXT ]; then
 		CWARNINGS="$CWARNINGS -Wextra -Wno-unused-parameter -Wno-cast-align"
 		printf "yes\n"
 	else
 		printf "no\n"
 	fi
 fi
-rm -f _testprog _testprog.error _testprog.stdout
-
+rm -f _testprog _testprog$EXEEXT _testprog.error _testprog.stdout
 
 #  -Wcast-align
 printf "checking whether -Wcast-align can be used... "
@@ -445,15 +469,14 @@ cat _testprog.stdout >> _testprog.error
 if grep strict _testprog.error > /dev/null 2>&1; then
 	printf "no\n"
 else
-	if [ -x _testprog ]; then
+	if [ -x _testprog$EXEEXT ]; then
 		CWARNINGS="-Wcast-align $CWARNINGS"
 		printf "yes\n"
 	else
 		printf "no\n"
 	fi
 fi
-rm -f _testprog _testprog.error _testprog.stdout
-
+rm -f _testprog _testprog$EXEEXT _testprog.error _testprog.stdout
 
 #  -Wshadow
 printf "checking whether -Wshadow can be used... "
@@ -462,24 +485,23 @@ cat _testprog.stdout >> _testprog.error
 if grep strict _testprog.error > /dev/null 2>&1; then
 	printf "no\n"
 else
-	if [ -x _testprog ]; then
+	if [ -x _testprog$EXEEXT ]; then
 		CWARNINGS="-Wshadow $CWARNINGS"
 		printf "yes\n"
 	else
 		printf "no\n"
 	fi
 fi
-rm -f _testprog _testprog.error _testprog.stdout
-
+rm -f _testprog _testprog$EXEEXT _testprog.error _testprog.stdout
 
 #  -O optimization for non-debug builds. Try -O and -O3.
 if [ ! z"$DEBUG" = zYES ]; then
 	printf "checking whether -O3 or -O can be used (non-DEBUG build)... "
 	$CC $CFLAGS -O _testprog.c -o _testprog 2> /dev/null
-	if [ -x _testprog ]; then
-		rm -f _testprog
+	if [ -x _testprog$EXEEXT ]; then
+		rm -f _testprog _testprog$EXEEXT
 		$CC $CFLAGS -O3 _testprog.c -o _testprog 2> /dev/null
-		if [ -x _testprog ]; then
+		if [ -x _testprog$EXEEXT ]; then
 			CFLAGS="-O3 $CFLAGS"
 			printf "yes, -O3\n"
 		else
@@ -490,8 +512,7 @@ if [ ! z"$DEBUG" = zYES ]; then
 		printf "no\n"
 	fi
 fi
-rm -f _testprog
-
+rm -f _testprog _testprog$EXEEXT
 
 #  -fpeephole
 if [ ! z"$DEBUG" = zYES ]; then
@@ -501,14 +522,14 @@ if [ ! z"$DEBUG" = zYES ]; then
 	if grep peephole _testprog.error > /dev/null 2>&1; then
 		printf "no\n"
 	else
-		if [ -x _testprog ]; then
+		if [ -x _testprog$EXEEXT ]; then
 			CFLAGS="-fpeephole $CFLAGS"
 			printf "yes\n"
 		else
 			printf "no\n"
 		fi
 	fi
-	rm -f _testprog _testprog.error _testprog.stdout
+	rm -f _testprog _testprog$EXEEXT _testprog.error _testprog.stdout
 fi
 
 
@@ -521,14 +542,14 @@ if [ ! z"$DEBUG" = zYES ]; then
 	if grep frame _testprog.error > /dev/null 2>&1; then
 		printf "no\n"
 	else
-		if [ -x _testprog ]; then
+		if [ -x _testprog$EXEEXT ]; then
 			CFLAGS="-fomit-frame-pointer $CFLAGS"
 			printf "yes\n"
 		else
 			printf "no\n"
 		fi
 	fi
-	rm -f _testprog _testprog.error _testprog.stdout
+	rm -f _testprog _testprog$EXEEXT _testprog.error _testprog.stdout
 fi
 
 
@@ -541,14 +562,14 @@ if [ ! z"$DEBUG" = zYES ]; then
 	if grep strict _testprog.error > /dev/null 2>&1; then
 		printf "no\n"
 	else
-		if [ -x _testprog ]; then
+		if [ -x _testprog$EXEEXT ]; then
 			CFLAGS="-fstrict-aliasing $CFLAGS"
 			printf "yes\n"
 		else
 			printf "no\n"
 		fi
 	fi
-	rm -f _testprog _testprog.error _testprog.stdout
+	rm -f _testprog _testprog$EXEEXT _testprog.error _testprog.stdout
 fi
 
 
@@ -557,13 +578,13 @@ if [ z"$DEBUG" = zYES ]; then
 	printf "checking whether -g can be used... "
 	$CC $CFLAGS -g _testprog.c -o _testprog > _testprog.stdout 2>&1
 	cat _testprog.stdout >> _testprog.error
-	if [ -x _testprog ]; then
+	if [ -x _testprog$EXEEXT ]; then
 		CFLAGS="-g $CFLAGS"
 		printf "yes\n"
 	else
 		printf "no\n"
 	fi
-	rm -f _testprog _testprog.error _testprog.stdout
+	rm -f _testprog _testprog$EXEEXT _testprog.error _testprog.stdout
 fi
 
 
@@ -572,9 +593,9 @@ printf "checking whether -lrt is required for nanosleep... "
 printf "#include <time.h>\n#include <stdio.h>
 int main(int argc, char *argv[]){nanosleep(NULL,NULL);return 0;}\n" > _testns.c
 $CC $CFLAGS _testns.c -o _testns 2> /dev/null
-if [ ! -x _testns ]; then
+if [ ! -x _testns$EXEEXT ]; then
 	$CC $CFLAGS -lrt _testns.c -o _testns 2> /dev/null
-	if [ ! -x _testns ]; then
+	if [ ! -x _testns$EXEEXT ]; then
 		printf "WARNING! COULD NOT COMPILE WITH nanosleep AT ALL!\n"
 	else
 		#  -lrt for nanosleep
@@ -584,19 +605,18 @@ if [ ! -x _testns ]; then
 else
 	printf "no\n"
 fi
-rm -f _testns.c _testns
-
+rm -f _testns.c _testns _testns$EXEEXT
 
 #  -lresolv for inet_pton?
 printf "checking whether -lresolv is required for inet_pton... "
 printf "int inet_pton(void); int main(int argc, " > _testr.c
 printf "char *argv[]) { return inet_pton(); }\n" >> _testr.c
 $CC $CFLAGS _testr.c -o _testr 2> /dev/null
-if [ ! -x _testr ]; then
+if [ ! -x _testr$EXEEXT ]; then
 	$CC $CFLAGS _testr.c -lresolv -o _testr 2> /dev/null
-	if [ ! -x _testr ]; then
+	if [ ! -x _testr$EXEEXT ]; then
 		$CC $CFLAGS _testr.c -lresolv -lnsl -o _testr 2> /dev/null
-		if [ ! -x _testr ]; then
+		if [ ! -x _testr$EXEEXT ]; then
 			printf "no, using inet_aton\n"
 		else
 			#  -lresolv -lnsl for inet_pton
@@ -614,19 +634,18 @@ else
 	printf "no\n"
 	printf "#define HAVE_INET_PTON\n" >> config.h
 fi
-rm -f _testr.c _testr.o _testr
-
+rm -f _testr.c _testr.o _testr _testr$EXEEXT
 
 #  -lm?
 printf "checking for math libs..."
 printf "#include <math.h>\nint main(int argc, char *argv[]) { " > _testr.c
 printf "double x = sqrt(sin((double)argc)); return (int)x; }\n" >> _testr.c
 $CC $CFLAGS _testr.c -o _testr 2> /dev/null
-if [ ! -x _testr ]; then
+if [ ! -x _testr$EXEEXT ]; then
 	$CC $CFLAGS _testr.c -lm -o _testr 2> /dev/null
-	if [ ! -x _testr ]; then
+	if [ ! -x _testr$EXEEXT ]; then
 		$CC $CFLAGS _testr.c -lm -lcpml -o _testr 2> /dev/null
-		if [ ! -x _testr ]; then
+		if [ ! -x _testr$EXEEXT ]; then
 			printf "\nWARNING! Could not compile math test "
 			printf "at all!\nContinuing anyway.\n\n"
 		else
@@ -642,8 +661,7 @@ if [ ! -x _testr ]; then
 else
 	printf " none needed\n"
 fi
-rm -f _testr.c _testr.o _testr
-
+rm -f _testr.c _testr.o _testr _testr$EXEEXT
 
 #  strlcpy missing?
 printf "checking for strlcpy... "
@@ -651,7 +669,7 @@ printf "#include <string.h>
 int main(int argc, char *argv[]) { char *p; char *q; size_t x;
   x = strlcpy(p, q, 50); return 0;}\n" > _tests.c
 $CC $CFLAGS _tests.c -o _tests 2> /dev/null
-if [ ! -x _tests ]; then
+if [ ! -x _tests$EXEEXT ]; then
 	printf "missing, using mystrlcpy\n"
 	printf "#define strlcpy mystrlcpy\n" >> config.h
 	printf "#define strlcat mystrlcat\n" >> config.h
@@ -659,8 +677,7 @@ if [ ! -x _tests ]; then
 else
 	printf "found\n"
 fi
-rm -f _tests.c _tests.o _tests
-
+rm -f _tests.c _tests.o _tests _tests$EXEEXT
 
 #  strtoull missing?
 printf "checking for strtoull... "
@@ -670,14 +687,13 @@ printf "#include <stdlib.h>
 int main(int argc, char *argv[]) {
   long long x = strtoull(argv[1], NULL, 0); return 0;}\n" > _tests.c
 $CC $CFLAGS _tests.c -o _tests 2> /dev/null
-if [ ! -x _tests ]; then
+if [ ! -x _tests$EXEEXT ]; then
 	printf "missing, using mystrtoull\n"
 	printf "#define strtoull mystrtoull\n" >> config.h
 else
 	printf "found\n"
 fi
-rm -f _tests.c _tests.o _tests
-
+rm -f _tests.c _tests.o _tests _tests$EXEEXT
 
 #  mkstemp missing?
 printf "checking for mkstemp... "
@@ -686,14 +702,13 @@ printf "#include <unistd.h>
 int main(int argc, char *argv[]) { int x; char y[4] = \"abc\";
 x = mkstemp(y); return 0;}\n" > _tests.c
 $CC $CFLAGS _tests.c -o _tests 2> /dev/null
-if [ ! -x _tests ]; then
+if [ ! -x _tests$EXEEXT ]; then
 	printf "missing, using workaround (perhaps not working properly)\n"
 	printf "#define mkstemp mymkstemp\n" >> config.h
 else
 	printf "found\n"
 fi
-rm -f _tests.c _tests.o _tests
-
+rm -f _tests.c _tests.o _tests _tests$EXEEXT
 
 #  fseeko missing?
 printf "checking for fseeko... "
@@ -703,11 +718,11 @@ printf "#include <stdlib.h>
 #include <sys/types.h>
 int main(int argc, char *argv[]) { fseeko(NULL, 0, 0); return 0;}\n" > _tests.c
 $CC $CFLAGS $CWARNINGS _tests.c -o _tests 2> /dev/null
-if [ ! -x _tests ]; then
+if [ ! -x _tests$EXEEXT ]; then
 	# Try with _LARGEFILE_SOURCE (hack to make fseeko
 	# work on 64-bit Linux):
 	$CC $CFLAGS -D_LARGEFILE_SOURCE $CWARNINGS _tests.c -o _tests 2> /dev/null
-	if [ ! -x _tests ]; then
+	if [ ! -x _tests$EXEEXT ]; then
 		printf "missing\n"
 		printf "WARNING! fseeko missing from libc. Using a hack, "
 		printf "which probably doesn't work.\n"
@@ -719,8 +734,7 @@ if [ ! -x _tests ]; then
 else
 	printf "found\n"
 fi
-rm -f _tests.c _tests.o _tests
-
+rm -f _tests.c _tests.o _tests _tests$EXEEXT
 
 #  socklen_t missing?
 #  (for example really old OpenBSD/arc 2.3, inside the emulator)
@@ -731,31 +745,30 @@ printf "#include <stdlib.h>
 #include <sys/socket.h>
 int main(int argc, char *argv[]) { socklen_t x; return 0;}\n" > _tests.c
 $CC $CFLAGS _tests.c -o _tests 2> /dev/null
-if [ ! -x _tests ]; then
+if [ ! -x _tests$EXEEXT ]; then
 	printf "no, using int\n"
 	CFLAGS="$CFLAGS -Dsocklen_t=int"
 else
 	printf "socklen_t\n"
 fi
-rm -f _tests.c _tests.o _tests
-
+rm -f _tests.c _tests.o _tests _tests$EXEEXT
 
 #  MAP_ANON missing? (On some HP-UX systems? Use MAP_ANONYMOUS instead.)
 printf "checking for MAP_ANON... "
-rm -f _tests
+rm -f _tests _tests$EXEEXT
 printf "#include <stdio.h>
 #include <sys/types.h>
 #include <sys/mman.h>
 int main(int argc, char *argv[]) { int x = MAP_ANON; return 0;}\n" > _tests.c
 $CC $CFLAGS _tests.c -o _tests 2> /dev/null
-if [ ! -x _tests ]; then
+if [ ! -x _tests$EXEEXT ]; then
 	printf "#include <stdio.h>
 #include <sys/types.h>
 #include <sys/mman.h>
 int main(int argc, char *argv[])
 { int x = MAP_ANONYMOUS; return 0;}\n" > _tests.c
 	$CC $CFLAGS _tests.c -o _tests 2> /dev/null
-	if [ ! -x _tests ]; then
+	if [ ! -x _tests$EXEEXT ]; then
 		printf "no\n\n"
 		printf "WARNING! Neither MAP_ANON nor MAP_ANONYMOUS work on "
 		printf "this system.\nPlease try to compile anyway, and report"
@@ -769,23 +782,22 @@ int main(int argc, char *argv[])
 else
 	printf "yes\n"
 fi
-rm -f _tests.c _tests.o _tests
-
+rm -f _tests.c _tests.o _tests _tests$EXEEXT
 
 #  Check for PRIx64 in inttypes.h:
 printf "checking for PRIx64 in inttypes.h... "
 printf "#include <inttypes.h>\nint main(int argc, char *argv[])\n
 {\n#ifdef PRIx64\nreturn 0;\n#else\nreturn 1;\n#endif\n}\n" > _testpri.c
 $CC $CFLAGS _testpri.c -o _testpri 2> /dev/null
-if [ ! -x _testpri ]; then
+if [ ! -x _testpri$EXEEXT ]; then
 	printf "\nERROR! COULD NOT COMPILE PRIx64 TEST PROGRAM AT ALL!\n"
 	exit
 else
-	if ./_testpri; then
+	if run_test _testpri; then
 		printf "yes\n"
 	else
 		$CC $CFLAGS -D__STDC_FORMAT_MACROS _testpri.c -o _testpri 2> /dev/null
-		if [ -x _testpri ]; then
+		if [ -x _testpri$EXEEXT ]; then
 			printf "using __STDC_FORMAT_MACROS\n"
 			CFLAGS="$CFLAGS -D__STDC_FORMAT_MACROS"
 		else
@@ -795,18 +807,18 @@ else
 			# Try llx first:
 			printf "#include <stdio.h>\n#include <inttypes.h>\nint main(int argc, char *argv[]){
 			    printf(\"%%llx\\\n\", (int64_t)128);return 0;}\n" > _testpri.c
-			rm -f _testpri
+			rm -f _testpri _testpri$EXEEXT
 			$CC $CFLAGS $CWARNINGS _testpri.c -o _testpri 2> /dev/null
-			if [ z`./_testpri` = z80 ]; then
+			if [ z`run_test _testpri | tr -d "\r"` = z80 ]; then
 				printf "PRIx64=llx\n"
 				printf "#define NO_C99_64BIT_LONGLONG\n" >> config.h
 			else
 				# Try lx too:
 				printf "#include <stdio.h>\n#include <inttypes.h>\nint main(int argc, char *argv[]){
 				    printf(\"%%lx\\\n\", (int64_t)128);return 0;}\n" > _testpri.c
-				rm -f _testpri
+				rm -f _testpri _testpri$EXEEXT
 				$CC $CFLAGS $CWARNINGS _testpri.c -o _testpri 2> _testpri.result
-				if [ z`./_testpri` = z80 ]; then
+				if [ z`run_test _testpri | tr -d "\r"` = z80 ]; then
 					printf "PRIx64=lx\n"
 				else
 					printf "\nFailed, neither lx nor llx worked!\n"
@@ -816,8 +828,7 @@ else
 		fi
 	fi
 fi
-rm -f _testpri.c _testpri _testpri.result
-
+rm -f _testpri.c _testpri _testpri$EXEEXT _testpri.result
 
 #  Check for 64-bit off_t:
 printf "checking for 64-bit off_t... "
@@ -825,19 +836,19 @@ printf "#include <stdio.h>\n#include <inttypes.h>\n#include <sys/types.h>\n
 int main(int argc, char *argv[]){printf(\"%%i\\\n\",
  (int)sizeof(off_t));return 0;}\n" > _testoff.c
 $CC $CFLAGS _testoff.c -o _testoff 2> /dev/null
-if [ ! -x _testoff ]; then
+if [ ! -x _testoff$EXEEXT ]; then
 	printf "\nWARNING! COULD NOT COMPILE off_t TEST PROGRAM AT ALL!\n"
 else
-	if [ z`./_testoff` = z8 ]; then
+	if [ z`run_test _testoff | tr -d "\r"` = z8 ]; then
 		printf "yes\n"
 	else
 		$CC $CFLAGS -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE \
 		    _testoff.c -o _testoff 2> /dev/null
-		if [ ! -x _testoff ]; then
+		if [ ! -x _testoff$EXEEXT ]; then
 			printf "\nWARNING! COULD NOT COMPILE off_t TEST "
 			printf "PROGRAM!\n"
 		else
-			if [ z`./_testoff` = z8 ]; then
+			if [ z`run_test _testoff | tr -d "\r"` = z8 ]; then
 				CFLAGS="-D_FILE_OFFSET_BITS=64 $CFLAGS"
 				CFLAGS="-D_LARGEFILE_SOURCE $CFLAGS"
 				printf "using -D_FILE_OFFSET_BITS=64"
@@ -850,8 +861,7 @@ else
 		fi
 	fi
 fi
-rm -f _testoff.c _testoff
-
+rm -f _testoff.c _testoff _testoff$EXEEXT
 
 #  Check for u_int8_t etc:
 #  These are needed because some header files in src/include/ use u_int*
@@ -861,58 +871,56 @@ printf "#include <stdio.h>\n#include <inttypes.h>\n#include <sys/types.h>\n
 int main(int argc, char *argv[]){printf(\"%%i\\\n\",
  (int)sizeof(u_int8_t));return 0;}\n" > _testuint.c
 $CC $CFLAGS _testuint.c -o _testuint 2> /dev/null
-if [ ! -x _testuint ]; then
+if [ ! -x _testuint$EXEEXT ]; then
 	rm -f _testuint*
 	printf "#include <stdio.h>\n#include <inttypes.h>
 	\n#include <sys/types.h>\nint main(int argc, char *argv[])
 	{printf(\"%%i\\\n\", (int)sizeof(uint8_t));return 0;}\n" > _testuint.c
 	$CC $CFLAGS _testuint.c -o _testuint 2> /dev/null
-	if [ ! -x _testuint ]; then
+	if [ ! -x _testuint$EXEEXT ]; then
 		printf "no\n\nERROR: No u_int8_t or uint8_t. Aborting\n"
 		#  TODO: Automagically detect using various combinations
 		#  of char, int, short, long etc.
 		exit
 	fi
 
-	printf "typedef uint8_t u_int8_t;\n" >> config.h
+	printf "#include <stdint.h>\ntypedef uint8_t u_int8_t;\n" >> config.h
 	printf "typedef uint16_t u_int16_t;\n" >> config.h
 	printf "typedef uint32_t u_int32_t;\n" >> config.h
 	printf "uint8_t\n"
 else
 	printf "yes\n"
 fi
-rm -f _testuint.c _testuint
-
+rm -f _testuint.c _testuint _testuint$EXEEXT
 printf "checking for u_int64_t... "
 printf "#include <stdio.h>\n#include <inttypes.h>\n#include <sys/types.h>\n
 int main(int argc, char *argv[]){printf(\"%%i\\\n\",
  (int)sizeof(u_int64_t));return 0;}\n" > _testuint.c
 $CC $CFLAGS _testuint.c -o _testuint 2> /dev/null
-if [ ! -x _testuint ]; then
+if [ ! -x _testuint$EXEEXT ]; then
 	rm -f _testuint*
 	printf "#include <stdio.h>\n#include <inttypes.h>
 	\n#include <sys/types.h>\nint main(int argc, char *argv[])
 	{printf(\"%%i\\\n\", (int)sizeof(uint64_t));return 0;}\n" > _testuint.c
 	$CC $CFLAGS _testuint.c -o _testuint 2> /dev/null
-	if [ ! -x _testuint ]; then
+	if [ ! -x _testuint$EXEEXT ]; then
 		printf "no\n\nERROR: No u_int64_t or uint64_t. Aborting\n"
 		#  TODO: Automagically detect using various combinations
 		#  of char, int, short, long etc.
 		exit
 	fi
 
-	printf "typedef uint64_t u_int64_t;\n" >> config.h
+	printf "#include <stdint.h>\ntypedef uint64_t u_int64_t;\n" >> config.h
 	printf "uint64_t\n"
 else
 	printf "yes\n"
 fi
 rm -f _testuint*
-
 printf "checking for __builtin_expect... "
 printf "#include <stdio.h>\n\nint main(int argc, char *argv[]) {
   if (__builtin_expect(!!(2), 1)) return 0;\n  return 1;\n}\n" > _testexpect.c
 $CC $CFLAGS _testexpect.c -o _testexpect 2> /dev/null
-if [ ! -x _testexpect ]; then
+if [ ! -x _testexpect$EXEEXT ]; then
 	printf "no\n"
 	printf "#define likely(x) (x)\n" >> config.h
 	printf "#define unlikely(x) (x)\n" >> config.h
@@ -922,7 +930,6 @@ else
 	printf "#define unlikely(x) __builtin_expect(!!(x), 0)\n" >> config.h
 fi
 rm -f _testexpect*
-
 
 ###############################################################################
 
@@ -935,7 +942,7 @@ int main(int argc, char *argv[])
 if (*p) printf("little\\\n"); else printf("big\\\n"); }
 ' > _test_end.c
 $CC $CFLAGS _test_end.c -o _test_end 2> /dev/null
-X=`./_test_end`
+X=`run_test _test_end | tr -d "\r"`
 echo $X
 if [ z$X = zlittle ]; then
 	printf "#define HOST_LITTLE_ENDIAN\n" >> config.h
@@ -948,7 +955,6 @@ else
 	fi
 fi
 rm -f _test_end*
-
 
 ###############################################################################
 
@@ -980,7 +986,6 @@ DINCLUDE=-I../include/
 INCLUDE2=-I../../include/
 
 rm -f _testprog.c*
-
 echo C compiler flags: $CFLAGS $CWARNINGS
 echo Linker flags: $OTHERLIBS
 if [ z"$DESTDIR" != z ]; then
@@ -992,6 +997,10 @@ echo "INCLUDE=$INCLUDE" >> _Makefile.header
 echo "DINCLUDE=$DINCLUDE" >> _Makefile.header
 echo "INCLUDE2=$INCLUDE2" >> _Makefile.header
 echo "CC=$CC" >> _Makefile.header
+if [ "z$CC_FOR_BUILD" = z ]; then
+	CC_FOR_BUILD="$CC"
+fi
+echo "CC_FOR_BUILD=$CC_FOR_BUILD" >> _Makefile.header
 echo "OTHERLIBS=$OTHERLIBS" >> _Makefile.header
 echo "CPU_ARCHS=$CPU_ARCHS" >> _Makefile.header
 echo "CPU_TOOLS=$CPU_TOOLS" >> _Makefile.header

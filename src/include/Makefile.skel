@@ -4,6 +4,9 @@
 
 all: ppc_spr_strings.h
 
+make_ppc_spr_strings: make_ppc_spr_strings.c
+	$(CC_FOR_BUILD) make_ppc_spr_strings.c -o make_ppc_spr_strings
+
 ppc_spr_strings.h: make_ppc_spr_strings
 	grep '#define.SPR_' thirdparty/ppc_spr.h |cut -d _ -f 2- | ./make_ppc_spr_strings > ppc_spr_strings.h
 
