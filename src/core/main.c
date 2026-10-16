@@ -217,9 +217,6 @@ static void usage(bool longusage)
 	printf("  -Z n      set nr of graphics cards, for emulating a "
 	    "dual-head or tripple-head\n"
 	    "            environment (only for DECstation emulation)\n");
-#ifdef WITH_X11
-	printf("  -z disp   add disp as an X11 display to use for framebuffers\n");
-#endif /*  WITH_X11  */
 
 	printf("\nGeneral options:\n");
 	printf("  -A        disable colorized output\n");

@@ -28,8 +28,8 @@
  *  SUCH DAMAGE.
  *
  *
- *  Headerfile for src/console/display.c, and for the display backends
- *  (src/console/display_sdl.c and display_x11.c).
+ *  Headerfile for src/console/display.c, and for the display backend
+ *  (src/console/display_sdl.c).
  *
  *  A framebuffer window shows an image of 0x00RRGGBB pixels, which the
  *  framebuffer device draws into fb_window->pixels.  display.c puts the
@@ -120,8 +120,8 @@ void display_video_stop(void);
 
 
 /*
- *  The backend (display_sdl.c or display_x11.c; display.c has dummy
- *  functions if there is none):
+ *  The backend (display_sdl.c; display.c has dummy functions if there is
+ *  none):
  *
  *  display_backend_open() creates a host window for a new fb_window, and
  *  returns false if that isn't possible.  display_backend_update() shows

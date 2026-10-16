@@ -100,7 +100,7 @@ static bool init_sdl(void)
 	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 
 	if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-		debugmsg(SUBSYS_X11, "init", VERBOSITY_ERROR,
+		debugmsg(SUBSYS_DISPLAY, "init", VERBOSITY_ERROR,
 		    "couldn't initialize SDL: %s", SDL_GetError());
 		return false;
 	}
@@ -142,12 +142,12 @@ static void grab(struct fb_window *win)
 		return;
 
 	if (SDL_SetRelativeMouseMode(SDL_TRUE) != 0) {
-		debugmsg(SUBSYS_X11, "grab", VERBOSITY_WARNING,
+		debugmsg(SUBSYS_DISPLAY, "grab", VERBOSITY_WARNING,
 		    "couldn't grab the mouse: %s", SDL_GetError());
 		return;
 	}
 
-	debugmsg(SUBSYS_X11, "grab", VERBOSITY_DEBUG, "Grabbed mouse pointer.");
+	debugmsg(SUBSYS_DISPLAY, "grab", VERBOSITY_DEBUG, "Grabbed mouse pointer.");
 	grabbed = win;
 	display_backend_set_title(win);
 }
@@ -164,7 +164,7 @@ static void ungrab(void)
 	grabbed = NULL;
 	display_backend_set_title(win);
 
-	debugmsg(SUBSYS_X11, "grab", VERBOSITY_DEBUG, "Releasing grab.");
+	debugmsg(SUBSYS_DISPLAY, "grab", VERBOSITY_DEBUG, "Releasing grab.");
 }
 
 
@@ -180,7 +180,7 @@ static bool create_texture(struct fb_window *win)
 	sw->texture = SDL_CreateTexture(sw->renderer, SDL_PIXELFORMAT_RGB888,
 	    SDL_TEXTUREACCESS_STREAMING, win->xsize, win->ysize);
 	if (sw->texture == NULL) {
-		debugmsg(SUBSYS_X11, "texture", VERBOSITY_ERROR,
+		debugmsg(SUBSYS_DISPLAY, "texture", VERBOSITY_ERROR,
 		    "couldn't create a texture: %s", SDL_GetError());
 		return false;
 	}
@@ -209,10 +209,6 @@ bool display_backend_open(struct fb_window *win)
 	if (!init_sdl())
 		return false;
 
-	if (win->machine->display_md.n_display_names > 0)
-		debugmsg(SUBSYS_X11, "fb_init", VERBOSITY_WARNING,
-		    "X11 display names are ignored, when using SDL");
-
 	CHECK_ALLOCATION(sw = (struct sdl_window *) calloc(1, sizeof(*sw)));
 	win->backend = sw;
 
@@ -220,7 +216,7 @@ bool display_backend_open(struct fb_window *win)
 	    SDL_WINDOWPOS_UNDEFINED, win->xsize, win->ysize,
 	    SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
 	if (sw->window == NULL) {
-		debugmsg(SUBSYS_X11, "fb_init", VERBOSITY_ERROR,
+		debugmsg(SUBSYS_DISPLAY, "fb_init", VERBOSITY_ERROR,
 		    "couldn't create a window: %s", SDL_GetError());
 		return false;
 	}
@@ -229,7 +225,7 @@ bool display_backend_open(struct fb_window *win)
 	/*  (Without vsync, which would make the emulator wait for it.)  */
 	sw->renderer = SDL_CreateRenderer(sw->window, -1, 0);
 	if (sw->renderer == NULL) {
-		debugmsg(SUBSYS_X11, "fb_init", VERBOSITY_ERROR,
+		debugmsg(SUBSYS_DISPLAY, "fb_init", VERBOSITY_ERROR,
 		    "couldn't create a renderer: %s", SDL_GetError());
 		return false;
 	}

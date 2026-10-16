@@ -30,7 +30,7 @@
  *  Framebuffer devices draw 0x00RRGGBB pixels into fb_window->pixels, and
  *  tell display_update() which part changed.  That part is copied to
  *  fb_window->screen, with the emulated cursor on top, and handed to the
- *  backend (display_sdl.c or display_x11.c) to show.
+ *  backend (display_sdl.c) to show.
  */
 
 #include <stdio.h>
@@ -75,11 +75,9 @@ void display_init(struct machine *m)
 {
 	m->display_md.n_fb_windows = 0;
 
-	for (int i=0; i<m->display_md.n_display_names; i++)
-		debugmsg(SUBSYS_X11, "init", VERBOSITY_INFO,
-		    "using X11 display: %s", m->display_md.display_names[i]);
-
-	m->display_md.current_display_name_nr = 0;
+	if (m->display_md.n_display_names > 0)
+		debugmsg(SUBSYS_DISPLAY, "init", VERBOSITY_WARNING,
+		    "X11 display names (add_x11_display or -z) are ignored");
 }
 
 
@@ -126,7 +124,7 @@ struct fb_window *display_fb_init(int xsize, int ysize, const char *name,
 			win->cursor_pixels[y][x] = N_GRAYCOLORS-1;
 
 	if (!display_backend_open(win)) {
-		debugmsg(SUBSYS_X11, "fb_init", VERBOSITY_ERROR,
+		debugmsg(SUBSYS_DISPLAY, "fb_init", VERBOSITY_ERROR,
 		    "couldn't open a window for '%s'", name);
 		exit(1);
 	}
@@ -151,7 +149,7 @@ struct fb_window *display_fb_init(int xsize, int ysize, const char *name,
 void display_fb_resize(struct fb_window *win, int new_xsize, int new_ysize)
 {
 	if (win == NULL) {
-		debugmsg(SUBSYS_X11, "resize", VERBOSITY_ERROR, "win == NULL");
+		debugmsg(SUBSYS_DISPLAY, "resize", VERBOSITY_ERROR, "win == NULL");
 		return;
 	}
 

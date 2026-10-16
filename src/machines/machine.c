@@ -419,7 +419,7 @@ void machine_dumpinfo(struct machine *m)
 		debug("Bootstrap cpu is nr %i\n", m->bootstrap_cpu);
 
 	if (m->display_md.in_use) {
-		debug("Using X11");
+		debug("Using framebuffer windows");
 		if (m->display_md.scaledown > 1)
 			debug(", scaledown %i", m->display_md.scaledown);
 		if (m->display_md.scaleup > 1)

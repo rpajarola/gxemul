@@ -519,7 +519,7 @@ void debugmsg_init()
 	debugmsg_subsystem_name[SUBSYS_MEMORY]    = "memory";
 	debugmsg_subsystem_name[SUBSYS_EXCEPTION] = "exception";
 	debugmsg_subsystem_name[SUBSYS_PROMEMUL]  = "promemul";
-	debugmsg_subsystem_name[SUBSYS_X11]       = "X11";
+	debugmsg_subsystem_name[SUBSYS_DISPLAY]   = "display";
 
 	// Default verbosity levels.
 	debugmsg_set_verbosity_level(SUBSYS_ALL, default_verbosity);

@@ -52,7 +52,7 @@
 #    o)  special hacks for some OSes
 #    o)  which compiler to use  (overridden by setting CC)
 #    o)  which compiler flags to use  (overridden by setting CFLAGS)
-#    o)  SDL2 or X11 flags and libraries  (TODO: should be possible to override
+#    o)  SDL2 flags and libraries  (TODO: should be possible to override
 #	 via command line options?)
 #
 #  The general philosophy regarding command line switches is that anything
@@ -95,20 +95,16 @@ OTHERLIBS="$LDFLAGS"
 if [ z"$*" != z ]; then
 	#  Parse command line options:
 	for a in $*; do
-		if [ z$a = z--disable-x ]; then
-			NOX11=YES
-		else if [ z$a = z--disable-sdl ]; then
+		if [ z$a = z--disable-sdl -o z$a = z--disable-x ]; then
 			NOSDL=YES
 		else if [ z$a = z--debug ]; then
 			DEBUG=YES
 		else if [ z$a = z--help ]; then
 			printf "usage: $0 [options]\n\n"
-			echo "  --disable-sdl         don't use SDL2 for framebuffer"\
-			    "windows, even if the host"
-			echo "                        supports it (X11 is used"\
-			    "instead, if available)"
-			echo "  --disable-x           don't include X11 support,"\
-			    "even if the host supports it"
+			echo "  --disable-sdl         don't include framebuffer"\
+			    "windows (SDL2), even if the"
+			echo "                        host supports them"\
+			    "(--disable-x does the same)"
 			echo "  --debug               configure for a" \
 				"debug build (turn off optimizations,"
 			echo "                        try enabling -Werror etc.)"
@@ -123,7 +119,7 @@ if [ z"$*" != z ]; then
 			echo "Run  $0 --help  to get a list of" \
 			    "available options."
 			exit
-		fi; fi; fi; fi
+		fi; fi; fi
 	done
 fi
 
@@ -324,7 +320,7 @@ if [ z"$DEBUG" != zYES ]; then
 fi
 
 
-#  Framebuffer windows use SDL2 if it is available, otherwise X11:
+#  Framebuffer windows use SDL2, if it is available:
 if [ z$NOSDL = z ]; then
 	printf "checking for SDL2 headers and libs\n"
 
@@ -365,144 +361,7 @@ if [ z$NOSDL = z ]; then
 		echo "DISPLAYINCLUDE=$SDLINCLUDE" >> _Makefile.header
 		echo "DISPLAYLIB=$SDLLIB" >> _Makefile.header
 		printf "#define WITH_SDL\n" >> config.h
-		NOX11=YES
 	fi
-fi
-
-
-if [ z$NOX11 = z ]; then
-	printf "checking for X11 headers and libs\n"
-
-	#  Try to compile a small X11 test program:
-	printf "#include <X11/Xlib.h>
-	#include <stdio.h>
-	Display *dis;
-	void f(void) {
-		dis = XOpenDisplay(NULL);
-	}
-	int main(int argc, char *argv[])
-	{ printf(\"1\"); return 0; }
-	" > _test_x11.c
-
-	XOK=0
-
-	#  pkg-config knows where X11 is, e.g. with Homebrew's libx11:
-	if pkg-config --exists x11 2> /dev/null; then
-		XINCLUDE=`pkg-config --cflags x11`
-		XLIB=`pkg-config --libs x11`
-		$CC $CFLAGS _test_x11.c -c -o _test_x11.o $XINCLUDE 2> /dev/null
-		$CC $CFLAGS _test_x11.o -o _test_x11 $XLIB 2> /dev/null
-		if [ -x _test_x11 ]; then
-			if [ 1 = `./_test_x11` ]; then
-				XOK=1
-			fi
-		fi
-		rm -f _test_x11 _test_x11.o
-	fi
-
-	if [ z$XOK = z0 ]; then
-		XINCLUDE=-I/usr/X11R6/include
-		$CC $CFLAGS _test_x11.c -c -o _test_x11.o $XINCLUDE 2> /dev/null
-
-		XLIB="-L/usr/X11R6/lib -lX11 -Wl,-rpath,/usr/X11R6/lib"
-		$CC $CFLAGS _test_x11.o -o _test_x11 $XLIB 2> /dev/null
-
-		if [ -x _test_x11 ]; then
-			if [ 1 = `./_test_x11` ]; then
-				XOK=1
-			fi
-		fi
-
-		rm -f _test_x11 _test_x11.o
-	fi
-
-	if [ z$XOK = z0 ]; then
-		XINCLUDE=-I/usr/X11R7/include
-		$CC $CFLAGS _test_x11.c -c -o _test_x11.o $XINCLUDE 2> /dev/null
-
-		XLIB="-L/usr/X11R7/lib -lX11 -Wl,-rpath,/usr/X11R7/lib"
-		$CC $CFLAGS _test_x11.o -o _test_x11 $XLIB 2> /dev/null
-
-		if [ -x _test_x11 ]; then
-			if [ 1 = `./_test_x11` ]; then
-				XOK=1
-			fi
-		fi
-	fi
-	rm -f _test_x11 _test_x11.o
-
-	if [ z$XOK = z0 ]; then
-		XINCLUDE=-I/usr/local/include
-		$CC $CFLAGS _test_x11.c -c -o _test_x11.o $XINCLUDE 2> /dev/null
-
-		XLIB="-L/usr/local/lib -lX11 -Wl,-rpath,/usr/local/lib"
-		$CC $CFLAGS _test_x11.o -o _test_x11 $XLIB 2> /dev/null
-
-		if [ -x _test_x11 ]; then
-			if [ 1 = `./_test_x11` ]; then
-				XOK=1
-			fi
-		fi
-	fi
-	rm -f _test_x11 _test_x11.o
-
-	# MacOS:
-	if [ z$XOK = z0 ]; then
-		XINCLUDE=-I/opt/X11/include
-		$CC $CFLAGS _test_x11.c -c -o _test_x11.o $XINCLUDE 2> /dev/null
-
-		XLIB="-L/opt/X11/lib -lX11"
-		$CC $CFLAGS _test_x11.o -o _test_x11 $XLIB 2> /dev/null
-
-		if [ -x _test_x11 ]; then
-			XOK=1
-		fi
-	fi
-	rm -f _test_x11 _test_x11.o
-
-	#  Special case for some 64-bit Linux/x86_64 systems:
-	if [ z$XOK = z0 ]; then
-		$CC $CFLAGS _test_x11.c -c -o _test_x11.o $XINCLUDE 2> /dev/null
-
-		XLIB="-L/usr/X11R6/lib64 -lX11"
-		$CC $CFLAGS _test_x11.o -o _test_x11 $XLIB 2> /dev/null
-
-		if [ -x _test_x11 ]; then
-			if [ 1 = `./_test_x11` ]; then
-				XOK=1
-			fi
-		fi
-	fi
-	rm -f _test_x11 _test_x11.o
-
-	if [ z$XOK = z0 ]; then
-		XINCLUDE=""
-		$CC $CFLAGS _test_x11.c -c -o _test_x11.o $XINCLUDE 2> /dev/null
-
-		#  -lsocket for Solaris
-		XLIB="-lX11 -lsocket"
-		$CC $CFLAGS _test_x11.o -o _test_x11 $XLIB 2> /dev/null
-
-		if [ -x _test_x11 ]; then
-			if [ 1 = `./_test_x11` ]; then
-				XOK=1
-			fi
-		fi
-		rm -f _test_x11 _test_x11.o
-	fi
-
-	if [ z$XOK = z0 ]; then
-		echo "Failed to compile X11 test program." \
-		    "Configuring without X11."
-	else
-		printf "   headers:   $XINCLUDE\n"
-		printf "   libraries: $XLIB\n"
-		echo "DISPLAYINCLUDE=$XINCLUDE" >> _Makefile.header
-		echo "DISPLAYLIB=$XLIB" >> _Makefile.header
-		printf "#define WITH_X11\n" >> config.h
-	fi
-
-	rm -f _test_x11.c
 fi
 
 

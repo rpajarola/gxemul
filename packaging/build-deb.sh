@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the .deb for this machine's architecture, on Debian or Ubuntu with
-# a C/C++ compiler, libx11-dev and nfpm (https://nfpm.goreleaser.com).
+# a C/C++ compiler, libsdl2-dev and nfpm (https://nfpm.goreleaser.com).
 #
 #   packaging/build-deb.sh                 # version from git
 #   VERSION=1.2.3 packaging/build-deb.sh

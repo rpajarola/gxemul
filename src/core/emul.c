@@ -905,7 +905,7 @@ void emul_run(struct emul *emul)
 	 *  Run instructions from each cpu in each machine.
 	 *
 	 *  TODO:
-	 *	Rewrite the X11/console flush to use a timer (?).
+	 *	Rewrite the display/console flush to use a timer (?).
 	 */
 	while (!emul_shutdown) {
 		struct cpu *bootcpu = emul->machines[0]->cpus[
@@ -943,7 +943,7 @@ void emul_run(struct emul *emul)
 			}
 		}
 
-		/*  Flush X11 and serial console output every now and then:  */
+		/*  Flush display and serial console output every now and then:  */
 		if (bootcpu->ninstrs > bootcpu->ninstrs_flush + (1<<19)) {
 			display_check_event(emul);
 			console_flush();

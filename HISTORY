@@ -5193,3 +5193,13 @@ Changelog for GXemul:
 		input on the framebuffer console (with the PMAG-BA option
 		ROM image), passes its scc self-tests there, and boots Ultrix
 		to X.
+		Framebuffer windows use SDL2 instead of X11, so they work
+		natively on macOS (without XQuartz), and can be resized
+		(scaling the image). The framebuffer devices draw into
+		an image of their own, with the emulated cursor on top, which
+		screenshots and video recordings are taken from. Clicking in
+		a window grabs the mouse (with SDL's relative mouse mode),
+		and Ctrl+Alt releases it, as before. X11 display names
+		(add_x11_display, -z) are ignored, and the debug message
+		subsystem "X11" is now called "display". configure
+		--disable-sdl (or --disable-x) builds without windows.

@@ -55,10 +55,6 @@ struct memory;
 struct pci_data;
 struct timer;
 
-/* #ifdef WITH_X11
-#include <X11/Xlib.h>
-#endif */
-
 /*  dev_8259.c:  */
 struct pic8259_data {
 	struct interrupt irq;

@@ -307,7 +307,8 @@ static void scroll_if_necessary(struct cpu *cpu)
 /*
  *  arcbios_putchar():
  *
- *  If we're using X11 with VGA-style console, then output to that console.
+ *  If we're using framebuffer windows with VGA-style console, then output to
+ *  that console.
  *  Otherwise, use console_putchar().
  */
 static void arcbios_putchar(struct cpu *cpu, int ch)
@@ -1648,7 +1649,7 @@ int arcbios_emul(struct cpu *cpu)
 
 			/*
 			 *  Before going into the loop, make sure stdout
-			 *  is flushed.  If we're using an X11 VGA console,
+			 *  is flushed.  If we're using a VGA console window,
 			 *  then it needs to be flushed as well.
 			 */
 			fflush(stdin);

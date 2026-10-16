@@ -20,7 +20,7 @@ replaces:
 description: |
   Full-system emulator for MIPS, ARM, PowerPC, M88K, SuperH and others
   GXemul emulates DECstation, SGI, Luna 88K, Dreamcast, PlayStation 2
-  and other machines, with framebuffers on X11. This is the rpajarola
+  and other machines, with framebuffers in SDL2 windows. This is the rpajarola
   fork of GXemul 0.7.0, which adds SIMH tape images, TURBOchannel option
   ROMs and L2TPv3 networking.
 
