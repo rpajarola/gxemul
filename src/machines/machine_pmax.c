@@ -328,7 +328,7 @@ MACHINE_SETUP(pmax)
 
 		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i",
 		    machine->path, machine->bootstrap_cpu, KMIN_INT_TC1);
-		dev_turbochannel_init(machine, mem, 0,
+		dev_turbochannel_init(machine, mem, 1,
 		    KMIN_PHYS_TC_1_START, KMIN_PHYS_TC_1_END,
 		    machine->n_gfx_cards >= 2?
 			turbochannel_default_gfx_card : "",
@@ -336,7 +336,7 @@ MACHINE_SETUP(pmax)
 
 		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i",
 		    machine->path, machine->bootstrap_cpu, KMIN_INT_TC2);
-		dev_turbochannel_init(machine, mem, 0,
+		dev_turbochannel_init(machine, mem, 2,
 		    KMIN_PHYS_TC_2_START, KMIN_PHYS_TC_2_END,
 		    machine->n_gfx_cards >= 3?
 			turbochannel_default_gfx_card : "",

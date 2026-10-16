@@ -5164,3 +5164,8 @@ Changelog for GXemul:
 		operations; on MIPS I, FPU exceptions are interrupt 5
 		instead of a trap. A divisor below 1e-11 was treated as
 		zero. The KN02-BA PROM's fpu self-test passes.
+		TURBOchannel: an empty slot gives a bus error on every read
+		(except on the 5000/200, where Sprite needs zeros in the ROM
+		header area), so the KN02-BA PROM no longer reports a bad
+		option ROM in each empty slot. The 3MIN's option slots 1 and
+		2 are numbered 1 and 2 instead of 0, for their ROM images.

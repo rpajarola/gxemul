@@ -50,6 +50,7 @@ struct turbochannel_data {
 	uint64_t	endaddr;
 
 	int		rom_skip;
+	int		sprite_quirk;	/*  empty slot: no DBE in ROM header  */
 
 	char		device_name[DEVICE_MAX_NAMELEN];  /*  NUL-terminated  */
 
@@ -235,18 +236,18 @@ DEVICE_ACCESS(turbochannel)
 		 *  systems have to detect the absence of cards in a
 		 *  TURBOchannel slot.)
 		 *
-		 *  NOTE:  The Sprite kernel reads from offsets 0x3e0..0x400
-		 *  without handling the DBE exception, and both Ultrix and
-		 *  NetBSD seem to detect the DBE exception using addresses
-		 *  around offset 0x0 or 0x3c0000.  This code seems to work
-		 *  with all of the those OS kernels:
+		 *  NOTE:  The Sprite kernel (5000/200 only) reads from offsets
+		 *  0x3e0..0x400 without handling the DBE exception, so there
+		 *  those offsets read as zero.  Elsewhere, every read is a DBE,
+		 *  as on the real machines; the KN02-BA PROM otherwise takes
+		 *  the zeros for an option ROM with a bad test pattern.
 		 */
 		if (d->card_module_name[0] ==  ' ') {
 			/*  Return no data for empty slot:  */
 			odata = 0;
 
-			/*  Return DBE exception in some cases:  */
-			if (relative_addr < 0x3e0 || relative_addr >= 0x500)
+			if (!d->sprite_quirk ||
+			    relative_addr < 0x3e0 || relative_addr >= 0x500)
 				return 0;
 		}
 
@@ -295,6 +296,7 @@ void dev_turbochannel_init(struct machine *machine, struct memory *mem,
 
 	d->slot_nr  = slot_nr;
 	d->baseaddr = baseaddr;
+	d->sprite_quirk = machine->machine_subtype == MACHINE_DEC_3MAX_5000;
 	d->endaddr  = endaddr;
 
 	strlcpy(d->device_name, device_name, DEVICE_MAX_NAMELEN);
