@@ -62,6 +62,7 @@
 #include "memory.h"
 #include "misc.h"
 
+#include "thirdparty/dc7085.h"
 #include "thirdparty/sccreg.h"
 
 
@@ -98,13 +99,48 @@ struct scc_data {
 
 
 /*
+ *  The DECstation 5000/1xx's serial lines, numbered like the DC7085's (and
+ *  as in Ultrix), and the SCC channels they are on.  The keyboard and the
+ *  mouse share the LK201 emulation of the SCC with the keyboard.
+ */
+static const struct {
+	int	scc_nr, port;
+} scc_line[4] = {
+	{ 1, SCC_CHANNEL_A },	/*  0: keyboard  */
+	{ 0, SCC_CHANNEL_A },	/*  1: mouse  */
+	{ 0, SCC_CHANNEL_B },	/*  2: communication port  */
+	{ 1, SCC_CHANNEL_B }	/*  3: printer port (the serial console)  */
+};
+
+static struct scc_data *scc_by_nr[2];
+
+
+static int scc_to_line(int scc_nr, int port)
+{
+	int line;
+
+	for (line = 0; line < 4; line++)
+		if (scc_line[line].scc_nr == scc_nr &&
+		    scc_line[line].port == port)
+			break;
+
+	return line;
+}
+
+
+/*
  *  Check if space is available in the receive queue.
  */
-int dev_scc_space_available_in_queue(void *e, int portnr)
+int dev_scc_space_available_in_queue(void *e, int line)
 {
-	struct scc_data *d = (struct scc_data *) e;
+	struct scc_data *d = scc_by_nr[scc_line[line].scc_nr];
+	int portnr = scc_line[line].port;
+	int entries_in_use;
 
-	int entries_in_use = d->cur_rx_queue_pos_write[portnr] -
+	if (d == NULL)
+		return 0;
+
+	entries_in_use = d->cur_rx_queue_pos_write[portnr] -
 	    d->cur_rx_queue_pos_read[portnr];
 
 	while (entries_in_use < 0)
@@ -139,23 +175,15 @@ static void rx_enqueue(struct scc_data *d, int portnr, int ch)
 /*
  *  dev_scc_add_to_rx_queue():
  *
- *  Add a character to the receive queue, for a port numbered like the
- *  DC7085's (scc_nr * 2 + channel, but with the keyboard as port 0).
+ *  Add a character to the receive queue of a serial line (see scc_line[]),
+ *  which may be on the other SCC.
  */
-void dev_scc_add_to_rx_queue(void *e, int ch, int portnr)
+void dev_scc_add_to_rx_queue(void *e, int ch, int line)
 {
-	struct scc_data *d = (struct scc_data *) e;
-	int scc_nr;
+	struct scc_data *d = scc_by_nr[scc_line[line].scc_nr];
 
-	/*  DC's keyboard port ==> SCC keyboard port  */
-	if (portnr == 0)
-		portnr = 3;
-
-	scc_nr = portnr / N_SCC_PORTS;
-	if (scc_nr != d->scc_nr)
-		return;
-
-	rx_enqueue(d, portnr & (N_SCC_PORTS - 1), ch);
+	if (d != NULL)
+		rx_enqueue(d, scc_line[line].port, ch);
 }
 
 
@@ -266,7 +294,7 @@ DEVICE_TICK(scc)
 		if (d->use_fb == 0) {
 			if (console_charavail(d->console_handle))
 				dev_scc_add_to_rx_queue(extra, console_readchar(
-			    d->console_handle), 2);
+				    d->console_handle), DCPRINTER_PORT);
 		} else if (d->use_fb == 1)
 			lk201_tick(cpu->machine, &d->lk201);
 	}
@@ -353,7 +381,15 @@ DEVICE_TICK(scc)
  */
 static void scc_tx(struct scc_data *d, int port, int ch)
 {
-	lk201_tx_data(&d->lk201, d->scc_nr * 2 + port, ch);
+	int line = scc_to_line(d->scc_nr, port);
+	struct scc_data *k = d;
+
+	/*  The keyboard and mouse use SCC 1's LK201 emulation:  */
+	if ((line == DCKBD_PORT || line == DCMOUSE_PORT) &&
+	    scc_by_nr[1] != NULL)
+		k = scc_by_nr[1];
+
+	lk201_tx_data(&k->lk201, line, ch);
 
 	d->scc_register_r[port * N_SCC_REGS + SCC_RR0] |= SCC_RR0_TX_UNDERRUN;
 
@@ -605,6 +641,11 @@ void *dev_scc_init(struct machine *machine, struct memory *mem,
 	d->console_handle = console_start_slave(machine, "SCC",
 	    scc_nr == 1? 1 : CONSOLE_OUTPUT_ONLY);
 
+	/*  ... and it is the main console, which gets the keystrokes
+	    typed into the framebuffer window:  */
+	if (scc_nr == 1)
+		machine->main_console_handle = d->console_handle;
+
 	d->scc_register_r[SCC_RR0] |= SCC_RR0_TX_UNDERRUN;
 
 	lk201_init(&d->lk201, use_fb,
@@ -615,6 +656,9 @@ void *dev_scc_init(struct machine *machine, struct memory *mem,
 	memory_device_register(mem, "scc", baseaddr, DEV_SCC_LENGTH,
 	    dev_scc_access, d, DM_DEFAULT, NULL);
 	machine_add_tickfunction(machine, dev_scc_tick, d, SCC_TICK_SHIFT);
+
+	if (scc_nr >= 0 && scc_nr < 2)
+		scc_by_nr[scc_nr] = d;
 
 	return (void *) d;
 }

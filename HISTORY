@@ -5176,3 +5176,10 @@ Changelog for GXemul:
 		each channel's own WR1, and gives no interrupt per character
 		in "special condition only" mode. Multi-page SCSI DMA no
 		longer prints a warning.
+		5000/1xx (3MIN): the SCC channels are mapped to the serial
+		lines as on the real machine (keyboard on SCC 1 channel A,
+		mouse on SCC 0 channel A, communication port on SCC 0
+		channel B, printer/console port on SCC 1 channel B), with
+		one LK201 emulation for keyboard and mouse, and keystrokes in
+		the framebuffer window go to the keyboard. Ultrix 4.5's X
+		server runs on the PMAG-BA, with keyboard and mouse.
