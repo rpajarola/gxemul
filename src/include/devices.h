@@ -76,7 +76,6 @@ struct pic8259_data {
 
 /*  dev_dec_ioasic.c:  */
 #define	DEV_DEC_IOASIC_LENGTH		0xc0000
-#define	MAX_IOASIC_DMA_FUNCTIONS	8
 struct dec_ioasic_data {
 	uint32_t	scsi_dmaptr;		/*  0x000  */
 	uint32_t	scsi_nextptr;		/*  0x010  */
@@ -100,8 +99,13 @@ struct dec_ioasic_data {
 	uint32_t	scsi_sdr0;		/*  0x1c0  */
 	uint32_t	scsi_sdr1;		/*  0x1d0  */
 
-	int		(*dma_func[MAX_IOASIC_DMA_FUNCTIONS])(struct cpu *, void *, uint64_t addr, size_t dma_len, int tx);
-	void		*dma_func_extra[MAX_IOASIC_DMA_FUNCTIONS];
+	/*  SCC DMA, for channel B of SCC 0 (T1/R1) and SCC 1 (T2/R2):  */
+	void		*scc[2];
+	uint32_t	scc_t_dmaptr[2];	/*  0x030, 0x050  */
+	uint32_t	scc_r_dmaptr[2];	/*  0x040, 0x060  */
+	int		scc_t_done[2];		/*  page end reached  */
+	int		scc_r_done[2];		/*  overrun  */
+
 	int		rackmount_flag;
 	struct interrupt *irq;
 	int		int_asserted;
@@ -382,8 +386,8 @@ void dev_ram_init(struct machine *machine, uint64_t baseaddr, uint64_t length,
 #define	DEV_SCC_LENGTH			0x1000
 int dev_scc_access(struct cpu *cpu, struct memory *mem, uint64_t relative_addr,
 	unsigned char *data, size_t len, int writeflag, void *);
-int dev_scc_dma_func(struct cpu *cpu, void *extra, uint64_t addr,
-	size_t dma_len, int tx);
+void dev_scc_dma_tx(void *e, int ch);
+int dev_scc_dma_rx(void *e);
 void *dev_scc_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, char* irq_path, int use_fb, int scc_nr, int addrmul);
 

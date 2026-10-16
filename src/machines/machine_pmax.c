@@ -291,13 +291,13 @@ MACHINE_SETUP(pmax)
 
 		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn02ba.0x%x",
 		    machine->path, machine->bootstrap_cpu, KMIN_INT_TC3, KMIN_INTR_SCC_0);
-		dev_scc_init(machine, mem, 0x1c100000, tmpstr,
-		    machine->x11_md.in_use, 0, 1);
+		kmin_ioasic->scc[0] = dev_scc_init(machine, mem, 0x1c100000,
+		    tmpstr, machine->x11_md.in_use, 0, 1);
 
 		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn02ba.0x%x",
 		    machine->path, machine->bootstrap_cpu, KMIN_INT_TC3, KMIN_INTR_SCC_1);
-		dev_scc_init(machine, mem, 0x1c180000, tmpstr,
-		    machine->x11_md.in_use, 1, 1);
+		kmin_ioasic->scc[1] = dev_scc_init(machine, mem, 0x1c180000,
+		    tmpstr, machine->x11_md.in_use, 1, 1);
 
 
 		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn02ba.0x%x",

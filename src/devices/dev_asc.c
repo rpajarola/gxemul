@@ -362,10 +362,12 @@ fatal("TODO..............\n");
 				if (d->xferp->data_in_len > lenIn2) {
 					unsigned char *n;
 
-if (d->dma_controller != NULL)
-	printf("WARNING!!!!!!!!! BUG!!!! Unexpected stuff..."
-	    "lenIn2=%i d->xferp->data_in_len=%i\n", (int)lenIn2,
-	    (int)d->xferp->data_in_len);
+					/*  (Normal with an external DMA
+					    controller, which transfers
+					    up to the end of a page.)  */
+					debug("[ asc: data_in, %i of %i "
+					    "bytes ]\n", (int)lenIn2,
+					    (int)d->xferp->data_in_len);
 
 					all_done = 0;
 					/*  fatal("{ asc: multi-transfer"

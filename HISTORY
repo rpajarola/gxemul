@@ -5169,3 +5169,10 @@ Changelog for GXemul:
 		header area), so the KN02-BA PROM no longer reports a bad
 		option ROM in each empty slot. The 3MIN's option slots 1 and
 		2 are numbered 1 and 2 instead of 0, for their ROM images.
+		5000/1xx (3MIN): SCC DMA through the IOASIC (transmit and
+		receive, for channel B of each SCC), which Ultrix uses for
+		its serial console, so Ultrix 4.5's generic kernel boots to
+		multi-user. The SCC takes the receive interrupt mode from
+		each channel's own WR1, and gives no interrupt per character
+		in "special condition only" mode. Multi-page SCSI DMA no
+		longer prints a warning.

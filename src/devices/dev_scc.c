@@ -259,7 +259,7 @@ static void scc_wr0_command(struct scc_data *d, int port, int wr0)
 DEVICE_TICK(scc)
 {
 	struct scc_data *d = (struct scc_data *) extra;
-	int i;
+	int i, rxi;
 
 	/*  Add keystrokes to the rx queue:  */
 	if (d->scc_nr == 1) {
@@ -319,9 +319,12 @@ DEVICE_TICK(scc)
 				}
 			}
 
-			/*  RX interrupts?  */
-			if (d->scc_register_w[N_SCC_REGS + SCC_WR1] &
-			    (SCC_WR1_RXI_FIRST_CHAR | SCC_WR1_RXI_ALL_CHAR)) {
+			/*  RX interrupts? (Not in "special condition only"
+			    mode, which DMA receivers use.)  */
+			rxi = d->scc_register_w[i * N_SCC_REGS + SCC_WR1] &
+			    SCC_WR1_RXI_SPECIAL_O;
+			if (rxi == SCC_WR1_RXI_FIRST_CHAR ||
+			    rxi == SCC_WR1_RXI_ALL_CHAR) {
 				if (d->scc_register_r[i * N_SCC_REGS + SCC_RR0]
 				    & SCC_RR0_RX_AVAIL) {
 					if (i == SCC_CHANNEL_A)
@@ -332,34 +335,10 @@ DEVICE_TICK(scc)
 						    SCC_RR3] |= SCC_RR3_RX_IP_B;
 				}
 
-				if (d->scc_register_r[i * N_SCC_REGS + SCC_RR3]
-				    & SCC_RR3_RX_IP_A ||
-				    d->scc_register_r[i * N_SCC_REGS + SCC_RR3]
-				    & SCC_RR3_RX_IP_B) {
+				if (d->scc_register_r[N_SCC_REGS + SCC_RR3] &
+				    (i == SCC_CHANNEL_A? SCC_RR3_RX_IP_A :
+				    SCC_RR3_RX_IP_B))
 					INTERRUPT_ASSERT(d->irq);
-				}
-			}
-
-			if (d->scc_register_w[N_SCC_REGS + SCC_WR1] &
-			    SCC_WR1_DMA_MODE) {
-				if (d->scc_register_r[i * N_SCC_REGS + SCC_RR0]
-				    & SCC_RR0_RX_AVAIL) {
-					if (i == SCC_CHANNEL_A)
-						d->scc_register_r[N_SCC_REGS +
-						    SCC_RR3] |=
-						    SCC_RR3_EXT_IP_A;
-					else
-						d->scc_register_r[N_SCC_REGS +
-						    SCC_RR3] |=
-						    SCC_RR3_EXT_IP_B;
-				}
-
-				if (d->scc_register_r[i * N_SCC_REGS + SCC_RR3]
-				    & SCC_RR3_EXT_IP_A ||
-				    d->scc_register_r[i * N_SCC_REGS + SCC_RR3]
-				    & SCC_RR3_EXT_IP_B) {
-					INTERRUPT_ASSERT(d->irq);
-				}
 			}
 		}
 	}
@@ -367,59 +346,50 @@ DEVICE_TICK(scc)
 
 
 /*
- *  dev_scc_dma_func():
+ *  scc_tx():
+ *
+ *  Sends a character, which is sent at once, so the transmitter then
+ *  underruns (see scc_wr0_command()).
  */
-int dev_scc_dma_func(struct cpu *cpu, void *extra, uint64_t addr,
-	size_t dma_len, int tx)
+static void scc_tx(struct scc_data *d, int port, int ch)
 {
-	/*  printf("dev_scc_dma_func(): addr = %08x, len = %i\n",
-	    (int)addr, (int)dma_len);  */
-	unsigned char word[4];
-	struct scc_data *d = (struct scc_data *) extra;
-	int n;
+	lk201_tx_data(&d->lk201, d->scc_nr * 2 + port, ch);
 
-	int port = SCC_CHANNEL_A;	/*  TODO  */
+	d->scc_register_r[port * N_SCC_REGS + SCC_RR0] |= SCC_RR0_TX_UNDERRUN;
 
-	if (tx) {
-		do {
-			cpu->memory_rw(cpu, cpu->mem, addr, &word[0],
-			    sizeof(word), MEM_READ, NO_EXCEPTIONS | PHYSICAL);
-
-			lk201_tx_data(&d->lk201, d->scc_nr * 2 + port, word[1]);
-			/*  Loopback:  */
-			if (d->scc_register_w[port * N_SCC_REGS + SCC_WR14]
-			    & SCC_WR14_LOCAL_LOOPB)
-				rx_enqueue(d, port, word[1]);
-
-			addr += sizeof(word);
-		} while ((addr & 0xffc) != 0);
-
-		dev_scc_tick(cpu, extra);
-		return 1;
-	} else {
-		printf("dev_scc_dma_func(): addr = %08x, len = %i\n",
-		    (int)addr, (int)dma_len);
+	/*  Loopback:  */
+	if (d->scc_register_w[port * N_SCC_REGS + SCC_WR14] &
+	    SCC_WR14_LOCAL_LOOPB)
+		rx_enqueue(d, port, ch);
+}
 
 
-/*  TODO: all this is just nonsense  */
+/*
+ *  dev_scc_dma_tx(), dev_scc_dma_rx():
+ *
+ *  Transmit a character, or take the next received character (-1 if there
+ *  is none), for an IOASIC DMA channel. The IOASIC's SCC DMA channels are
+ *  connected to channel B of each SCC (the communication port of SCC 0,
+ *  and the printer/console port of SCC 1 on the 5000/1xx).
+ */
+void dev_scc_dma_tx(void *e, int ch)
+{
+	scc_tx((struct scc_data *) e, SCC_CHANNEL_B, ch);
+}
 
-		n = 0;
-		while (rx_avail(d, port)) {
-			word[0] = word[1] = word[2] = word[3] = 0;
-			word[0] = word[1] = word[2] = word[3] =
-			    rx_nextchar(d, port);
-			n++;
-			cpu->memory_rw(cpu, cpu->mem, addr, &word[0],
-			    sizeof(word), MEM_WRITE, NO_EXCEPTIONS | PHYSICAL);
+int dev_scc_dma_rx(void *e)
+{
+	struct scc_data *d = (struct scc_data *) e;
+	int ch;
 
-			addr += sizeof(word);
-			/*  Half-page?  */
-			if ((addr & 0x7fc) == 0)
-				break;
-		}
-		dev_scc_tick(cpu, extra);
-		return n*4;
-	}
+	if (!rx_avail(d, SCC_CHANNEL_B))
+		return -1;
+
+	ch = rx_nextchar(d, SCC_CHANNEL_B);
+	if (!rx_avail(d, SCC_CHANNEL_B))
+		scc_clear_ip(d, SCC_RR3_RX_IP_B);
+
+	return ch;
 }
 
 
@@ -571,18 +541,7 @@ DEVICE_ACCESS(scc)
 			    "0x%08x ]\n", port, (long)relative_addr,
 			    (int)idata);  */
 
-			/*  Send the character:  */
-			lk201_tx_data(&d->lk201, d->scc_nr * 2 + port, idata);
-
-			/*  It is sent at once, so the transmitter then
-			    underruns (see scc_wr0_command()):  */
-			d->scc_register_r[port * N_SCC_REGS + SCC_RR0] |=
-			    SCC_RR0_TX_UNDERRUN;
-
-			/*  Loopback:  */
-			if (d->scc_register_w[port * N_SCC_REGS + SCC_WR14]
-			    & SCC_WR14_LOCAL_LOOPB)
-				rx_enqueue(d, port, idata);
+			scc_tx(d, port, idata);
 
 			/*  TX interrupt:  */
 			if (d->scc_register_w[port * N_SCC_REGS + SCC_WR9] &
