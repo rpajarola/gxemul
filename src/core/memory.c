@@ -32,7 +32,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/mman.h>
+#endif
 
 #include "cpu.h"
 #include "machine.h"

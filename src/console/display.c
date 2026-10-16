@@ -386,9 +386,31 @@ static char *capture_name(const char *extension)
 }
 
 
+/*
+ *  ffmpeg runs through the shell (cmd.exe on Windows), which is sent the
+ *  raw image data through a pipe.  File names are quoted with QUOTE.
+ */
+#ifdef _WIN32
+#define	QUOTE		"\""
+#define	PIPE_WRITE	"wb"
+#define	FIND_FFMPEG	"where ffmpeg >NUL 2>&1"
+#else
+#define	QUOTE		"'"
+#define	PIPE_WRITE	"w"
+#define	FIND_FFMPEG	"command -v ffmpeg >/dev/null 2>&1"
+#endif
+
 static bool have_ffmpeg(void)
 {
-	return system("command -v ffmpeg >/dev/null 2>&1") == 0;
+	return system(FIND_FFMPEG) == 0;
+}
+
+
+static void ignore_sigpipe(void)
+{
+#ifdef SIGPIPE
+	signal(SIGPIPE, SIG_IGN);
+#endif
 }
 
 
@@ -448,7 +470,7 @@ int display_screenshot(struct machine *m, const char *file)
 	bool ffmpeg = have_ffmpeg();
 	char *name = file != NULL ? strdup(file) :
 	    capture_name(ffmpeg ? "png" : "ppm");
-	if (strchr(name, '\'') != NULL) {
+	if (strchr(name, QUOTE[0]) != NULL) {
 		printf("file names with quotes are not supported\n");
 		free(rgb);
 		free(name);
@@ -459,9 +481,9 @@ int display_screenshot(struct machine *m, const char *file)
 		char cmd[1024];
 		snprintf(cmd, sizeof(cmd), "ffmpeg -loglevel error -y"
 		    " -f rawvideo -pixel_format rgb24 -video_size %dx%d -i -"
-		    " -frames:v 1 -update 1 '%s'", w, h, name);
-		signal(SIGPIPE, SIG_IGN);
-		FILE *f = popen(cmd, "w");
+		    " -frames:v 1 -update 1 " QUOTE "%s" QUOTE, w, h, name);
+		ignore_sigpipe();
+		FILE *f = popen(cmd, PIPE_WRITE);
 		ok = f != NULL &&
 		    fwrite(rgb, (size_t) w * 3, h, f) == (size_t) h;
 		if (f != NULL && pclose(f) != 0)
@@ -546,7 +568,7 @@ int display_video_start(struct machine *m, const char *file)
 	free(rgb);
 
 	char *name = file != NULL ? strdup(file) : capture_name("mp4");
-	if (strchr(name, '\'') != NULL) {
+	if (strchr(name, QUOTE[0]) != NULL) {
 		printf("file names with quotes are not supported\n");
 		free(name);
 		return -1;
@@ -557,11 +579,11 @@ int display_video_start(struct machine *m, const char *file)
 	snprintf(cmd, sizeof(cmd), "ffmpeg -loglevel error -y"
 	    " -f rawvideo -pixel_format rgb24 -video_size %dx%d"
 	    " -framerate %d -i -"
-	    " -vf 'pad=ceil(iw/2)*2:ceil(ih/2)*2'"
-	    " -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p '%s'",
-	    video_width, video_height, VIDEO_FPS, name);
-	signal(SIGPIPE, SIG_IGN);
-	if ((video_pipe = popen(cmd, "w")) == NULL) {
+	    " -vf " QUOTE "pad=ceil(iw/2)*2:ceil(ih/2)*2" QUOTE
+	    " -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p "
+	    QUOTE "%s" QUOTE, video_width, video_height, VIDEO_FPS, name);
+	ignore_sigpipe();
+	if ((video_pipe = popen(cmd, PIPE_WRITE)) == NULL) {
 		printf("couldn't start ffmpeg\n");
 		free(name);
 		return -1;

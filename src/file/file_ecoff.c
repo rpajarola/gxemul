@@ -32,7 +32,11 @@
 
 
 #include "thirdparty/exec_ecoff.h"
+#ifdef _WIN32
+#include <winsock2.h>
+#else
 #include <netinet/in.h>
+#endif
 
 
 /*  Special symbol format used by Microsoft-ish COFF files:  */

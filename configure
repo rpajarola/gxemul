@@ -338,6 +338,19 @@ rm -f _test.sh
 echo "$CC $CFLAGS"
 
 
+#  Windows (mingw-w64)?
+printf "checking for Windows... "
+printf "#ifndef _WIN32\n#error not Windows\n#endif\nint x;\n" > _testwin.c
+if $CC $CFLAGS -c _testwin.c -o _testwin.o 2> /dev/null; then
+	WINDOWS=YES
+	OTHERLIBS="$OTHERLIBS -lws2_32"
+	printf "yes\n"
+else
+	printf "no\n"
+fi
+rm -f _testwin.c _testwin.o
+
+
 if [ z"$DEBUG" != zYES ]; then
 	CFLAGS="-DNDEBUG $CFLAGS"
 fi
@@ -756,6 +769,9 @@ rm -f _tests.c _tests.o _tests _tests$EXEEXT
 #  MAP_ANON missing? (On some HP-UX systems? Use MAP_ANONYMOUS instead.)
 printf "checking for MAP_ANON... "
 rm -f _tests _tests$EXEEXT
+if [ z$WINDOWS = zYES ]; then
+	printf "not needed (Windows)\n"
+else
 printf "#include <stdio.h>
 #include <sys/types.h>
 #include <sys/mman.h>
@@ -781,6 +797,7 @@ int main(int argc, char *argv[])
 	fi
 else
 	printf "yes\n"
+fi
 fi
 rm -f _tests.c _tests.o _tests _tests$EXEEXT
 

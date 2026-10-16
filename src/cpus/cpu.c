@@ -31,7 +31,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/mman.h>
+#endif
 #include <string.h>
 
 #include "cpu.h"

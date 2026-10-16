@@ -48,8 +48,12 @@
 #include "emul.h"
 #include "machine.h"
 #include "memory.h"
-#include "netinet/in.h"
-#include "unistd.h"
+#include <unistd.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <netinet/in.h>
+#endif
 
 #include "thirdparty/bootblock.h"
 

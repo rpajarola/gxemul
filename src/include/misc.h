@@ -45,6 +45,8 @@
 
 #include "../../config.h"
 
+#include "compat_win32.h"
+
 /*  A display backend (src/console/display_sdl.c) shows framebuffers:  */
 #ifdef WITH_SDL
 #define	WITH_DISPLAY
