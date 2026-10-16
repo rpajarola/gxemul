@@ -32,7 +32,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libx11-dev dpkg-dev
+          sudo apt-get install -y build-essential pkg-config libsdl2-dev dpkg-dev
           case "$(uname -m)" in
             x86_64) arch=x86_64 ;;
             aarch64) arch=arm64 ;;
@@ -53,7 +53,7 @@ jobs:
         with:
           ref: ${{ env.TAG }}
       - name: Install build dependencies
-        run: brew install pkgconf libx11
+        run: brew install pkgconf sdl2
       - name: Build
         run: VERSION="${TAG#v}" packaging/build-pkg.sh
       - name: Attach to the release

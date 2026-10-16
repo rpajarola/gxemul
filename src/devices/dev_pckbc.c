@@ -633,7 +633,7 @@ DEVICE_TICK(pckbc)
 
 	// Mouse input:
 	/*  Don't do mouse updates if we're running in serial console mode:  */
-	if (cpu->machine->x11_md.in_use && d->state[1] == STATE_NORMAL && d->scanning_enabled[1]) {
+	if (cpu->machine->display_md.in_use && d->state[1] == STATE_NORMAL && d->scanning_enabled[1]) {
 		int xdelta, ydelta, mouse_buttons, mouse_fb_nr;
 		console_getmouse(&xdelta, &ydelta, &mouse_buttons, &mouse_fb_nr);
 

@@ -55,10 +55,6 @@ struct memory;
 struct pci_data;
 struct timer;
 
-/* #ifdef WITH_X11
-#include <X11/Xlib.h>
-#endif */
-
 /*  dev_8259.c:  */
 struct pic8259_data {
 	struct interrupt irq;
@@ -225,7 +221,7 @@ struct vfb_data {
 	int		visible_ysize;
 
 	size_t		framebuffer_size;
-	int		x11_xsize, x11_ysize;
+	int		win_xsize, win_ysize;	/*  window size  */
 
 	int		update_x1, update_y1, update_x2, update_y2;
 

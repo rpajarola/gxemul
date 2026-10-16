@@ -655,7 +655,7 @@ DEVICE_ACCESS(luna88k)
 	case OBIO_PIO0A:	/*  0x49000000: PIO-0 port A  */
 		/*  OpenBSD reads dipswitch settings from PIO0A and B.  */
 		odata = 0;	// high byte
-		if (cpu->machine->x11_md.in_use)
+		if (cpu->machine->display_md.in_use)
 			odata |= 0x40;
 		odata |= 0x80;	// multi-user mode
 		odata |= 0x20;	// don't ask name
@@ -1022,7 +1022,7 @@ DEVINIT(luna88k)
 	snprintf(n, sizeof(n), "mb89352 addr=0xE1000000 irq=%s.luna88k.3", devinit->interrupt_path);
 	device_add(devinit->machine, n);
 
-	if (devinit->machine->x11_md.in_use) {
+	if (devinit->machine->display_md.in_use) {
 		d->using_framebuffer = true;
 		device_add(devinit->machine, "lunafb addr=0xB1000000");
 	}

@@ -973,7 +973,7 @@ struct of_data *of_emul_init(struct machine *machine, struct vfb_data *vfb_data,
 	devstdin  = of_add_device(ofd, "stdin", "/io");
 	devstdout = of_add_device(ofd, "stdout", "/io");
 
-	if (machine->x11_md.in_use) {
+	if (machine->display_md.in_use) {
 		fatal("!\n!  TODO: keyboard + framebuffer for MacPPC\n!\n");
 
 		of_add_prop_str(machine, ofd, "/io/stdin", "name",

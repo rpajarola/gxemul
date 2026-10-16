@@ -51,15 +51,15 @@ macOS (`.pkg`):
 
 ```
 /usr/local/bin/gxemul
-/usr/local/lib/gxemul/               # libX11 and the libraries it needs, from Homebrew
+/usr/local/lib/gxemul/               # SDL2 and the libraries it needs, from Homebrew
 /usr/local/share/man/man1/gxemul.1
 /usr/local/share/doc/gxemul/
 /usr/local/share/gxemul/uninstall.sh
 ```
 
 The package runs without Homebrew: `packaging/bundle-dylibs.sh` copies
-libX11 and the libraries it needs into it. Framebuffers need an X
-server, such as XQuartz. It is built for the Mac's architecture (Apple
+SDL2 and the libraries it needs into it (Homebrew's SDL2 is sdl2-compat,
+which uses SDL3, so `build-pkg.sh` adds that as well). It is built for the Mac's architecture (Apple
 silicon in CI); on Intel Macs, use Homebrew. Remove it with
 `sudo /usr/local/share/gxemul/uninstall.sh`.
 
@@ -68,14 +68,14 @@ silicon in CI); on Intel Macs, use Homebrew. Remove it with
 Debian or Ubuntu:
 
 ```
-sudo apt install build-essential pkg-config libx11-dev dpkg-dev
+sudo apt install build-essential pkg-config libsdl2-dev dpkg-dev
 packaging/build-deb.sh      # dist/gxemul-rp_<version>_<arch>.deb
 ```
 
 macOS:
 
 ```
-brew install pkgconf libx11
+brew install pkgconf sdl2
 packaging/build-pkg.sh      # dist/gxemul-rp-<version>-<arch>.pkg
 ```
 

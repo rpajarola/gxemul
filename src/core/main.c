@@ -69,33 +69,6 @@ static bool skip_srandom_call = false;
 
 
 /*
- *  internal_w():
- *
- *  For internal use by gxemul itself. Currently only used to launch
- *  slave consoles.
- */
-void internal_w(char *arg)
-{
-	if (arg == NULL || strncmp(arg, "W@", 2) != 0) {
-		fprintf(stderr, "-W is for internal use by gxemul,"
-		    " not for manual use.\n");
-		exit(1);
-	}
-
-	arg += 2;
-
-	switch (arg[0]) {
-	case 'S':
-		console_slave(arg + 1);
-		break;
-	default:
-		fprintf(stderr, "internal_w(): UNIMPLEMENTED arg = '%s'\n",
-		    arg);
-	}
-}
-
-
-/*
  *  print_banner():
  *
  *  Prints program startup banner to stdout.
@@ -210,16 +183,13 @@ static void usage(bool longusage)
 	printf("                o    overwrite instead of append\n");
 	printf("  -T        halt on non-existant memory accesses\n");
 	printf("  -t        show function trace tree\n");
-#ifdef WITH_X11
-	printf("  -X        use X11\n");
+#ifdef WITH_DISPLAY
+	printf("  -X        show framebuffers in windows\n");
 	printf("  -Y n      scale down framebuffer windows by n x n times\n");
-#endif /*  WITH_X11  */
+#endif /*  WITH_DISPLAY  */
 	printf("  -Z n      set nr of graphics cards, for emulating a "
 	    "dual-head or tripple-head\n"
 	    "            environment (only for DECstation emulation)\n");
-#ifdef WITH_X11
-	printf("  -z disp   add disp as an X11 display to use for framebuffers\n");
-#endif /*  WITH_X11  */
 
 	printf("\nGeneral options:\n");
 	printf("  -A        disable colorized output\n");
@@ -237,11 +207,10 @@ static void usage(bool longusage)
 	printf("  -q        quiet mode (don't print startup messages)\n");
 	printf("  -V        start up in the interactive debugger, paused; this also sets -K\n");
 	printf("  -v        increase debug message verbosity\n");
-#ifdef WITH_X11
-	printf("  -x        open up new xterms for emulated serial ports (default is on when\n"
-	       "            using configuration files with multiple machines specified, or\n"
-	       "            when X11 is used, off otherwise)\n");
-#endif /*  WITH_X11  */
+	printf("  -x        give each emulated serial port a TCP port on localhost, from\n"
+	       "            4000 and up, to connect to with telnet (default is on when\n"
+	       "            using configuration files with multiple machines specified,\n"
+	       "            or when -X is used, off otherwise)\n");
 	printf("\n");
 	printf("If you are selecting a machine type to emulate directly "
 	    "on the command line,\nthen you must specify one or more names"
@@ -280,9 +249,9 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 	struct machine *m = emul_add_machine(emul, NULL);
 
 	const char *opts =
-	    "AC:c:Dd:E:e:GHhI:iJj:k:KL:M:Nn:Oo:p:QqRrSs:TtVvW:"
-#ifdef WITH_X11
-	    "XxY:"
+	    "AC:c:Dd:E:e:GHhI:iJj:k:KL:M:Nn:Oo:p:QqRrSs:TtVvx"
+#ifdef WITH_DISPLAY
+	    "XY:"
 #endif
 	    "Z:z:";
 
@@ -434,23 +403,20 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 		case 'v':
 			verbose ++;
 			break;
-		case 'W':
-			internal_w(optarg);
-			exit(0);
 		case 'X':
-			m->x11_md.in_use = 1;
+			m->display_md.in_use = 1;
 			machine_specific_options_used = true;
 			/*  FALL-THROUGH  */
 		case 'x':
 			console_allow_slaves(1);
 			break;
 		case 'Y':
-			m->x11_md.scaledown = atoi(optarg);
-			if (m->x11_md.scaledown < -1) {
-				m->x11_md.scaleup = - m->x11_md.scaledown;
-				m->x11_md.scaledown = 1;
+			m->display_md.scaledown = atoi(optarg);
+			if (m->display_md.scaledown < -1) {
+				m->display_md.scaleup = - m->display_md.scaledown;
+				m->display_md.scaledown = 1;
 			}
-			if (m->x11_md.scaledown < 1) {
+			if (m->display_md.scaledown < 1) {
 				fprintf(stderr, "Invalid scaledown value.\n");
 				exit(1);
 			}
@@ -462,12 +428,12 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			machine_specific_options_used = true;
 			break;
 		case 'z':
-			m->x11_md.n_display_names ++;
-			CHECK_ALLOCATION(m->x11_md.display_names = (char **) realloc(
-			    m->x11_md.display_names,
-			    m->x11_md.n_display_names * sizeof(char *)));
-			CHECK_ALLOCATION(m->x11_md.display_names[
-			    m->x11_md.n_display_names-1] = strdup(optarg));
+			m->display_md.n_display_names ++;
+			CHECK_ALLOCATION(m->display_md.display_names = (char **) realloc(
+			    m->display_md.display_names,
+			    m->display_md.n_display_names * sizeof(char *)));
+			CHECK_ALLOCATION(m->display_md.display_names[
+			    m->display_md.n_display_names-1] = strdup(optarg));
 			machine_specific_options_used = true;
 			break;
 		default:
@@ -566,7 +532,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 		exit(1);
 	}
 
-	if (!using_switch_Z && !m->x11_md.in_use)
+	if (!using_switch_Z && !m->display_md.in_use)
 		m->n_gfx_cards = 0;
 
 	return 0;

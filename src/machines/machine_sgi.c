@@ -124,7 +124,7 @@ MACHINE_SETUP(sgi)
 		fatal("TODO ip19 interrupt rewrite\n");
 		abort();
 		//dev_scc_init(machine, mem, 0x10086000, 0,
-		//    machine->x11_md.in_use, 0, 8);	/*  serial? irix?  */
+		//    machine->display_md.in_use, 0, 8);	/*  serial? irix?  */
 
 		device_add(machine, "sgi_ip19 addr=0x18000000");
 
@@ -274,10 +274,10 @@ abort();
 fatal("TODO: legacy rewrite\n");
 abort();
 //		j = dev_pckbc_init(machine, mem, 0x1fbd9840, PCKBC_8242,
-//		    0, 0, machine->x11_md.in_use, 0);  /*  TODO: irq numbers  */
+//		    0, 0, machine->display_md.in_use, 0);  /*  TODO: irq numbers  */
 j = 0;
 
-		if (machine->x11_md.in_use)
+		if (machine->display_md.in_use)
 			machine->main_console_handle = j;
 
 		/*  sq0: Ethernet.  TODO:  This should have irq_nr = 8 + 3  */
@@ -312,7 +312,7 @@ j = 0;
 		fatal("TODO ip25 interrupt rewrite\n");
 		abort();
 		//dev_scc_init(machine, mem,
-		//    0x400086000ULL, 0, machine->x11_md.in_use, 0, 8);
+		//    0x400086000ULL, 0, machine->display_md.in_use, 0, 8);
 
 		/*  NOTE: ip19! (perhaps not really the same  */
 		device_add(machine, "sgi_ip19 addr=0x18000000");
@@ -394,7 +394,7 @@ j = 0;
 		snprintf(tmpstr, sizeof(tmpstr), "ns16550 irq=%s.cpu[%i].2 addr="
 		    "0x1f620170 name2=tty0 in_use=%i",
 		    machine->path, machine->bootstrap_cpu,
-		    machine->x11_md.in_use? 0 : 1);
+		    machine->display_md.in_use? 0 : 1);
 		machine->main_console_handle = (size_t)device_add(machine,
 		    tmpstr);
 		snprintf(tmpstr, sizeof(tmpstr), "ns16550 irq=%s.cpu[%i].2 addr="
@@ -445,7 +445,7 @@ j = 0;
 		/*  Connect CRIME (Interrupt Controller) to MIPS irq 2:  */
 		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].2",
 		    machine->path, machine->bootstrap_cpu);
-		dev_crime_init(machine, mem, 0x14000000, tmpstr, machine->x11_md.in_use);
+		dev_crime_init(machine, mem, 0x14000000, tmpstr, machine->display_md.in_use);
 
 		/*  Rendering Engine  */
 		dev_sgi_re_init(machine, mem, 0x15000000);
@@ -513,7 +513,7 @@ j = 0;
 		    "ns16550 irq=%s.cpu[%i].2.crime.0x%x.mace.%i addr="
 		    "0x1f390000 addr_mult=0x100 in_use=%i name2=tty0",
 		    machine->path, machine->bootstrap_cpu,
-		    CRIME_INT_PERIPH_SERIAL, 20, machine->x11_md.in_use? 0 : 1);
+		    CRIME_INT_PERIPH_SERIAL, 20, machine->display_md.in_use? 0 : 1);
 		j = (size_t)device_add(machine, tmpstr);
 		snprintf(tmpstr, sizeof(tmpstr),
 		    "ns16550 irq=%s.cpu[%i].2.crime.0x%x.mace.%i addr="
@@ -540,10 +540,10 @@ j = 0;
 
 			i = dev_pckbc_init(machine, mem, 0x1f320000,
 			    PCKBC_8242, tmpstr1,
-			    tmpstr2, machine->x11_md.in_use,
+			    tmpstr2, machine->display_md.in_use,
 			    0);
 
-			if (machine->x11_md.in_use)
+			if (machine->display_md.in_use)
 				machine->main_console_handle = i;
 		}
 

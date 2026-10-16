@@ -35,11 +35,13 @@
  *  allowed. As long as the number of input streams is <= 1, then everything
  *  can be done in the emulator's default terminal window.
  *
- *  If the number of inputs is more than 1, it is necessary to open up slave
- *  xterm windows for each input. (Otherwise the behaviour is undefined; i.e.
- *  which of two emulated serial controllers would get keyboard input?)
+ *  If the number of inputs is more than 1, each input needs a terminal of
+ *  its own. (Otherwise the behaviour is undefined; i.e. which of two
+ *  emulated serial controllers would get keyboard input?) With the -x
+ *  command line option, each console handle except the main one listens on
+ *  a TCP port on localhost, which can be connected to with telnet.
  *
- *  (If the -x command line option is NOT used, then slaves are not opened up.
+ *  (If the -x command line option is NOT used, then no ports are opened.
  *  Instead, a warning message is printed, and input is not allowed.)
  *
  *  Note that console handles that _allow_ input but are not yet used for
@@ -48,7 +50,8 @@
  *  to run in the default terminal window as long as only one of those serial
  *  ports is actually used.
  *
- *  xterms are opened up "on demand", when output is sent to them.
+ *  Output that arrives while nothing is connected to a port is kept (up to
+ *  CONSOLE_BACKLOG_LEN bytes), and sent when a connection is made.
  *
  *  The MAIN console handle (fixed as handle nr 0) is the one used by the
  *  default terminal window. A machine which registers a serial controller,
@@ -61,6 +64,7 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,6 +74,9 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <time.h>
 
 #include "console.h"
@@ -86,15 +93,14 @@ extern struct settings *global_settings;
 static struct termios console_oldtermios;
 static struct termios console_curtermios;
 
-/*  For 'slave' mode:  */
-static struct termios console_slave_tios;
-static int console_slave_outputd;
-
 static int console_initialized = 0;
 static struct settings *console_settings = NULL;
 static int console_stdout_pending;
 
 #define	CONSOLE_FIFO_LEN	4096
+#define	CONSOLE_BACKLOG_LEN	65536
+
+#define	DEFAULT_TELNET_PORT	4000
 
 static struct timeval console_mouse_lastupdate;
 static int console_mouse_dx;		/*  relative since last call  */
@@ -104,29 +110,53 @@ static int console_mouse_fb_nr;		/*  framebuffer number of
 static int console_mouse_buttons;	/*  left=4, middle=2, right=1  */
 
 static int allow_slaves = 0;
+static int telnet_port = DEFAULT_TELNET_PORT;	/*  the next port to try  */
 
 struct console_handle {
 	int		in_use;
 	int		in_use_for_input;
-	int		using_xterm;
+	int		using_telnet;
 	int		inputonly;
 	int		outputonly;
 	int		warning_printed;
 
+	struct machine	*machine;
 	char		*machine_name;
 	char		*name;
 
-	int		w_descriptor;
-	int		r_descriptor;
+	/*  When using_telnet:  */
+	int		port;
+	int		listen_fd;
+	int		client_fd;	/*  -1 if nothing is connected  */
+	int		telnet_state;
+	int		last_input;
+
+	/*  Output not yet sent to the client:  */
+	unsigned char	*backlog;
+	int		backlog_head;
+	int		backlog_len;
 
 	unsigned char	fifo[CONSOLE_FIFO_LEN];
 	int		fifo_head;
 	int		fifo_tail;
 };
 
-#define	NOT_USING_XTERM				0
-#define	USING_XTERM_BUT_NOT_YET_OPEN		1
-#define	USING_XTERM				2
+/*  Telnet protocol (RFC 854):  */
+#define	TELNET_SE		240
+#define	TELNET_IP		244
+#define	TELNET_SB		250
+#define	TELNET_WILL		251
+#define	TELNET_WONT		252
+#define	TELNET_DO		253
+#define	TELNET_DONT		254
+#define	TELNET_IAC		255
+#define	TELNET_OPT_ECHO		1
+#define	TELNET_OPT_SGA		3
+
+enum telnet_state {
+	TELNET_DATA, TELNET_GOT_IAC, TELNET_GOT_WILL, TELNET_GOT_WONT,
+	TELNET_GOT_DO, TELNET_GOT_DONT, TELNET_IN_SB, TELNET_IN_SB_GOT_IAC
+};
 
 /*  A simple array of console_handles  */
 static struct console_handle *console_handles = NULL;
@@ -172,102 +202,344 @@ void console_sigcont(int x)
 
 
 /*
- *  start_xterm():
+ *  telnet_listen():
  *
- *  When using X11 (well, when allow_slaves is set), this routine tries to
- *  start up an xterm, with another copy of gxemul inside. The other gxemul
- *  copy is given arguments that will cause it to run console_slave().
- *
- *  TODO: This is ugly and hardcoded. Clean it up.
+ *  Starts listening on a TCP port on localhost for a console handle, using
+ *  the first free port from telnet_port and up.
  */
-static void start_xterm(int handle)
+static void telnet_listen(int handle)
 {
-	int filedes[2];
-	int filedesB[2];
-	int res;
-	size_t mlen;
-	char **a;
-	pid_t p;
+	struct console_handle *chp = &console_handles[handle];
+	struct sockaddr_in sin;
+	int one = 1;
 
-	res = pipe(filedes);
-	if (res) {
-		printf("[ start_xterm(): pipe(): %i ]\n", errno);
+	chp->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (chp->listen_fd < 0) {
+		perror("console: socket");
 		exit(1);
 	}
 
-	res = pipe(filedesB);
-	if (res) {
-		printf("[ start_xterm(): pipe(): %i ]\n", errno);
-		exit(1);
-	}
+	setsockopt(chp->listen_fd, SOL_SOCKET, SO_REUSEADDR,
+	    (void *) &one, sizeof(one));
 
-	/*  printf("filedes = %i,%i\n", filedes[0], filedes[1]);  */
-	/*  printf("filedesB = %i,%i\n", filedesB[0], filedesB[1]);  */
+	for (;;) {
+		memset(&sin, 0, sizeof(sin));
+		sin.sin_family = AF_INET;
+		sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		sin.sin_port = htons(telnet_port);
 
-	/*  NOTE/warning: Hardcoded max nr of args!  */
-	CHECK_ALLOCATION(a = (char **) malloc(sizeof(char *) * 20));
+		if (bind(chp->listen_fd, (struct sockaddr *) &sin,
+		    sizeof(sin)) == 0)
+			break;
 
-	a[0] = getenv("XTERM");
-	if (a[0] == NULL)
-		a[0] = strdup("xterm");
-	a[1] = strdup("-geometry");
-	a[2] = strdup("80x25");
-	a[3] = strdup("-title");
-	mlen = strlen(console_handles[handle].name) +
-	    strlen(console_handles[handle].machine_name) + 30;
-	CHECK_ALLOCATION(a[4] = (char *) malloc(mlen));
-	snprintf(a[4], mlen, "GXemul: %s %s",
-	    console_handles[handle].machine_name,
-	    console_handles[handle].name);
-	a[5] = strdup("-e");
-	a[6] = progname;
-	CHECK_ALLOCATION(a[7] = (char *) malloc(80));
-	snprintf(a[7], 80, "-WW@S%i,%i", filedes[0], filedesB[1]);
-	a[8] = NULL;
-
-	p = fork();
-	if (p == -1) {
-		printf("[ start_xterm(): ERROR while trying to "
-		    "fork(): %i ]\n", errno);
-		exit(1);
-	} else if (p == 0) {
-		close(filedes[1]);
-		close(filedesB[0]);
-
-		p = setsid();
-		if (p < 0)
-			printf("[ start_xterm(): ERROR while trying "
-			    "to do a setsid(): %i ]\n", errno);
-
-		res = execvp(a[0], a);
-		printf("[ start_xterm(): ERROR while trying to "
-		    "execvp(\"");
-		while (a[0] != NULL) {
-			printf("%s", a[0]);
-			if (a[1] != NULL)
-				printf(" ");
-			a++;
+		if (errno != EADDRINUSE || telnet_port >= 65535) {
+			fprintf(stderr, "console: can't listen on port %i: "
+			    "%s\n", telnet_port, strerror(errno));
+			exit(1);
 		}
-		printf("\"): %i ]\n", errno);
-		if (errno == ENOENT)
-			printf("[ Most probably you don't have xterm"
-			    " in your PATH. Try again. ]\n");
+
+		telnet_port ++;
+	}
+
+	if (listen(chp->listen_fd, 1) < 0) {
+		perror("console: listen");
 		exit(1);
 	}
 
-	/*  TODO: free a and a[*]  */
+	fcntl(chp->listen_fd, F_SETFL, O_NONBLOCK);
 
-	close(filedes[0]);
-	close(filedesB[1]);
+	chp->port = telnet_port ++;
+	chp->client_fd = -1;
+	CHECK_ALLOCATION(chp->backlog = (unsigned char *)
+	    malloc(CONSOLE_BACKLOG_LEN));
+	chp->backlog_head = chp->backlog_len = 0;
+	chp->using_telnet = 1;
+}
 
-	console_handles[handle].using_xterm = USING_XTERM;
 
-	/*
-	 *  write to filedes[1], read from filedesB[0]
-	 */
+/*
+ *  telnet_show_ports():
+ *
+ *  Tells the user which port to connect to for which console.
+ */
+static void telnet_show_ports(struct emul *emul)
+{
+	for (int i = 0; i < n_console_handles; i++) {
+		struct console_handle *chp = &console_handles[i];
+		struct machine *m = chp->machine;
 
-	console_handles[handle].w_descriptor = filedes[1];
-	console_handles[handle].r_descriptor = filedesB[0];
+		if (!chp->in_use || !chp->using_telnet)
+			continue;
+
+		printf("[ telnet localhost %i: ", chp->port);
+		if (emul->n_machines > 1 && m != NULL && m->name != NULL)
+			printf("%s, ", m->name);
+		printf("%s", chp->name);
+		if (m != NULL && m->main_console_handle == i)
+			printf(" (main console)");
+		else if (chp->outputonly)
+			printf(" (output only)");
+		printf(" ]\n");
+	}
+}
+
+
+static void telnet_send(int fd, const unsigned char *buf, int len)
+{
+#ifdef MSG_NOSIGNAL
+	int flags = MSG_NOSIGNAL;
+#else
+	int flags = 0;
+#endif
+
+	/*  Errors show up as a disconnect when reading or flushing.  */
+	(void) send(fd, (const char *) buf, len, flags);
+}
+
+
+static void telnet_disconnect(int handle)
+{
+	struct console_handle *chp = &console_handles[handle];
+
+	close(chp->client_fd);
+	chp->client_fd = -1;
+}
+
+
+/*
+ *  telnet_flush_backlog():
+ *
+ *  Sends as much of the pending output as the client accepts.
+ */
+static void telnet_flush_backlog(int handle)
+{
+	struct console_handle *chp = &console_handles[handle];
+#ifdef MSG_NOSIGNAL
+	int flags = MSG_NOSIGNAL;
+#else
+	int flags = 0;
+#endif
+
+	while (chp->client_fd >= 0 && chp->backlog_len > 0) {
+		int start = (chp->backlog_head - chp->backlog_len +
+		    CONSOLE_BACKLOG_LEN) % CONSOLE_BACKLOG_LEN;
+		int len = chp->backlog_len;
+		ssize_t res;
+
+		if (start + len > CONSOLE_BACKLOG_LEN)
+			len = CONSOLE_BACKLOG_LEN - start;
+
+		res = send(chp->client_fd, (const char *) chp->backlog + start,
+		    len, flags);
+		if (res < 0) {
+			if (errno != EAGAIN && errno != EWOULDBLOCK &&
+			    errno != EINTR)
+				telnet_disconnect(handle);
+			return;
+		}
+
+		chp->backlog_len -= res;
+	}
+}
+
+
+/*
+ *  telnet_accept():
+ *
+ *  Accepts a new connection to a console handle's port, if there is one.
+ *  Only one connection at a time is allowed.
+ */
+static void telnet_accept(int handle)
+{
+	static const unsigned char negotiate[] = {
+		TELNET_IAC, TELNET_WILL, TELNET_OPT_ECHO,
+		TELNET_IAC, TELNET_WILL, TELNET_OPT_SGA
+	};
+	struct console_handle *chp = &console_handles[handle];
+	int fd, one = 1;
+
+	fd = accept(chp->listen_fd, NULL, NULL);
+	if (fd < 0)
+		return;
+
+#ifdef SO_NOSIGPIPE
+	setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, (void *) &one, sizeof(one));
+#endif
+	(void) one;
+
+	if (chp->client_fd >= 0) {
+		static const char busy[] = "Already in use.\r\n";
+		telnet_send(fd, (const unsigned char *) busy,
+		    sizeof(busy) - 1);
+		close(fd);
+		return;
+	}
+
+	fcntl(fd, F_SETFL, O_NONBLOCK);
+
+	chp->client_fd = fd;
+	chp->telnet_state = TELNET_DATA;
+	chp->last_input = -1;
+
+	telnet_send(fd, negotiate, sizeof(negotiate));
+	telnet_flush_backlog(handle);
+}
+
+
+/*
+ *  telnet_option():
+ *
+ *  Answers the client's option negotiation: the only options are the
+ *  server's ECHO and SUPPRESS-GO-AHEAD, which telnet_accept() offers.
+ */
+static void telnet_option(int handle, int cmd, int opt)
+{
+	struct console_handle *chp = &console_handles[handle];
+	unsigned char reply[3] = { TELNET_IAC, 0, (unsigned char) opt };
+
+	if (cmd == TELNET_DO) {
+		if (opt == TELNET_OPT_ECHO || opt == TELNET_OPT_SGA)
+			return;
+		reply[1] = TELNET_WONT;
+	} else if (cmd == TELNET_WILL) {
+		reply[1] = opt == TELNET_OPT_SGA ? TELNET_DO : TELNET_DONT;
+	} else
+		return;
+
+	telnet_send(chp->client_fd, reply, sizeof(reply));
+}
+
+
+/*
+ *  telnet_poll():
+ *
+ *  Accepts connections to a console handle's port, and returns 1 if
+ *  anything is available from the connected client.
+ */
+static int telnet_poll(int handle)
+{
+	struct console_handle *chp = &console_handles[handle];
+	fd_set rfds;
+	struct timeval tv;
+	int maxfd = chp->listen_fd;
+
+	FD_ZERO(&rfds);
+	FD_SET(chp->listen_fd, &rfds);
+	if (chp->client_fd >= 0) {
+		FD_SET(chp->client_fd, &rfds);
+		if (chp->client_fd > maxfd)
+			maxfd = chp->client_fd;
+	}
+
+	tv.tv_sec = 0;
+	tv.tv_usec = 0;
+	if (select(maxfd + 1, &rfds, NULL, NULL, &tv) <= 0)
+		return 0;
+
+	if (FD_ISSET(chp->listen_fd, &rfds)) {
+		int was_connected = chp->client_fd >= 0;
+		telnet_accept(handle);
+		if (!was_connected)
+			return 0;
+	}
+
+	return chp->client_fd >= 0 && FD_ISSET(chp->client_fd, &rfds);
+}
+
+
+/*
+ *  telnet_input():
+ *
+ *  Puts characters received from a telnet client into a handle's fifo,
+ *  without the telnet commands. Enter arrives as CR NUL or CR LF, which
+ *  becomes just CR, as with a real terminal.
+ */
+static void telnet_input(int handle, const unsigned char *buf, int len)
+{
+	struct console_handle *chp = &console_handles[handle];
+
+	for (int i = 0; i < len; i++) {
+		int ch = buf[i];
+
+		switch (chp->telnet_state) {
+		case TELNET_DATA:
+			if (ch == TELNET_IAC) {
+				chp->telnet_state = TELNET_GOT_IAC;
+				break;
+			}
+			if (chp->last_input == '\r' && (ch == '\0' ||
+			    ch == '\n')) {
+				chp->last_input = -1;
+				break;
+			}
+			chp->last_input = ch;
+			console_makeavail(handle, ch);
+			break;
+		case TELNET_GOT_IAC:
+			chp->telnet_state = TELNET_DATA;
+			chp->last_input = -1;
+			switch (ch) {
+			case TELNET_IAC:
+				console_makeavail(handle, ch);
+				break;
+			case TELNET_IP:
+				console_makeavail(handle, 3);
+				break;
+			case TELNET_SB:
+				chp->telnet_state = TELNET_IN_SB;
+				break;
+			case TELNET_WILL:
+			case TELNET_WONT:
+			case TELNET_DO:
+			case TELNET_DONT:
+				chp->telnet_state = TELNET_GOT_WILL +
+				    (ch - TELNET_WILL);
+				break;
+			}
+			break;
+		case TELNET_GOT_WILL:
+		case TELNET_GOT_WONT:
+		case TELNET_GOT_DO:
+		case TELNET_GOT_DONT:
+			telnet_option(handle, TELNET_WILL +
+			    (chp->telnet_state - TELNET_GOT_WILL), ch);
+			chp->telnet_state = TELNET_DATA;
+			break;
+		case TELNET_IN_SB:
+			if (ch == TELNET_IAC)
+				chp->telnet_state = TELNET_IN_SB_GOT_IAC;
+			break;
+		case TELNET_IN_SB_GOT_IAC:
+			chp->telnet_state = ch == TELNET_SE ?
+			    TELNET_DATA : TELNET_IN_SB;
+			break;
+		}
+	}
+}
+
+
+/*
+ *  telnet_output():
+ *
+ *  Queues a character for a handle's telnet client, and sends what it can.
+ */
+static void telnet_output(int handle, int ch)
+{
+	struct console_handle *chp = &console_handles[handle];
+
+	if (chp->client_fd < 0)
+		telnet_accept(handle);
+
+	/*  When the backlog is full, the oldest output is dropped.  */
+	for (int n = ch == TELNET_IAC ? 2 : 1; n > 0; n--) {
+		chp->backlog[chp->backlog_head] = ch;
+		chp->backlog_head = (chp->backlog_head + 1) %
+		    CONSOLE_BACKLOG_LEN;
+		if (chp->backlog_len < CONSOLE_BACKLOG_LEN)
+			chp->backlog_len ++;
+	}
+
+	telnet_flush_backlog(handle);
 }
 
 
@@ -325,14 +597,10 @@ static int console_stdin_avail(int handle)
 	if (!console_handles[handle].in_use_for_input)
 		return 0;
 
-	if (!allow_slaves)
+	if (!console_handles[handle].using_telnet)
 		return d_avail(STDIN_FILENO);
 
-	if (console_handles[handle].using_xterm ==
-	    USING_XTERM_BUT_NOT_YET_OPEN)
-		return 0;
-
-	return d_avail(console_handles[handle].r_descriptor);
+	return telnet_poll(handle);
 }
 
 
@@ -365,11 +633,21 @@ int console_charavail(int handle)
 		if (roomLeftInFIFO < (int)sizeof(ch) + 1)
 			break;
 
-		if (!allow_slaves)
-			d = STDIN_FILENO;
-		else
-			d = console_handles[handle].r_descriptor;
+		if (console_handles[handle].using_telnet) {
+			d = console_handles[handle].client_fd;
+			len = recv(d, (char *) ch, sizeof(ch), 0);
+			if (len <= 0) {
+				if (len == 0 || (errno != EAGAIN &&
+				    errno != EWOULDBLOCK && errno != EINTR))
+					telnet_disconnect(handle);
+				break;
+			}
 
+			telnet_input(handle, ch, len);
+			continue;
+		}
+
+		d = STDIN_FILENO;
 		len = read(d, ch, sizeof(ch));
 
 		for (i=0; i<len; i++) {
@@ -458,13 +736,11 @@ int console_readchar(int handle)
  */
 void console_putchar(int handle, int ch)
 {
-	char buf[1];
-
 	if (!console_handles[handle].in_use_for_input &&
 	    !console_handles[handle].outputonly)
 		console_change_inputability(handle, 1);
 
-	if (!allow_slaves) {
+	if (!console_handles[handle].using_telnet) {
 		/*  stdout:  */
 		putchar(ch);
 
@@ -483,13 +759,7 @@ void console_putchar(int handle, int ch)
 		return;
 		}
 
-	if (console_handles[handle].using_xterm ==
-	    USING_XTERM_BUT_NOT_YET_OPEN)
-		start_xterm(handle);
-
-	buf[0] = ch;
-	if (write(console_handles[handle].w_descriptor, buf, 1) != 1)
-		perror("error writing to console handle");
+	telnet_output(handle, ch);
 }
 
 
@@ -560,101 +830,6 @@ void console_getmouse(int *dx, int *dy, int *buttons, int *fb_nr)
 
 
 /*
- *  console_slave_sigint():
- */
-static void console_slave_sigint(int x)
-{
-	char buf[1];
-
-	/*  Send a ctrl-c:  */
-	buf[0] = 3;
-	if (write(console_slave_outputd, buf, sizeof(buf)) != sizeof(buf))
-		perror("error writing to console handle");
-
-	/*  Reset the signal handler:  */
-	signal(SIGINT, console_slave_sigint);
-}
-
-
-/*
- *  console_slave_sigcont():
- *
- *  See comment for console_sigcont. This is for used by console_slave().
- */
-static void console_slave_sigcont(int x)
-{
-	/*  Make sure our 'current' termios setting is active:  */
-	tcsetattr(STDIN_FILENO, TCSANOW, &console_slave_tios);
-
-	/*  Reset the signal handler:  */
-	signal(SIGCONT, console_slave_sigcont);
-}
-
-
-/*
- *  console_slave():
- *
- *  This function is used when running with X11, and gxemul opens up
- *  separate xterms for each emulated terminal or serial port.
- */
-void console_slave(const char *arg)
-{
-	int inputd;
-	int len;
-	const char *p;
-	char buf[16384];
-
-	/*  arg = '3,6' or similar, input and output descriptors  */
-	/*  printf("console_slave(): arg = '%s'\n", arg);  */
-
-	inputd = atoi(arg);
-	p = strchr(arg, ',');
-	if (p == NULL) {
-		printf("console_slave(): bad arg '%s'\n", arg);
-		sleep(5);
-		exit(1);
-	}
-	console_slave_outputd = atoi(p+1);
-
-	/*  Set the terminal to raw mode:  */
-	tcgetattr(STDIN_FILENO, &console_slave_tios);
-
-	console_slave_tios.c_lflag &= ~ICANON;
-	console_slave_tios.c_cc[VTIME] = 0;
-	console_slave_tios.c_cc[VMIN] = 1;
-	console_slave_tios.c_lflag &= ~ECHO;
-	console_slave_tios.c_iflag &= ~ICRNL;
-	tcsetattr(STDIN_FILENO, TCSANOW, &console_slave_tios);
-
-	signal(SIGINT, console_slave_sigint);
-	signal(SIGCONT, console_slave_sigcont);
-
-	for (;;) {
-		/*  TODO: select() on both inputd and stdin  */
-
-		if (d_avail(inputd)) {
-			len = read(inputd, buf, sizeof(buf) - 1);
-			if (len < 1)
-				exit(0);
-			buf[len] = '\0';
-			printf("%s", buf);
-			fflush(stdout);
-		}
-
-		if (d_avail(STDIN_FILENO)) {
-			len = read(STDIN_FILENO, buf, sizeof(buf));
-			if (len < 1)
-				exit(0);
-			if (write(console_slave_outputd, buf, len) != len)
-				perror("error writing to console handle");
-		}
-
-		usleep(10000);
-	}
-}
-
-
-/*
  *  console_new_handle():
  *
  *  Allocates a new console_handle struct, and returns a pointer to it.
@@ -699,14 +874,9 @@ static struct console_handle *console_new_handle(const char *name, int *handlep)
 /*
  *  console_start_slave():
  *
- *  When using X11:
- *
- *  This routine tries to start up an xterm, with another copy of gxemul
- *  inside. The other gxemul copy is given arguments that will cause it
- *  to run console_slave().
- *
- *  When not using X11:  Things will seem to work the same way without X11,
- *  but no xterm will actually be started.
+ *  Creates a console handle for an emulated terminal or serial port. When
+ *  slaves are allowed (-x), the handle gets a TCP port of its own, for
+ *  telnet. Otherwise it uses the emulator's own terminal.
  *
  *  consolename should be something like "serial 0".
  *
@@ -733,6 +903,7 @@ int console_start_slave(struct machine *machine, const char *consolename,
 	}
 
 	chp = console_new_handle(consolename, &handle);
+	chp->machine = machine;
 	chp->in_use_for_input = use_for_input;
 	if (use_for_input == CONSOLE_OUTPUT_ONLY) {
 		chp->outputonly = 1;
@@ -749,7 +920,7 @@ int console_start_slave(struct machine *machine, const char *consolename,
 	CHECK_ALLOCATION(chp->name = strdup(consolename));
 
 	if (allow_slaves)
-		chp->using_xterm = USING_XTERM_BUT_NOT_YET_OPEN;
+		telnet_listen(handle);
 
 	return handle;
 }
@@ -758,9 +929,9 @@ int console_start_slave(struct machine *machine, const char *consolename,
 /*
  *  console_start_slave_inputonly():
  *
- *  Similar to console_start_slave(), but doesn't open an xterm. This is
+ *  Similar to console_start_slave(), but without a TCP port. This is
  *  useful for devices such as keyboard controllers, that need to have an
- *  input queue, but no xterm window associated with it.
+ *  input queue, but no terminal of their own.
  *
  *  On success, an integer >= 0 is returned. This can then be used as a
  *  'handle' when writing to or reading from an emulated console.
@@ -779,6 +950,7 @@ int console_start_slave_inputonly(struct machine *machine, const char *consolena
 	}
 
 	chp = console_new_handle(consolename, &handle);
+	chp->machine = machine;
 	chp->inputonly = 1;
 	chp->in_use_for_input = use_for_input;
 
@@ -881,6 +1053,8 @@ void console_init_main(struct emul *emul)
 	console_mouse_dy = 0;
 	console_mouse_buttons = 0;
 
+	telnet_show_ports(emul);
+
 	console_initialized = 1;
 }
 
@@ -897,7 +1071,7 @@ void console_debug_dump(struct machine *machine)
 	if (verbose < 2)
 		return;
 
-	debug("console slaves (xterms): %s\n", allow_slaves?
+	debug("console slaves (telnet): %s\n", allow_slaves?
 	    "yes" : "no");
 
 	debug("console handles:\n");
@@ -907,8 +1081,8 @@ void console_debug_dump(struct machine *machine)
 		if (!console_handles[i].in_use)
 			continue;
 		debug("%i: \"%s\"", i, console_handles[i].name);
-		if (console_handles[i].using_xterm)
-			debug(" [xterm]");
+		if (console_handles[i].using_telnet)
+			debug(" [telnet port %i]", console_handles[i].port);
 		if (console_handles[i].inputonly)
 			debug(" [inputonly]");
 		if (console_handles[i].outputonly)
@@ -930,8 +1104,8 @@ void console_debug_dump(struct machine *machine)
 /*
  *  console_allow_slaves():
  *
- *  This function tells the console subsystem whether or not to open up
- *  slave xterms for each emulated serial controller.
+ *  This function tells the console subsystem whether or not to give each
+ *  emulated serial controller a TCP port of its own.
  */
 void console_allow_slaves(int allow)
 {
@@ -939,10 +1113,13 @@ void console_allow_slaves(int allow)
 
 	if (allow_slaves) {
 		for (int i = 0; i < n_console_handles; i++)
-			if (i != MAIN_CONSOLE)
-				console_handles[i].using_xterm = USING_XTERM_BUT_NOT_YET_OPEN;
+			if (i != MAIN_CONSOLE && console_handles[i].in_use &&
+			    !console_handles[i].inputonly &&
+			    !console_handles[i].using_telnet)
+				telnet_listen(i);
 	}
 }
+
 
 
 /*
@@ -959,7 +1136,7 @@ int console_are_slaves_allowed(void)
 /*
  *  console_warn_if_slaves_are_needed():
  *
- *  Prints an error (during startup of the emulator) if slave xterms are needed
+ *  Prints an error (during startup of the emulator) if slave terminals are needed
  *  (i.e. there is more than one console handle in use which is used for
  *  INPUT), but they are not currently allowed.
  *
@@ -981,19 +1158,19 @@ int console_warn_if_slaves_are_needed(int init)
 	for (i=MAIN_CONSOLE+1; i<n_console_handles; i++)
 		if (console_handles[i].in_use &&
 		    console_handles[i].in_use_for_input &&
-		    !console_handles[i].using_xterm)
+		    !console_handles[i].using_telnet)
 			n ++;
 
 	if (n > 1) {
 		if (init) {
 			fatal("#\n#  ERROR! More than one console input is "
-			    "in use,\n#  but xterm slaves are not enabled.\n"
+			    "in use,\n#  but console ports are not enabled.\n"
 			    "#\n");
-			fatal("#  Use -x to enable slave xterms.)\n#\n");
+			fatal("#  Use -x to enable telnet ports for them.)\n#\n");
 			for (i=MAIN_CONSOLE+1; i<n_console_handles; i++)
 				if (console_handles[i].in_use &&
 				    console_handles[i].in_use_for_input &&
-				    !console_handles[i].using_xterm)
+				    !console_handles[i].using_telnet)
 					fatal("#  console handle %i: '%s'\n",
 					    i, console_handles[i].name);
 			fatal("#\n");

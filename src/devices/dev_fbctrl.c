@@ -85,7 +85,7 @@ static void fbctrl_command(struct cpu *cpu, struct fbctrl_data *d)
 		break;
 
 	case DEV_FBCTRL_COMMAND_GET_RESOLUTION:
-		if (cpu->machine->x11_md.in_use) {
+		if (cpu->machine->display_md.in_use) {
 			d->port[DEV_FBCTRL_PORT_X1] = d->vfb_data->xsize;
 			d->port[DEV_FBCTRL_PORT_Y1] = d->vfb_data->ysize;
 		} else {

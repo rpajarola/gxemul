@@ -28,68 +28,23 @@
  *  Included from dev_fb.c.
  *
  *  FB_SCALEDOWN should be defined if d->vfb_scaledown > 1.
- *  FB_BO for d->fb_window->fb_ximage->byte_order non-zero
- *  FB_24 for 24-bit X11 color.
- *  FB_16 for 16-bit X11 color.
- *  FB_15 for 15-bit X11 color.
- *  (Default is to fallback to grayscale.)
  */
-
-
-#ifdef macro_put_pixel1
-#undef macro_put_pixel1
-#endif
-
-/*  Combine the color into an X11 long and display it:  */	\
-/*  TODO:  construct color in a more portable way:  */		\
-
-#ifdef FB_24
-#ifdef FB_BO
-#define macro_put_pixel1 color = (b << 16) + (g << 8) + r
-#else
-#define macro_put_pixel1 color = (r << 16) + (g << 8) + b
-#endif
-
-#else	/*  !24  */
-#ifdef FB_16
-#ifdef FB_BO
-#define macro_put_pixel1 color = ((b >> 3) << 11) + ((g >> 2) << 5) + (r >> 3)
-#else
-#define macro_put_pixel1 color = ((r >> 3) << 11) + ((g >> 2) << 5) + (b >> 3)
-#endif
-
-#else	/*  !16  */
-#ifdef FB_15
-#ifdef FB_BO
-#define macro_put_pixel1 color = ((b >> 3) << 10) + ((g >> 3) << 5) + (r >> 3)
-#else
-#define macro_put_pixel1 color = ((r >> 3) << 10) + ((g >> 3) << 5) + (b >> 3)
-#endif
-
-#else	/*  !15  */
-#define	macro_put_pixel1 color = d->fb_window->x11_graycolor[15 * 	\
-		(r + g + b) / (255 * 3)].pixel
-
-#endif	/*  !15  */
-
-#endif	/*  !16  */
-
-#endif	/*  !24  */
 
 
 #ifdef macro_put_pixel
 #undef macro_put_pixel
 #endif
 
-#define macro_put_pixel		macro_put_pixel1;			\
-	if (x>=0 && x<d->x11_xsize && y>=0 && y<d->x11_ysize)		\
-		XPutPixel(d->fb_window->fb_ximage, x, y, color);	\
+/*  Combine the color into a 0x00RRGGBB pixel, and put it in the window:  */
+#define macro_put_pixel							\
+	if (x>=0 && x<d->win_xsize && y>=0 && y<d->win_ysize)		\
+		d->fb_window->pixels[y * d->fb_window->xsize + x] =	\
+		    ((r << 16) + (g << 8) + b) & 0xffffff;
 
 
 void REDRAW(struct vfb_data *d, int addr, int len)
 {
 	int x, y, pixel, npixels;
-	long color;
 
 #ifndef FB_SCALEDOWN
 
@@ -212,11 +167,11 @@ void REDRAW(struct vfb_data *d, int addr, int len)
 	/*  How many framebuffer pixels?  */
 	npixels = len * 8 / d->bit_depth;
 
-	/*  Which x11 pixel?  */
+	/*  Which window pixel?  */
 	x /= scaledown;
 	y /= scaledown;
 
-	/*  How many x11 pixels:  */
+	/*  How many window pixels:  */
 	npixels /= scaledown;
 	if (npixels == 0)
 		npixels = 1;

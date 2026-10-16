@@ -504,7 +504,7 @@ static void parse__machine(struct emul *e, FILE *f, int *in_emul, int *line,
 		if (!cur_machine_use_x11[0])
 			strlcpy(cur_machine_use_x11, "no",
 			    sizeof(cur_machine_use_x11));
-		m->x11_md.in_use = parse_on_off(cur_machine_use_x11);
+		m->display_md.in_use = parse_on_off(cur_machine_use_x11);
 
 		if (!cur_machine_prom_emulation[0])
 			strlcpy(cur_machine_prom_emulation, "yes",
@@ -573,16 +573,16 @@ static void parse__machine(struct emul *e, FILE *f, int *in_emul, int *line,
 		m->physical_ram_in_mb = atoi(cur_machine_memory);
 
 		if (!cur_machine_x11_scaledown[0])
-			m->x11_md.scaledown = 1;
+			m->display_md.scaledown = 1;
 		else {
-			m->x11_md.scaledown = atoi(cur_machine_x11_scaledown);
-			if (m->x11_md.scaledown < 0) {
-				m->x11_md.scaleup = 0 - m->x11_md.scaledown;
-				m->x11_md.scaledown = 1;
+			m->display_md.scaledown = atoi(cur_machine_x11_scaledown);
+			if (m->display_md.scaledown < 0) {
+				m->display_md.scaleup = 0 - m->display_md.scaledown;
+				m->display_md.scaledown = 1;
 			}
-			if (m->x11_md.scaledown < 1) {
+			if (m->display_md.scaledown < 1) {
 				fprintf(stderr, "Invalid scaledown value"
-				    " (%i)\n", m->x11_md.scaledown);
+				    " (%i)\n", m->display_md.scaledown);
 				exit(1);
 			}
 		}
@@ -606,12 +606,12 @@ static void parse__machine(struct emul *e, FILE *f, int *in_emul, int *line,
 			m->boot_string_argument = strdup(cur_machine_bootarg);
 
 		for (i=0; i<cur_machine_n_x11_disp; i++) {
-			m->x11_md.n_display_names ++;
-			CHECK_ALLOCATION(m->x11_md.display_names = (char **) realloc(
-			    m->x11_md.display_names, m->x11_md.n_display_names
+			m->display_md.n_display_names ++;
+			CHECK_ALLOCATION(m->display_md.display_names = (char **) realloc(
+			    m->display_md.display_names, m->display_md.n_display_names
 			    * sizeof(char *)));
-			CHECK_ALLOCATION(m->x11_md.display_names[
-			    m->x11_md.n_display_names-1] =
+			CHECK_ALLOCATION(m->display_md.display_names[
+			    m->display_md.n_display_names-1] =
 			    strdup(cur_machine_x11_disp[i]));
 			free(cur_machine_x11_disp[i]);
 			cur_machine_x11_disp[i] = NULL;

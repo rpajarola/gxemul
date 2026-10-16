@@ -209,7 +209,7 @@ struct bus_isa_data *bus_isa_init(struct machine *machine,
 	}
 
 	kbd_in_use = ((bus_isa_flags & BUS_ISA_PCKBC_FORCE_USE) ||
-	    (machine->x11_md.in_use))? 1 : 0;
+	    (machine->display_md.in_use))? 1 : 0;
 
 	if (machine->machine_type == MACHINE_PREP) {
 		/*  PReP with obio controller has both WDCs on irq 13!  */
@@ -296,7 +296,7 @@ struct bus_isa_data *bus_isa_init(struct machine *machine,
 	}
 
 	if (bus_isa_flags & BUS_ISA_VGA) {
-		if (machine->x11_md.in_use || bus_isa_flags & BUS_ISA_VGA_FORCE)
+		if (machine->display_md.in_use || bus_isa_flags & BUS_ISA_VGA_FORCE)
 			dev_vga_init(machine, machine->memory,
 			    isa_membase + 0xa0000, isa_portbase + 0x3c0,
 			    machine->machine_name);

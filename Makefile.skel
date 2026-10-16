@@ -3,7 +3,7 @@
 #
 
 BIN=gxemul
-LIBS=$(XLIB) $(OTHERLIBS)
+LIBS=$(DISPLAYLIB) $(OTHERLIBS)
 
 all: build
 

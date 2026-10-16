@@ -78,14 +78,13 @@ struct tick_functions {
 	void	**extra;
 };
 
-struct x11_md {
-	/*  X11/framebuffer stuff:  */
+struct display_md {
+	/*  Framebuffer windows (see display.c):  */
 	int	in_use;
 	int	scaledown;
 	int	scaleup;
-	int	n_display_names;
+	int	n_display_names;		/*  X11 displays (ignored)  */
 	char	**display_names;
-	int	current_display_name_nr;	/*  updated by x11.c  */
 
 	int	n_fb_windows;
 	struct fb_window **fb_windows;
@@ -179,8 +178,8 @@ struct machine {
 	/*  Instruction statistics:  */
 	struct statistics statistics;
 
-	/*  X11/framebuffer stuff (per machine):  */
-	struct x11_md x11_md;
+	/*  Framebuffer windows (per machine):  */
+	struct display_md display_md;
 
 	/*  Machine-dependent: (PROM stuff, etc.)  */
 	union {

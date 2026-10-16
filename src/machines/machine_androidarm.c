@@ -89,7 +89,7 @@ MACHINE_SETUP(androidarm)
 		// TODO: interrupt "GIC_SPI 44"
 		snprintf(tmpstr, sizeof(tmpstr), "ns16550 irq=%s.cpu[%i].irq"
 		    " addr=0x11005000 addr_mult=4 in_use=%i",
-		    machine->path, machine->bootstrap_cpu, !machine->x11_md.in_use);
+		    machine->path, machine->bootstrap_cpu, !machine->display_md.in_use);
 		machine->main_console_handle = (size_t)
 		    device_add(machine, tmpstr);
 

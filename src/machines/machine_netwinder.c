@@ -59,7 +59,7 @@ MACHINE_SETUP(netwinder)
 	    " addr=0x42000000", machine->path, machine->bootstrap_cpu);
 	pci_bus = (struct pci_data *) device_add(machine, tmpstr);
 
-	if (machine->x11_md.in_use) {
+	if (machine->display_md.in_use) {
 		bus_pci_add(machine, pci_bus, machine->memory,
 		    0xc0, 8, 0, "igsfb");
 	}

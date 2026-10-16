@@ -45,6 +45,11 @@
 
 #include "../../config.h"
 
+/*  A display backend (src/console/display_sdl.c) shows framebuffers:  */
+#ifdef WITH_SDL
+#define	WITH_DISPLAY
+#endif
+
 #define	COPYRIGHT_MSG	"Copyright (C) 2003-2021  Anders Gavare"
 
 // The recommended way to add a specific message to the startup banner or
@@ -225,7 +230,7 @@ int decstation_prom_emul(struct cpu *cpu);
 #define	SUBSYS_MEMORY		7	/*  Memory related  */
 #define	SUBSYS_EXCEPTION	8	/*  CPU exceptions  */
 #define	SUBSYS_PROMEMUL		9	/*  PROM emulation related  */
-#define	SUBSYS_X11		10	/*  X11 related  */
+#define	SUBSYS_DISPLAY		10	/*  Framebuffer windows  */
 #define	VERBOSITY_ERROR		0
 #define	VERBOSITY_WARNING	1
 #define	VERBOSITY_INFO		2

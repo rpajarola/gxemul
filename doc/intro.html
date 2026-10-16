@@ -102,7 +102,8 @@ to the source code. The basic requirement is a reasonably modern C compiler (C99
 However, the following optional libraries or third-party software give
 additional functionality:
 <ul>
-	<li>X11 headers and libraries: for graphical framebuffer emulation.
+	<li>SDL2 headers and libraries (for example <tt>libsdl2-dev</tt>, or
+		Homebrew's <tt>sdl2</tt>): for graphical framebuffer windows.
 </ul>
 
 <p>The emulator's performance is dependent on both runtime settings 
@@ -170,16 +171,19 @@ and then type <tt><b>quit</b></tt>:
 command line, all terminal input and output will go to the main controlling terminal. 
 CTRL-C is used to break into the debugger, so in order to send an actual CTRL-C to 
 the running (emulated) program, type CTRL-B. (This should be a 
-reasonable compromise to allow the emulator to be usable even on systems 
-without X Windows.)
+reasonable compromise to allow the emulator to be usable even without 
+framebuffer windows.)
 
 <p>There is no way to send CTRL-B to the emulated program, when 
 typing in the main controlling terminal window. However, by using the <tt>-x</tt>
-command line option, separate terminal windows will be launched
-for each serial I/O port being written to. (This also happens when you use
+command line option, each serial I/O port gets a TCP port of its own on
+localhost, from 4000 and up, which you connect to from another terminal
+window, e.g. with <tt>telnet localhost 4000</tt>. The ports are listed when
+the emulation starts. (This also happens when you use
 <a href="configfiles.html">configuration files</a> with <i>more than one</i>
 machine specified.) CTRL-B and CTRL-C both have their original meaning
-in those xterm windows.
+in those telnet sessions. (macOS no longer comes with telnet, but
+Homebrew has it: <tt>brew install telnet</tt>.)
 
 
 

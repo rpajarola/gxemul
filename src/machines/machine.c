@@ -87,8 +87,8 @@ struct machine *machine_new(char *name, struct emul *emul, int id)
 	m->byte_order_override = NO_BYTE_ORDER_OVERRIDE;
 	m->boot_kernel_filename = strdup("");
 	m->boot_string_argument = NULL;
-	m->x11_md.scaledown = 1;
-	m->x11_md.scaleup = 1;
+	m->display_md.scaledown = 1;
+	m->display_md.scaleup = 1;
 	m->n_gfx_cards = 1;
 	symbol_init(&m->symbol_context);
 
@@ -418,16 +418,16 @@ void machine_dumpinfo(struct machine *m)
 	if (m->ncpus > 1)
 		debug("Bootstrap cpu is nr %i\n", m->bootstrap_cpu);
 
-	if (m->x11_md.in_use) {
-		debug("Using X11");
-		if (m->x11_md.scaledown > 1)
-			debug(", scaledown %i", m->x11_md.scaledown);
-		if (m->x11_md.scaleup > 1)
-			debug(", scaleup %i", m->x11_md.scaleup);
-		if (m->x11_md.n_display_names > 0) {
-			for (i=0; i<m->x11_md.n_display_names; i++) {
+	if (m->display_md.in_use) {
+		debug("Using framebuffer windows");
+		if (m->display_md.scaledown > 1)
+			debug(", scaledown %i", m->display_md.scaledown);
+		if (m->display_md.scaleup > 1)
+			debug(", scaleup %i", m->display_md.scaleup);
+		if (m->display_md.n_display_names > 0) {
+			for (i=0; i<m->display_md.n_display_names; i++) {
 				debug(i? ", " : " (");
-				debug("\"%s\"", m->x11_md.display_names[i]);
+				debug("\"%s\"", m->display_md.display_names[i]);
 			}
 			debug(")");
 		}

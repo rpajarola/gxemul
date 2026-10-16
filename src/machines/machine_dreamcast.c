@@ -50,7 +50,7 @@ MACHINE_SETUP(dreamcast)
 	/*  50 MHz SH4 PCLOCK:  */
 	machine->cpus[0]->cd.sh.pclock = 50000000;
 
-	if (!machine->x11_md.in_use)
+	if (!machine->display_md.in_use)
 		fprintf(stderr, "-------------------------------------"
 		    "------------------------------------------\n"
 		    "\n  WARNING!  You are emulating a Dreamcast without -X."

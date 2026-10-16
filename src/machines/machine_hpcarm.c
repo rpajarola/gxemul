@@ -180,7 +180,7 @@ MACHINE_SETUP(hpcarm)
 	store_16bit_word_in_host(cpu, (unsigned char *)&hpc_bootinfo.fb_type,
 	    hpc_fb_encoding);
 	store_16bit_word_in_host(cpu, (unsigned char *)&hpc_bootinfo.bi_cnuse,
-	    machine->x11_md.in_use? BI_CNUSE_BUILTIN : BI_CNUSE_SERIAL);
+	    machine->display_md.in_use? BI_CNUSE_BUILTIN : BI_CNUSE_SERIAL);
 
 	store_32bit_word_in_host(cpu,(unsigned char *)&hpc_bootinfo.timezone,0);
 	store_buf(cpu, machine->physical_ram_in_mb * 1048576 - 256,
