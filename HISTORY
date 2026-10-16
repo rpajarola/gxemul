@@ -5183,3 +5183,13 @@ Changelog for GXemul:
 		one LK201 emulation for keyboard and mouse, and keystrokes in
 		the framebuffer window go to the keyboard. Ultrix 4.5's X
 		server runs on the PMAG-BA, with keyboard and mouse.
+		Z8530 SCC: Tx Underrun/EOM stays set while the transmitter is
+		disabled, and setting it gives an external/status interrupt
+		if enabled; resets select asynchronous mode in WR4, and
+		power-on resets both channels; WR9 is shared by both
+		channels, and enabling interrupts in it raises pending ones;
+		in local loopback, the keyboard's and mouse's replies are not
+		received. With this, the real KN02-BA PROM takes keyboard
+		input on the framebuffer console (with the PMAG-BA option
+		ROM image), passes its scc self-tests there, and boots Ultrix
+		to X.

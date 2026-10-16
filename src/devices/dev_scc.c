@@ -232,6 +232,7 @@ static void scc_channel_reset(struct scc_data *d, int port)
 	unsigned char *w = &d->scc_register_w[port * N_SCC_REGS];
 
 	w[SCC_WR1] = w[SCC_WR3] = w[SCC_WR5] = w[SCC_WR14] = 0;
+	w[SCC_WR4] |= 0x04;		/*  asynchronous, 1 stop bit  */
 	w[SCC_WR15] = 0xf8;
 
 	d->scc_register_r[port * N_SCC_REGS + SCC_RR0] =
@@ -239,6 +240,31 @@ static void scc_channel_reset(struct scc_data *d, int port)
 	scc_clear_ip(d, port == SCC_CHANNEL_A?
 	    SCC_RR3_EXT_IP_A | SCC_RR3_TX_IP_A | SCC_RR3_RX_IP_A :
 	    SCC_RR3_EXT_IP_B | SCC_RR3_TX_IP_B | SCC_RR3_RX_IP_B);
+}
+
+
+/*
+ *  scc_tx_underrun():
+ *
+ *  The transmitter underruns, which sets Tx Underrun/EOM in RR0 (if it was
+ *  reset), with an external/status interrupt if enabled.
+ */
+static void scc_tx_underrun(struct scc_data *d, int port)
+{
+	if (d->scc_register_r[port * N_SCC_REGS + SCC_RR0] &
+	    SCC_RR0_TX_UNDERRUN)
+		return;
+
+	d->scc_register_r[port * N_SCC_REGS + SCC_RR0] |= SCC_RR0_TX_UNDERRUN;
+
+	if (d->scc_register_w[port * N_SCC_REGS + SCC_WR15] &
+	    SCC_WR15_TX_UNDERRUN_IE &&
+	    d->scc_register_w[port * N_SCC_REGS + SCC_WR1] & SCC_WR1_EXT_IE) {
+		d->scc_register_r[N_SCC_REGS + SCC_RR3] |=
+		    port == SCC_CHANNEL_A? SCC_RR3_EXT_IP_A : SCC_RR3_EXT_IP_B;
+		if (d->scc_register_w[N_SCC_REGS + SCC_WR9] & SCC_WR9_MASTER_IE)
+			INTERRUPT_ASSERT(d->irq);
+	}
 }
 
 
@@ -276,9 +302,15 @@ static void scc_wr0_command(struct scc_data *d, int port, int wr0)
 		break;
 	}
 
-	/*  Reset Tx underrun/EOM latch (until the next character has been
-	    sent; see the data register write):  */
-	if ((wr0 & 0xc0) == 0xc0)
+	/*
+	 *  Reset Tx underrun/EOM latch, until the next character has been
+	 *  sent (see the data register write).  While the transmitter is
+	 *  disabled, the bit stays set.  (The KN02-BA PROM resets the latch
+	 *  while the keyboard's transmitter is still disabled, and then
+	 *  only reads the keyboard when the bit is set.)
+	 */
+	if ((wr0 & 0xc0) == 0xc0 && d->scc_register_w[port * N_SCC_REGS +
+	    SCC_WR5] & SCC_WR5_TX_ENABLE)
 		d->scc_register_r[port * N_SCC_REGS + SCC_RR0] &=
 		    ~SCC_RR0_TX_UNDERRUN;
 }
@@ -382,6 +414,8 @@ DEVICE_TICK(scc)
 static void scc_tx(struct scc_data *d, int port, int ch)
 {
 	int line = scc_to_line(d->scc_nr, port);
+	int loopback = d->scc_register_w[port * N_SCC_REGS + SCC_WR14] &
+	    SCC_WR14_LOCAL_LOOPB;
 	struct scc_data *k = d;
 
 	/*  The keyboard and mouse use SCC 1's LK201 emulation:  */
@@ -389,13 +423,14 @@ static void scc_tx(struct scc_data *d, int port, int ch)
 	    scc_by_nr[1] != NULL)
 		k = scc_by_nr[1];
 
-	lk201_tx_data(&k->lk201, line, ch);
+	/*  In local loopback, the receiver is not connected to the line,
+	    so the keyboard's and mouse's replies would not be received:  */
+	if (!loopback || (line != DCKBD_PORT && line != DCMOUSE_PORT))
+		lk201_tx_data(&k->lk201, line, ch);
 
-	d->scc_register_r[port * N_SCC_REGS + SCC_RR0] |= SCC_RR0_TX_UNDERRUN;
+	scc_tx_underrun(d, port);
 
-	/*  Loopback:  */
-	if (d->scc_register_w[port * N_SCC_REGS + SCC_WR14] &
-	    SCC_WR14_LOCAL_LOOPB)
+	if (loopback)
 		rx_enqueue(d, port, ch);
 }
 
@@ -517,13 +552,35 @@ DEVICE_ACCESS(scc)
 				/*  WR9 resets (the 5000/1xx PROM's self-test
 				    expects them to leave no interrupts):  */
 				if (d->register_selected[port] == SCC_WR9) {
+					/*  WR9 is shared by both channels:  */
+					d->scc_register_w[SCC_CHANNEL_A *
+					    N_SCC_REGS + SCC_WR9] =
+					    d->scc_register_w[SCC_CHANNEL_B *
+					    N_SCC_REGS + SCC_WR9] = idata;
+
 					if (idata & 0x80)
 						scc_channel_reset(d,
 						    SCC_CHANNEL_A);
 					if (idata & 0x40)
 						scc_channel_reset(d,
 						    SCC_CHANNEL_B);
+
+					/*  The interrupt output follows the
+					    pending bits and Master Interrupt
+					    Enable:  */
+					if (d->scc_register_r[N_SCC_REGS +
+					    SCC_RR3] && idata &
+					    SCC_WR9_MASTER_IE)
+						INTERRUPT_ASSERT(d->irq);
+					else
+						INTERRUPT_DEASSERT(d->irq);
 				}
+
+				/*  A disabled transmitter is in underrun:  */
+				if (d->register_selected[port] == SCC_WR5 &&
+				    !(idata & SCC_WR5_TX_ENABLE))
+					d->scc_register_r[port * N_SCC_REGS +
+					    SCC_RR0] |= SCC_RR0_TX_UNDERRUN;
 
 				/*  Disabling an interrupt source in WR1 also
 				    clears its interrupt pending bit:  */
@@ -646,7 +703,9 @@ void *dev_scc_init(struct machine *machine, struct memory *mem,
 	if (scc_nr == 1)
 		machine->main_console_handle = d->console_handle;
 
-	d->scc_register_r[SCC_RR0] |= SCC_RR0_TX_UNDERRUN;
+	/*  Power-on is a hardware reset:  */
+	scc_channel_reset(d, SCC_CHANNEL_A);
+	scc_channel_reset(d, SCC_CHANNEL_B);
 
 	lk201_init(&d->lk201, use_fb,
 	    dev_scc_space_available_in_queue,
