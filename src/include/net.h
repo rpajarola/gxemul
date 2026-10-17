@@ -106,6 +106,7 @@ struct tcp_connection {
 	int		state;
 	int		tcp_id;
 	int		socket;
+	int		connect_error;	/*  connect() failed at once  */
 	unsigned char	outside_ip_address[4];
 	int		outside_tcp_port;
 	uint32_t	outside_timestamp;

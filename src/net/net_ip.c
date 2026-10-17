@@ -567,8 +567,12 @@ static void net_ip_tcp(struct net *net, struct nic_data *nic,
 		res = connect(net->tcp_connections[con_id].socket,
 		    (struct sockaddr *)&remote_ip, sizeof(remote_ip));
 
-		/*  connect can return -1, and errno = EINPROGRESS
-		    as we might not have connected right away.  */
+		/*  connect() usually returns -1 with EINPROGRESS (or
+		    WSAEWOULDBLOCK), as it hasn't connected right away.  If it
+		    failed at once, net_tcp_rx_avail() refuses the connection:  */
+		if (res < 0 && !socket_connect_pending(socket_error()))
+			net->tcp_connections[con_id].connect_error =
+			    socket_error();
 
 		net->tcp_connections[con_id].state =
 		    TCP_OUTSIDE_TRYINGTOCONNECT;
@@ -1426,8 +1430,9 @@ void net_tcp_rx_avail(struct net *net, struct nic_data *nic)
 	for (con_id=0; con_id<MAX_TCP_CONNECTIONS; con_id++) {
 		unsigned char buf[66000];
 		ssize_t res, res2;
-		fd_set rfds;
+		fd_set rfds, efds;
 		struct timeval tv;
+		int sock;
 
 		if (received_packets_this_tick > max_packets_this_tick)
 			break;
@@ -1449,35 +1454,47 @@ void net_tcp_rx_avail(struct net *net, struct nic_data *nic)
 		    TCP_OUTSIDE_DISCONNECTED)
 			continue;
 
-		/*  Is the socket available for output?  */
+		/*
+		 *  Is the socket available for output?  While connecting,
+		 *  this (or, on Windows, an exception) means that connect()
+		 *  has finished, and SO_ERROR tells whether it succeeded.
+		 */
+		sock = net->tcp_connections[con_id].socket;
 		FD_ZERO(&rfds);		/*  write  */
-		FD_SET(net->tcp_connections[con_id].socket, &rfds);
+		FD_SET(sock, &rfds);
+		FD_ZERO(&efds);
+		FD_SET(sock, &efds);
 		tv.tv_sec = tv.tv_usec = 0;
-		socket_clear_error();
-		res = select(net->tcp_connections[con_id].socket+1,
-		    NULL, &rfds, NULL, &tv);
-
-		if (socket_error() == SOCKET_ECONNREFUSED) {
-			fatal("[ ECONNREFUSED: TODO ]\n");
-			net->tcp_connections[con_id].state =
-			    TCP_OUTSIDE_DISCONNECTED;
-			fatal("CHANGING TO TCP_OUTSIDE_DISCONNECTED "
-			    "(refused connection)\n");
-			continue;
-		}
-
-		if (socket_error() == SOCKET_ETIMEDOUT) {
-			fatal("[ ETIMEDOUT: TODO ]\n");
-			/*  TODO  */
-			net->tcp_connections[con_id].state =
-			    TCP_OUTSIDE_DISCONNECTED;
-			fatal("CHANGING TO TCP_OUTSIDE_DISCONNECTED "
-			    "(timeout)\n");
-			continue;
-		}
+		res = select(sock + 1, NULL, &rfds, &efds, &tv);
 
 		if (net->tcp_connections[con_id].state ==
-		    TCP_OUTSIDE_TRYINGTOCONNECT && res > 0) {
+		    TCP_OUTSIDE_TRYINGTOCONNECT) {
+			int err = 0;
+			socklen_t errlen = sizeof(err);
+
+			if (net->tcp_connections[con_id].connect_error != 0)
+				err = net->tcp_connections[con_id].
+				    connect_error;
+			else if (res < 1)
+				continue;
+			else if (getsockopt(sock, SOL_SOCKET, SO_ERROR,
+			    (char *) &err, &errlen) != 0 && err == 0)
+				err = socket_error();
+
+			if (err != 0) {
+				debug("[ TCP: connection %i failed (error "
+				    "%i) ]\n", con_id, err);
+
+				/*  Answer the guest's SYN with a RST:  */
+				net->tcp_connections[con_id].outside_acknr =
+				    net->tcp_connections[con_id].
+				    inside_seqnr + 1;
+				net_ip_tcp_connectionreply(net, nic, con_id,
+				    0, NULL, 0, 1);
+				tcp_closeconnection(net, con_id);
+				continue;
+			}
+
 			net->tcp_connections[con_id].state =
 			    TCP_OUTSIDE_CONNECTED;
 			debug("CHANGING TO TCP_OUTSIDE_CONNECTED\n");

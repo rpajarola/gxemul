@@ -47,8 +47,10 @@
 #define	SOCKET_EWOULDBLOCK	WSAEWOULDBLOCK
 #define	SOCKET_EINTR		WSAEINTR
 #define	SOCKET_EADDRINUSE	WSAEADDRINUSE
-#define	SOCKET_ECONNREFUSED	WSAECONNREFUSED
-#define	SOCKET_ETIMEDOUT	WSAETIMEDOUT
+
+/*  A non-blocking connect() which hasn't finished yet:  */
+#define	socket_connect_pending(e)	\
+	((e) == WSAEWOULDBLOCK || (e) == WSAEINPROGRESS)
 
 static inline int socket_set_nonblocking(int s)
 {
@@ -74,8 +76,9 @@ static inline int socket_set_nonblocking(int s)
 #define	SOCKET_EWOULDBLOCK	EWOULDBLOCK
 #define	SOCKET_EINTR		EINTR
 #define	SOCKET_EADDRINUSE	EADDRINUSE
-#define	SOCKET_ECONNREFUSED	ECONNREFUSED
-#define	SOCKET_ETIMEDOUT	ETIMEDOUT
+
+/*  A non-blocking connect() which hasn't finished yet:  */
+#define	socket_connect_pending(e)	((e) == EINPROGRESS || (e) == EINTR)
 
 static inline int socket_set_nonblocking(int s)
 {

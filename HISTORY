@@ -5228,3 +5228,7 @@ Changelog for GXemul:
 		from zlib's contrib/puff, by Mark Adler), instead of running
 		gunzip through the shell, and temporary files go in $TMPDIR
 		(or %TEMP% on Windows).
+		Simulated network: an outgoing TCP connection which fails
+		(e.g. refused) is answered with a RST, instead of looking
+		connected and then closing; connect()'s result is taken
+		from SO_ERROR, which also works on Windows.
