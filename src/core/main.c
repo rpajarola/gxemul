@@ -36,6 +36,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "config_ui.h"
 #include "console.h"
 #include "cpu.h"
 #include "debugger.h"
@@ -43,6 +44,7 @@
 #include "diskimage.h"
 #include "emul.h"
 #include "machine.h"
+#include "machine_config.h"
 #include "misc.h"
 #include "settings.h"
 #include "timer.h"
@@ -66,6 +68,17 @@ char *progname;
 
 size_t dyntrans_cache_size = DEFAULT_DYNTRANS_CACHE_SIZE;
 static bool skip_srandom_call = false;
+
+/*  A machine configuration file given on the command line, if any:  */
+static char *config_file = NULL;
+
+/*  Set by the Edit Configuration menu item, to start again with --edit:  */
+char *restart_edit_path = NULL;
+
+/*  The configuration window is wanted (no machine on the command line, or
+    --edit), with the file to edit, if any:  */
+static bool want_ui = false;
+static char *edit_path = NULL;
 
 
 /*
@@ -97,8 +110,20 @@ static void usage(bool longusage)
 	color_normal();
 	printf("   or  ");
 	color_prompt();
-	printf("%s [general options] @configfile\n", progname);
+	printf("%s [general and debugging options] machine.json\n", progname);
 	color_normal();
+#ifdef WITH_SDL
+	printf("   or  ");
+	color_prompt();
+	printf("%s", progname);
+	color_normal();
+	printf("    (to choose, create, or edit a machine in a window)\n");
+	printf("   or  ");
+	color_prompt();
+	printf("%s --edit machine.json", progname);
+	color_normal();
+	printf("\n");
+#endif
 	
 	if (!longusage) {
 		printf("\nRun  ");
@@ -211,8 +236,7 @@ static void usage(bool longusage)
 	printf("  -v        increase debug message verbosity\n");
 	printf("  -x        give each emulated serial port a TCP port on localhost, from\n"
 	       "            4000 and up, to connect to with telnet (default is on when\n"
-	       "            using configuration files with multiple machines specified,\n"
-	       "            or when -X is used, off otherwise)\n");
+	       "            -X is used, off otherwise)\n");
 	printf("\n");
 	printf("If you are selecting a machine type to emulate directly "
 	    "on the command line,\nthen you must specify one or more names"
@@ -242,6 +266,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 {
 	int using_switch_e = 0, using_switch_E = 0;
 	bool using_switch_Z = false;
+	bool config_options_used = false;
 	bool using_switch_d = false;
 	bool machine_specific_options_used = false;
 
@@ -263,6 +288,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			enable_colorized_output = false;
 			break;
 		case 'C':
+			config_options_used = true;
 			CHECK_ALLOCATION(m->cpu_name = strdup(optarg));
 			machine_specific_options_used = true;
 			break;
@@ -278,6 +304,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			skip_srandom_call = true;
 			break;
 		case 'd':
+			config_options_used = true;
 			/*  diskimage_add() is called further down  */
 			(*n_diskimagesp) ++;
 			CHECK_ALLOCATION( (*diskimagesp) = (char **)
@@ -289,6 +316,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			machine_specific_options_used = true;
 			break;
 		case 'E':
+			config_options_used = true;
 			if (using_switch_E ++ > 0) {
 				fprintf(stderr, "-E already used.\n");
 				exit(1);
@@ -297,6 +325,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			machine_specific_options_used = true;
 			break;
 		case 'e':
+			config_options_used = true;
 			if (using_switch_e ++ > 0) {
 				fprintf(stderr, "-e already used.\n");
 				exit(1);
@@ -314,6 +343,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			usage(true);
 			exit(1);
 		case 'I':
+			config_options_used = true;
 			m->emulated_hz = atoi(optarg);
 			machine_specific_options_used = true;
 			break;
@@ -326,6 +356,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			machine_specific_options_used = true;
 			break;
 		case 'j':
+			config_options_used = true;
 			CHECK_ALLOCATION(m->boot_kernel_filename = strdup(optarg));
 			machine_specific_options_used = true;
 			break;
@@ -341,9 +372,11 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			debugger_enter_at_end_of_run = true;
 			break;
 		case 'L':
+			config_options_used = true;
 			*tap_devname = strdup(optarg);
 			break;
 		case 'M':
+			config_options_used = true;
 			m->physical_ram_in_mb = atoi(optarg);
 			machine_specific_options_used = true;
 			break;
@@ -352,14 +385,17 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			machine_specific_options_used = true;
 			break;
 		case 'n':
+			config_options_used = true;
 			m->ncpus = atoi(optarg);
 			machine_specific_options_used = true;
 			break;
 		case 'O':
+			config_options_used = true;
 			m->force_netboot = 1;
 			machine_specific_options_used = true;
 			break;
 		case 'o':
+			config_options_used = true;
 			CHECK_ALLOCATION(m->boot_string_argument = strdup(optarg));
 			machine_specific_options_used = true;
 			break;
@@ -368,6 +404,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			machine_specific_options_used = true;
 			break;
 		case 'Q':
+			config_options_used = true;
 			m->prom_emulation = 0;
 			machine_specific_options_used = true;
 			break;
@@ -375,6 +412,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			quiet_mode = 1;
 			break;
 		case 'R':
+			config_options_used = true;
 			m->use_random_bootstrap_cpu = 1;
 			machine_specific_options_used = true;
 			break;
@@ -383,6 +421,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			machine_specific_options_used = true;
 			break;
 		case 'S':
+			config_options_used = true;
 			m->random_mem_contents = 1;
 			machine_specific_options_used = true;
 			break;
@@ -406,6 +445,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			verbose ++;
 			break;
 		case 'X':
+			config_options_used = true;
 			m->display_md.in_use = 1;
 			machine_specific_options_used = true;
 			/*  FALL-THROUGH  */
@@ -413,6 +453,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			console_allow_slaves(1);
 			break;
 		case 'Y':
+			config_options_used = true;
 			m->display_md.scaledown = atoi(optarg);
 			if (m->display_md.scaledown < -1) {
 				m->display_md.scaleup = - m->display_md.scaledown;
@@ -425,11 +466,13 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			machine_specific_options_used = true;
 			break;
 		case 'Z':
+			config_options_used = true;
 			m->n_gfx_cards = atoi(optarg);
 			using_switch_Z = true;
 			machine_specific_options_used = true;
 			break;
 		case 'z':
+			config_options_used = true;
 			m->display_md.n_display_names ++;
 			CHECK_ALLOCATION(m->display_md.display_names = (char **) realloc(
 			    m->display_md.display_names,
@@ -450,6 +493,22 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 
 	extra_argc = argc;
 	extra_argv = argv;
+
+	/*  A machine configuration file (instead of a program to load)?  */
+	if (type == NULL && subtype == NULL && extra_argc == 1 &&
+	    machine_config_is_config_file(extra_argv[0])) {
+		if (config_options_used) {
+			fprintf(stderr, "Options which describe the machine "
+			    "(such as -d, -M, or -X) can't be used with\na "
+			    "machine configuration file; change the file "
+			    "instead (%s --edit %s).\n", progname,
+			    extra_argv[0]);
+			exit(1);
+		}
+		config_file = extra_argv[0];
+		extra_argc = 0;
+		return 0;
+	}
 
 	// If -V is used, -q is ignored.
 	if (single_step && quiet_mode) {
@@ -503,6 +562,11 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 	if (extra_argc == 0) {
 		if (using_switch_d) {
 			/*  Booting directly from a disk image...  */
+		} else if (type == NULL && subtype == NULL &&
+		    !config_options_used) {
+			/*  No machine: show the configuration window:  */
+			want_ui = true;
+			return 0;
 		} else {
 			usage(false);
 			fprintf(stderr, "\nNo filename given. Aborting.\n");
@@ -544,10 +608,8 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 /*
  *  main():
  *
- *  Two kinds of emulations are started from here:
- *
- *	o)  Simple emulations, using command line arguments.
- *	o)  Emulations set up by parsing special config files. (0 or more.)
+ *  Emulations are set up either from command line arguments, or from a
+ *  machine configuration file (see machine_config.c).
  */
 int main(int argc, char *argv[])
 {
@@ -558,7 +620,6 @@ int main(int argc, char *argv[])
 	int constant_false = 0;
 
 	struct emul *emul;
-	bool using_config_file = false;
 	char *tap_devname = NULL;
 	char **diskimages = NULL;
 	int n_diskimages = 0;
@@ -611,7 +672,50 @@ int main(int argc, char *argv[])
 	settings_add(global_settings, "emul", 1,
 	    SETTINGS_TYPE_SUBSETTINGS, 0, emul->settings);
 
+	/*  --edit [machine.json] (anywhere among the options):  */
+	for (i = 1; i < argc; i++)
+		if (strcmp(argv[i], "--edit") == 0) {
+			int n = 1;
+			if (i + 1 < argc && argv[i + 1][0] != '-') {
+				edit_path = argv[i + 1];
+				n = 2;
+			}
+			memmove(&argv[i], &argv[i + n],
+			    sizeof(char *) * (argc - i - n + 1));
+			argc -= n;
+			want_ui = true;
+			break;
+		}
+
 	get_cmd_args(argc, argv, emul, &diskimages, &n_diskimages, &tap_devname);
+
+	/*
+	 *  Without a machine on the command line, or with --edit, show the
+	 *  window for choosing, creating, and editing machines, and start the
+	 *  machine chosen:
+	 */
+	struct machine_config *chosen = NULL;
+	if (want_ui) {
+		if (config_file != NULL || emul->machines[0]->machine_type !=
+		    MACHINE_NONE || n_diskimages > 0) {
+			fprintf(stderr, "--edit can't be used with a machine "
+			    "on the command line.\n");
+			return 1;
+		}
+		if (!config_ui_available()) {
+			if (edit_path == NULL) {
+				usage(false);
+				fprintf(stderr, "\nNo filename given. "
+				    "Aborting.\n");
+				return 1;
+			}
+			fprintf(stderr, "--edit needs a window system.\n");
+			return 1;
+		}
+		chosen = config_ui_run(edit_path);
+		if (chosen == NULL)
+			return 0;
+	}
 
 	if (!skip_srandom_call) {
 		struct timeval tv;
@@ -629,8 +733,34 @@ int main(int argc, char *argv[])
 	if (!quiet_mode)
 		print_banner();
 
-	/*  Simple initialization, from command line arguments:  */
-	if (emul->machines[0]->machine_type != MACHINE_NONE) {
+	if (chosen != NULL) {
+		/*  Set up the machine chosen in the window:  */
+		if (!machine_config_apply(chosen, emul, emul->machines[0])) {
+			fprintf(stderr, "Could not initialize the "
+			    "emulation.\n");
+			return 1;
+		}
+		machine_config_free(chosen);
+	} else if (config_file != NULL) {
+		/*  Set up the machine from a configuration file:  */
+		char *err;
+		struct machine_config *c = machine_config_load(config_file,
+		    &err);
+
+		if (c == NULL) {
+			fprintf(stderr, "%s\n", err);
+			free(err);
+			return 1;
+		}
+		appdirs_add_recent(c->path);
+		if (!machine_config_apply(c, emul, emul->machines[0])) {
+			fprintf(stderr, "Could not initialize the "
+			    "emulation.\n");
+			return 1;
+		}
+		machine_config_free(c);
+	} else if (emul->machines[0]->machine_type != MACHINE_NONE) {
+		/*  Simple initialization, from command line arguments:  */
 		for (i=0; i<n_diskimages; i++) {
 			if (diskimage_add(emul->machines[0], diskimages[i]) < 0) {
 				fprintf(stderr, "Aborting.\n");
@@ -638,51 +768,10 @@ int main(int argc, char *argv[])
 			}
 		}
 
-		/*  Make sure that there are no configuration files as well:  */
-		for (i=1; i<argc; i++)
-			if (argv[i][0] == '@') {
-				fprintf(stderr, "You can either start one "
-				    "emulation with one machine directly from "
-				    "the command\nline, or start an "
-				    "emulation using a configuration file."
-				    " Not both.\n");
-				return 1;
-			}
-
 		/*  Initialize one emul:  */
 		if (!emul_simple_init(emul, tap_devname)) {
 			fprintf(stderr, "Could not initialize the emulation.\n");
 			return 1;
-		}
-	}
-
-	/*  Initialize an emulation from a config file:  */
-	for (i=1; i<argc; i++) {
-		if (argv[i][0] == '@') {
-			char *s = argv[i] + 1;
-
-			if (using_config_file) {
-				fprintf(stderr, "More than one configuration "
-				    "file cannot be used.\n");
-				return 1;
-			}
-
-			if (strlen(s) == 0 && i+1 < argc && *argv[i+1] != '@')
-				s = argv[++i];
-
-			/*  Destroy the temporary emul, since it will
-			    be overwritten:  */
-			if (emul != NULL) {
-				emul_destroy(emul);
-				emul = NULL;
-			}
-
-			emul = emul_create_from_configfile(s);
-
-			settings_add(global_settings, "emul", 1,
-			    SETTINGS_TYPE_SUBSETTINGS, 0, emul->settings);
-
-			using_config_file = true;
 		}
 	}
 
@@ -745,6 +834,13 @@ int main(int argc, char *argv[])
 
 	settings_remove_all(global_settings);
 	settings_destroy(global_settings);
+
+	if (restart_edit_path != NULL) {
+		execlp(progname, progname, "--edit", restart_edit_path,
+		    (char *) NULL);
+		perror(progname);
+		return 1;
+	}
 
 	return 0;
 }

@@ -7,7 +7,8 @@
 
 CFLAGS=$(CWARNINGS) $(COPTIM) $(DISPLAYINCLUDE) $(DINCLUDE)
 
-OBJS=console.o display.o display_files.o display_menu.o display_sdl.o
+OBJS=config_ui.o console.o display.o display_files.o display_menu.o \
+	display_sdl.o microui.o
 
 all: $(OBJS)
 

@@ -62,12 +62,7 @@ bool emul_machine_setup(struct machine *machine, int n_load, char **load_names,
 	int n_devices, char **device_names);
 void emul_dumpinfo(struct emul *e);
 bool emul_simple_init(struct emul *emul, char* tap_devname);
-struct emul *emul_create_from_configfile(char *fname);
 void emul_run(struct emul *emul);
-
-
-/*  emul_parse.c:  */
-void emul_parse_config(struct emul *e, char *fname);
 
 
 #endif	/*  EMUL_H  */

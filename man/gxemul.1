@@ -41,7 +41,10 @@
 .Op file Ar ...
 .Nm
 .Op general options
-.Ar @configfile
+.Ar machine.json
+.Nm
+.Op general options
+.Op Fl -edit Op Ar machine.json
 .Nm
 .Fl H
 .Sh DESCRIPTION
@@ -66,7 +69,24 @@ The emulator can be invoked in the following ways:
 1. When emulating a complete machine, configuration options can be
 supplied directly on the command line.
 .Pp
-2. Options can be read from a configuration file.
+2. The machine can be described by a configuration file,
+.Pa machine.json ,
+given as the only argument (with general options, but not options which
+describe the machine).
+.Pp
+3. Started without arguments (other than general options),
+.Nm
+shows a window with the recently used machines, where machines can be
+created from presets, edited, and started.
+.Fl -edit
+opens a configuration file in that window, to edit it (a new one, if it
+doesn't exist).
+The window needs a build with SDL.
+.Pp
+The format of
+.Pa machine.json ,
+and where the list of recently used machines is kept, are described in the
+HTML documentation (configfiles.html).
 .Pp
 The easiest way to use the emulator is to supply settings directly on the 
 command line.
@@ -425,12 +445,10 @@ to with
 Ports are assigned from 4000 and up, skipping ports already in use, and are
 listed when the emulation starts. Output sent before a client connects
 (up to 64 KB) is sent when it connects. Only one client at a time can be
-connected to a port. This is the default when using configuration files with
-more than one machine specified, or if
+connected to a port. This is the default if
 .Fl X
-is used. When starting up a simple emulation
-session with settings directly on the command line (or when using configuration
-files with a single machine specification), and neither
+is used. When starting up an emulation session without
+a framebuffer, and neither
 .Fl X
 nor
 .Fl x
@@ -441,9 +459,13 @@ started in.
 .Pp
 Configuration file startup:
 .Bl -tag -width Ds
-.It @ Ar configfile
-Start an emulation based on the contents of
-.Ar "configfile".
+.It Ar machine.json
+Start the machine described by
+.Ar machine.json .
+.It Fl -edit Op Ar machine.json
+Open the configuration window, with
+.Ar machine.json
+in its editor.
 .El
 .Sh EXAMPLES
 The following command will start NetBSD/pmax on an emulated DECstation 
@@ -454,11 +476,11 @@ The following command will start NetBSD/pmax on an emulated DECstation
 nbsd_pmax.img should be a raw disk image containing a bootable 
 NetBSD/pmax filesystem.
 .Pp
-The following command will start an emulation session based on settings in 
-the configuration file "mysession". The \-v option tells gxemul to be
-verbose.
+The following command will start the machine described by the
+configuration file "mysession/machine.json". The \-v option tells gxemul
+to be verbose.
 .Pp
-.Dl "gxemul -v @mysession"
+.Dl "gxemul -v mysession/machine.json"
 .Pp
 If you have compiled the small Hello World program mentioned in the
 .Nm

@@ -151,56 +151,35 @@ dd if=/dev/zero of=swap bs=1024 count=262144
 cd /; umount /mnt; halt</b>
 </pre></td></tr></table>
   <p>
-  <li>Create a configuration file called <tt>config_client</tt>:
+  <li>Create a configuration file called <tt>client.json</tt>:
 <table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<font color="#2020cf">!  Configuration file for running NetBSD/sgimips diskless with
-!  a NetBSD/pmax machine as the nfs server.</font>
-
-<b>net(
-	add_remote("localhost:12444")   </b>! the server<b>
-	local_port(12445)               </b>! the client<b>
-)
-
-machine(
-	name("client machine")
-	serial_nr(1)
-
-        type("sgi")
-        subtype("o2")
-	use_x11(1)
-	memory(256)
-
-        load("netbsd-INSTALL32_IP3x.gz")</b>
-        ! load("netbsd-GENERIC32_IP3x.gz")<b>
-)
-</b>
+{
+  "gxemul": 1,
+  "name": "client machine",
+  "machine": { "serial_nr": 1, "type": "sgi", "model": "o2", "memory_mb": 256 },
+  "boot": { "load": [ "netbsd-INSTALL32_IP3x.gz" ] },
+  "display": { "enabled": true },
+  "network": { "remotes": [ "localhost:12444" ], "local_port": 12445 }
+}
 </pre></td></tr></table>
 	... and another configuration file for the server,
-	<tt>config_server</tt>:
+	<tt>server.json</tt>:
 <table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<b>net(
-	local_port(12444)               </b>! the server<b>
-	add_remote("localhost:12445")   </b>! the client<b>
-)
-
-machine(
-	name("nfs server")
-	serial_nr(2)
-
-        type("dec")
-        subtype("5000/200")
-
-        disk("nbsd_pmax.img")
-)
-</b>
+{
+  "gxemul": 1,
+  "name": "nfs server",
+  "machine": { "serial_nr": 2, "type": "decstation", "model": "3max" },
+  "drives": [ { "file": "nbsd_pmax.img" } ],
+  "network": { "local_port": 12444, "remotes": [ "localhost:12445" ] }
+}
 </pre></td></tr></table>
   <li>Boot the "<tt>nfs server</tt>" and the NetBSD/sgimips
 	"<tt>client machine</tt>" as two separate emulator instances:<pre>
 	in one xterm:
-	<b>gxemul @config_server</b>
+	<b>gxemul server.json</b>
 
 	and then, in another xterm:
-	<b>gxemul @config_client</b>
+	<b>gxemul client.json</b>
 
 </pre>
   <li>In the NetBSD/sgimips window, choose "<tt>x: Exit Install System</tt>"
@@ -213,7 +192,7 @@ machine(
 	on the server machine and type <tt><b>reboot</b></tt>.
   <p>
   <li>Once everything has been set up correctly, change
-	<tt>netbsd-INSTALL32_IP3x.gz</tt> in <tt>config_client</tt> to
+	<tt>netbsd-INSTALL32_IP3x.gz</tt> in <tt>client.json</tt> to
 	<tt>netbsd-GENERIC32_IP3x.gz</tt> (the GENERIC kernel).
 </ol>
 
@@ -224,8 +203,8 @@ actually does on the network.
 <p>It should now be possible to boot NetBSD/sgimips using the NetBSD/pmax
 nfs server, using the following commands: (NOTE! Execute these two 
 commands in separate xterms!)<pre>
-	<b>gxemul @config_server</b>
-	<b>gxemul @config_client</b>
+	<b>gxemul server.json</b>
+	<b>gxemul client.json</b>
 </pre>
 
 <p>If/when asked for "<tt>root device:</tt>" etc. on the client machine, enter
@@ -336,58 +315,35 @@ halt</b>
 	<a href="http://ftp.eu.openbsd.org/pub/OpenBSD/6.8/sgi/bsd.rd.IP32">http://ftp.eu.openbsd.org/pub/OpenBSD/6.8/sgi/bsd.rd.IP32</a>
 
 </pre>
-  <li>Create a configuration file called <tt>config_client</tt>:
+  <li>Create a configuration file called <tt>client.json</tt>:
 <table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<font color="#2020cf">!  Configuration file for running OpenBSD/sgi diskless with
-!  a NetBSD/pmax machine as the nfs server.
-!
-!  This config file is for the client.</font>
-
-<b>net(
-	add_remote("localhost:12444")   </b>! the server<b>
-	local_port(12445)               </b>! the client<b>
-)
-
-machine(
-	name("client machine")
-	serial_nr(1)
-
-        type("sgi")
-        subtype("o2")
-	use_x11(1)
-	memory(1024)
-
-        load("bsd.rd.IP32")
-        ! load("bsd.IP32")
-)
-</b>
+{
+  "gxemul": 1,
+  "name": "client machine",
+  "machine": { "serial_nr": 1, "type": "sgi", "model": "o2", "memory_mb": 1024 },
+  "boot": { "load": [ "bsd.rd.IP32" ] },
+  "display": { "enabled": true },
+  "network": { "remotes": [ "localhost:12444" ], "local_port": 12445 }
+}
 </pre></td></tr></table>
 	... and another configuration file for the server,
-	<tt>config_server</tt>:
+	<tt>server.json</tt>:
 <table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<b>net(
-	local_port(12444)               </b>! the server<b>
-	add_remote("localhost:12445")   </b>! the client<b>
-)
-
-machine(
-	name("nfs server")
-	serial_nr(2)
-
-        type("dec")
-        subtype("5000/200")
-
-        disk("nbsd_pmax.img")
-)
-</b>
+{
+  "gxemul": 1,
+  "name": "nfs server",
+  "machine": { "serial_nr": 2, "type": "decstation", "model": "3max" },
+  "drives": [ { "file": "nbsd_pmax.img" } ],
+  "network": { "local_port": 12444, "remotes": [ "localhost:12445" ] }
+}
 </pre></td></tr></table>
   <li>Boot the "<tt>nfs server</tt>" and the OpenBSD/sgi
 	"<tt>client machine</tt>" as two separate emulator instances:<pre>
 	in one xterm:
-	<b>gxemul @config_server</b>
+	<b>gxemul server.json</b>
 
 	and then, in another xterm:
-	<b>gxemul @config_client</b>
+	<b>gxemul client.json</b>
 
 </pre>
   <li>In the emulated OpenBSD/sgi client, type 's' for Shell and run these commands:
@@ -399,7 +355,7 @@ reboot</b>
 </pre></td></tr></table>
   <li>Change bsd.rd.IP32 to bsd.IP32 in the client configuration file.
   <li>Finally, run the client again:<pre>
-	<b>gxemul @config_client</b>
+	<b>gxemul client.json</b>
 
 </pre><p>If the root device is not auto-detected, enter <tt>mec0</tt>.
 

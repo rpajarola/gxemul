@@ -122,52 +122,34 @@ cd /tftpboot/dev; sh MAKEDEV all
 cd /; umount /mnt; halt</b>
 </pre></td></tr></table>
   <p>
-  <li>Create a configuration file called <tt>config_client</tt>:
+  <li>Create a configuration file called <tt>client.json</tt>:
 <table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<font color="#2020cf">!  Configuration file for running NetBSD/pmppc diskless with
-!  a NetBSD/pmax machine as the nfs server.</font>
-
-<b>net(
-	add_remote("localhost:12444")   </b>! the server<b>
-	local_port(12445)               </b>! the client<b>
-)
-
-machine(
-	name("client machine")
-	serial_nr(1)
-
-        type("pmppc")
-
-        load("netbsd-PMPPC.gz")</b>
-)
-</b>
+{
+  "gxemul": 1,
+  "name": "client machine",
+  "machine": { "serial_nr": 1, "type": "pmppc" },
+  "boot": { "load": [ "netbsd-PMPPC.gz" ] },
+  "network": { "remotes": [ "localhost:12444" ], "local_port": 12445 }
+}
 </pre></td></tr></table>
 	... and another configuration file for the server,
-	<tt>config_server</tt>:
+	<tt>server.json</tt>:
 <table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<b>net(
-	local_port(12444)               </b>! the server<b>
-	add_remote("localhost:12445")   </b>! the client<b>
-)
-
-machine(
-	name("nfs server")
-	serial_nr(2)
-
-        type("dec")
-        subtype("5000/200")
-
-        disk("nbsd_pmax.img")
-)
-</b>
+{
+  "gxemul": 1,
+  "name": "nfs server",
+  "machine": { "serial_nr": 2, "type": "decstation", "model": "3max" },
+  "drives": [ { "file": "nbsd_pmax.img" } ],
+  "network": { "local_port": 12444, "remotes": [ "localhost:12445" ] }
+}
 </pre></td></tr></table>
 </ol>
 
 <p>It should now be possible to boot NetBSD/pmppc using the NetBSD/pmax
 nfs server, using the following commands: (NOTE! Execute these two 
 commands in separate xterms!)<pre>
-	<b>gxemul @config_server</b>
-	<b>gxemul @config_client</b>
+	<b>gxemul server.json</b>
+	<b>gxemul client.json</b>
 </pre>
 
 <p>You might want to log in as <tt>root</tt> on the server machine, and

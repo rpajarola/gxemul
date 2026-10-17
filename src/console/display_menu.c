@@ -28,7 +28,9 @@
  *  The menus of a machine's framebuffer windows, and its status line (see
  *  display.h).  The backend draws them; what the items do is here:
  *
- *	Machine:  Save Screenshot, Record Video, Enter Debugger, Quit
+ *	Machine:  Save Screenshot, Record Video, Enter Debugger, Edit
+ *		  Configuration (for a machine set up from a machine.json),
+ *		  Quit
  *	Media:    for each CD-ROM and tape drive, Load... and Eject
  *
  *  Load... opens the desktop's file chooser (display_files.c), and the
@@ -155,6 +157,23 @@ static void menu_record(struct machine *m, struct menu_item *item)
 static void menu_debugger(struct machine *m, struct menu_item *item)
 {
 	debugger_activate(0);
+}
+
+
+/*
+ *  Edit Configuration: the machine stops, and gxemul starts again with
+ *  --edit (see main()).
+ */
+extern bool emul_shutdown;
+extern char *restart_edit_path;
+
+static void menu_edit_config(struct machine *m, struct menu_item *item)
+{
+	(void) item;
+	printf("[ Edit Configuration was chosen in the menu; stopping the "
+	    "machine ]\n");
+	CHECK_ALLOCATION(restart_edit_path = strdup(m->config_path));
+	emul_shutdown = true;
 }
 
 
@@ -316,6 +335,9 @@ struct display_menus *display_menus(struct machine *m)
 	menus->debugger = menu_append(machine, MENU_ITEM_ACTION,
 	    "Enter Debugger", menu_debugger, NULL);
 	menu_append(machine, MENU_ITEM_SEPARATOR, NULL, NULL, NULL);
+	if (m->config_path != NULL)
+		menu_append(machine, MENU_ITEM_ACTION,
+		    "Edit Configuration...", menu_edit_config, NULL);
 	menu_append(machine, MENU_ITEM_ACTION, "Quit", menu_quit, NULL);
 
 	item = menu_append(menus->bar, MENU_ITEM_SUBMENU, "Media", NULL, NULL);

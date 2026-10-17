@@ -4,8 +4,8 @@
 
 CFLAGS=$(CWARNINGS) $(COPTIM) $(DISPLAYINCLUDE) $(DINCLUDE)
 
-OBJS=compat_win32.o debugmsg.o emul.o emul_parse.o float_emul.o interrupt.o main.o \
-	memory.o misc.o settings.o timer.o
+OBJS=appdirs.o cJSON.o compat_win32.o debugmsg.o emul.o float_emul.o interrupt.o \
+	machine_config.o machine_presets.o main.o memory.o misc.o settings.o timer.o
 
 all: $(OBJS)
 

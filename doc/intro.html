@@ -182,9 +182,8 @@ typing in the main controlling terminal window. However, by using the <tt>-x</tt
 command line option, each serial I/O port gets a TCP port of its own on
 localhost, from 4000 and up, which you connect to from another terminal
 window, e.g. with <tt>telnet localhost 4000</tt>. The ports are listed when
-the emulation starts. (This also happens when you use
-<a href="configfiles.html">configuration files</a> with <i>more than one</i>
-machine specified.) CTRL-B and CTRL-C both have their original meaning
+the emulation starts. (This also happens when the machine has a
+framebuffer window.) CTRL-B and CTRL-C both have their original meaning
 in those telnet sessions. (macOS no longer comes with telnet, but
 Homebrew has it: <tt>brew install telnet</tt>. On Windows, the telnet
 client is an optional feature, or PuTTY can be used.)

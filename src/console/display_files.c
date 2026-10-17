@@ -59,8 +59,19 @@ static void *open_data;
 static void chosen(const char *path)
 {
 	chooser_open = false;
-	display_backend_raise(open_machine);
+	if (open_machine != NULL)
+		display_backend_raise(open_machine);
 	open_done(open_machine, path, open_data);
+}
+
+
+/*  Shows a message in the machine's window, or prints it if none:  */
+static void files_message(struct machine *m, const char *text)
+{
+	if (m != NULL)
+		display_message(m, "%s", text);
+	else
+		fprintf(stderr, "%s\n", text);
 }
 
 
@@ -72,9 +83,11 @@ bool display_can_choose_files(void)
 }
 
 
-static bool start_chooser(const char *title, const char *start_dir)
+static bool start_chooser(const char *title, const char *start_dir,
+	const char *save_name)
 {
-	return win32_choose_file(title, start_dir);
+	return win32_choose_file(title, start_dir, save_name != NULL,
+	    save_name);
 }
 
 
@@ -165,7 +178,8 @@ static void append_applescript(char *buf, size_t len, const char *text)
 }
 
 
-static bool start_chooser(const char *title, const char *start_dir)
+static bool start_chooser(const char *title, const char *start_dir,
+	const char *save_name)
 {
 	const char *argv[8];
 	char script[3000], arg1[300], arg2[1100];
@@ -173,13 +187,18 @@ static bool start_chooser(const char *title, const char *start_dir)
 
 	switch (which_chooser()) {
 	case OSASCRIPT:
-		snprintf(script, sizeof(script),
-		    "activate\nset chosen to choose file with prompt ");
+		snprintf(script, sizeof(script), "activate\nset chosen to %s "
+		    "with prompt ", save_name != NULL ? "choose file name" :
+		    "choose file");
 		append_applescript(script, sizeof(script), title);
 		if (start_dir != NULL) {
 			strcat(script, " default location (POSIX file ");
 			append_applescript(script, sizeof(script), start_dir);
 			strcat(script, ")");
+		}
+		if (save_name != NULL) {
+			strcat(script, " default name ");
+			append_applescript(script, sizeof(script), save_name);
 		}
 		strcat(script, "\nreturn POSIX path of chosen\n");
 		argv[argc++] = "osascript";
@@ -190,11 +209,14 @@ static bool start_chooser(const char *title, const char *start_dir)
 	case ZENITY:
 		argv[argc++] = "zenity";
 		argv[argc++] = "--file-selection";
+		if (save_name != NULL)
+			argv[argc++] = "--save";
 		snprintf(arg1, sizeof(arg1), "--title=%s", title);
 		argv[argc++] = arg1;
-		if (start_dir != NULL) {
-			snprintf(arg2, sizeof(arg2), "--filename=%s/",
-			    start_dir);
+		if (start_dir != NULL || save_name != NULL) {
+			snprintf(arg2, sizeof(arg2), "--filename=%s/%s",
+			    start_dir != NULL ? start_dir : ".",
+			    save_name != NULL ? save_name : "");
 			argv[argc++] = arg2;
 		}
 		break;
@@ -203,8 +225,13 @@ static bool start_chooser(const char *title, const char *start_dir)
 		argv[argc++] = "kdialog";
 		argv[argc++] = "--title";
 		argv[argc++] = title;
-		argv[argc++] = "--getopenfilename";
-		argv[argc++] = start_dir != NULL ? start_dir : ".";
+		argv[argc++] = save_name != NULL ? "--getsavefilename" :
+		    "--getopenfilename";
+		snprintf(arg2, sizeof(arg2), "%s%s%s",
+		    start_dir != NULL ? start_dir : ".",
+		    save_name != NULL ? "/" : "",
+		    save_name != NULL ? save_name : "");
+		argv[argc++] = arg2;
 		break;
 
 	default:
@@ -285,18 +312,19 @@ void display_files_poll(void)
 
 
 /*
- *  display_choose_file():
+ *  display_choose_file(), display_choose_new_file():
  *
- *  Opens a file chooser.  done is called (from display_files_poll()) with
- *  the path chosen, or NULL.
+ *  Opens a file chooser, for a file to open, or for the name of a new file
+ *  (with save_name as the default).  done is called (from display_files_
+ *  poll()) with the path chosen, or NULL.  m may be NULL.
  */
-void display_choose_file(struct machine *m, const char *title,
-	const char *start_dir, files_done_func done, void *data)
+static void choose(struct machine *m, const char *title, const char *start_dir,
+	const char *save_name, files_done_func done, void *data)
 {
 	struct stat st;
 
 	if (chooser_open) {
-		display_message(m, "A file chooser is already open");
+		files_message(m, "A file chooser is already open");
 		return;
 	}
 
@@ -311,14 +339,14 @@ void display_choose_file(struct machine *m, const char *title,
 	start_dir = abs_dir;
 #endif
 
-	bool started = start_chooser(title, start_dir);
+	bool started = start_chooser(title, start_dir, save_name);
 
 #ifndef _WIN32
 	free(abs_dir);
 #endif
 
 	if (!started) {
-		display_message(m, "Could not open a file chooser");
+		files_message(m, "Could not open a file chooser");
 		return;
 	}
 
@@ -326,4 +354,23 @@ void display_choose_file(struct machine *m, const char *title,
 	open_machine = m;
 	open_done = done;
 	open_data = data;
+}
+
+void display_choose_file(struct machine *m, const char *title,
+	const char *start_dir, files_done_func done, void *data)
+{
+	choose(m, title, start_dir, NULL, done, data);
+}
+
+void display_choose_new_file(struct machine *m, const char *title,
+	const char *start_dir, const char *save_name, files_done_func done,
+	void *data)
+{
+	choose(m, title, start_dir, save_name != NULL ? save_name : "",
+	    done, data);
+}
+
+bool display_chooser_open(void)
+{
+	return chooser_open;
 }

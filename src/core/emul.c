@@ -794,26 +794,6 @@ bool emul_simple_init(struct emul *emul, char* tap_devname)
 
 
 /*
- *  emul_create_from_configfile():
- *
- *  Create an emul struct by reading settings from a configuration file.
- */
-struct emul *emul_create_from_configfile(char *fname)
-{
-	struct emul *e = emul_new(fname);
-
-	debugmsg(SUBSYS_EMUL, "", VERBOSITY_INFO, "using configfile \"%s\"", fname);
-
-	debug_indentation(1);
-
-	emul_parse_config(e, fname);
-
-	debug_indentation(-1);
-	return e;
-}
-
-
-/*
  *  emul_run():
  *
  *	o)  Set up things needed before running an emulation.

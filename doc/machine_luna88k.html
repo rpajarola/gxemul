@@ -274,53 +274,26 @@ halt</b>
 	<a href="http://ftp.eu.openbsd.org/pub/OpenBSD/6.8/luna88k/bsd.rd">http://ftp.eu.openbsd.org/pub/OpenBSD/6.8/luna88k/bsd.rd</a>
 
 </pre>
-  <li>Create a configuration file called <tt>config_client</tt>:
+  <li>Create a configuration file called <tt>client.json</tt>:
 <table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<font color="#2020cf">!  Configuration file for running OpenBSD/luna88k diskless with
-!  a NetBSD/pmax machine as the nfs server.
-!
-!  This config file is for the client.</font>
-
-<b>net(
-	add_remote("localhost:12444")   </b>! the server<b>
-	local_port(12445)               </b>! the client<b>
-)
-
-machine(
-	name("client machine")
-	serial_nr(1)
-
-        type("luna88k")
-        subtype("luna-88k")
-	! use_x11(1)
-
-	! For multiprocessor experiments:
-	! ncpus(4)
-        ! load("bsd.mp")
-
-        ! load("bsd.rd")
-        load("bsd")
-)
-</b>
+{
+  "gxemul": 1,
+  "name": "client machine",
+  "machine": { "serial_nr": 1, "type": "luna88k", "model": "luna-88k" },
+  "boot": { "load": [ "bsd" ] },
+  "network": { "remotes": [ "localhost:12444" ], "local_port": 12445 }
+}
 </pre></td></tr></table>
 	... and another configuration file for the server,
-	<tt>config_server</tt>:
+	<tt>server.json</tt>:
 <table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<b>net(
-	local_port(12444)               </b>! the server<b>
-	add_remote("localhost:12445")   </b>! the client<b>
-)
-
-machine(
-	name("nfs server")
-	serial_nr(2)
-
-        type("dec")
-        subtype("5000/200")
-
-        disk("nbsd_pmax.img")
-)
-</b>
+{
+  "gxemul": 1,
+  "name": "nfs server",
+  "machine": { "serial_nr": 2, "type": "decstation", "model": "3max" },
+  "drives": [ { "file": "nbsd_pmax.img" } ],
+  "network": { "local_port": 12444, "remotes": [ "localhost:12445" ] }
+}
 </pre></td></tr></table>
 
   <li>Download an OpenBSD/sgi RAMDISK kernel (only used to run MAKEDEV):<pre>
@@ -328,40 +301,25 @@ machine(
 
 </pre>
 
-  <li>Create a configuration file called <tt>config_client_sgi</tt>:
+  <li>Create a configuration file called <tt>client_sgi.json</tt>:
 <table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<font color="#2020cf">!  Configuration file for running OpenBSD/sgi diskless with
-!  a NetBSD/pmax machine as the nfs server.
-!
-!  This config file is for the client.</font>
-
-<b>net(
-	add_remote("localhost:12444")   </b>! the server<b>
-	local_port(12445)               </b>! the client<b>
-)
-
-machine(
-	name("client machine")
-	serial_nr(1)
-
-        type("sgi")
-        subtype("o2")
-	use_x11(1)
-	memory(1024)
-
-        load("bsd.rd.IP32")
-        ! load("bsd.IP32")
-)
-</b>
+{
+  "gxemul": 1,
+  "name": "client machine",
+  "machine": { "serial_nr": 1, "type": "sgi", "model": "o2", "memory_mb": 1024 },
+  "boot": { "load": [ "bsd.rd.IP32" ] },
+  "display": { "enabled": true },
+  "network": { "remotes": [ "localhost:12444" ], "local_port": 12445 }
+}
 </pre></td></tr></table>
 
   <li>Boot the "nfs server" and the OpenBSD/sgi
 	"client machine" as two separate emulator instances:<pre>
 	in one xterm:
-	<b>gxemul @config_server</b>
+	<b>gxemul server.json</b>
 
 	and then, in another xterm:
-	<b>gxemul @config_client_sgi</b>
+	<b>gxemul client_sgi.json</b>
 
 </pre>
 
@@ -373,7 +331,7 @@ cd /mnt/dev; ./MAKEDEV all; cd /; umount /mnt
 halt -p</b>
 </pre></td></tr></table>
   <li>Finally, run the luna88k client:<pre>
-	<b>gxemul @config_client</b>
+	<b>gxemul client.json</b>
 
 </pre>
 	When asked about root device, enter <tt>le0</tt>.
@@ -381,8 +339,8 @@ halt -p</b>
 
 
 <p><br>
-If you want to run with the graphical framebuffer, uncomment the
-<tt>use_x11(1)</tt> line in <tt>config_client</tt> first.
+If you want to run with the graphical framebuffer, add
+<tt>"display": { "enabled": true }</tt> to <tt>client.json</tt> first.
 Unfortunately, Xorg lacks a driver for <tt>wsfb</tt> in OpenBSD/luna88k
 6.8, which is needed.
 
@@ -412,9 +370,10 @@ a slower total emulation speed.
 <p><a href="20210222-openbsd-luna88k-mp-1.png"><img src="20210222-openbsd-luna88k-mp-1-small.png"></a>
 <a href="20210222-openbsd-luna88k-mp-2.png"><img src="20210222-openbsd-luna88k-mp-2-small.png"></a>
 
-<p>Assuming you have done the root-on-nfs setup detailed above, uncomment
-the bsd.mp file in the configuration file, and set ncpus to the
-number of cpus (1 through 4).
+<p>Assuming you have done the root-on-nfs setup detailed above, change
+<tt>bsd</tt> to <tt>bsd.mp</tt> in <tt>client.json</tt>, and add
+<tt>"cpus"</tt> to its <tt>"machine"</tt> settings, with the number of
+cpus (1 through 4).
 
 <p>If you want to start the emulator from the command line with multiple
 processors, use the <tt>-n</tt> option.

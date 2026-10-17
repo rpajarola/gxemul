@@ -366,6 +366,7 @@ static volatile LONG chooser_finished;
 static char chooser_title[256];
 static char chooser_start[MAX_PATH];
 static char chooser_path[MAX_PATH];
+static bool chooser_save;
 static BOOL chooser_ok;
 
 static DWORD WINAPI chooser_thread_main(LPVOID param)
@@ -381,15 +382,22 @@ static DWORD WINAPI chooser_thread_main(LPVOID param)
 	ofn.lpstrTitle = chooser_title;
 
 	/*  (Without OFN_NOCHANGEDIR, the current directory would change.)  */
-	ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR |
-	    OFN_HIDEREADONLY | OFN_EXPLORER;
+	ofn.Flags = OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_HIDEREADONLY |
+	    OFN_EXPLORER;
 
-	chooser_ok = GetOpenFileNameA(&ofn);
+	if (chooser_save) {
+		ofn.Flags |= OFN_OVERWRITEPROMPT;
+		chooser_ok = GetSaveFileNameA(&ofn);
+	} else {
+		ofn.Flags |= OFN_FILEMUSTEXIST;
+		chooser_ok = GetOpenFileNameA(&ofn);
+	}
 	InterlockedExchange(&chooser_finished, 1);
 	return 0;
 }
 
-bool win32_choose_file(const char *title, const char *start_dir)
+bool win32_choose_file(const char *title, const char *start_dir, bool save,
+	const char *default_name)
 {
 	if (chooser_thread != NULL)
 		return false;
@@ -400,7 +408,9 @@ bool win32_choose_file(const char *title, const char *start_dir)
 	for (char *p = chooser_start; *p != '\0'; p++)
 		if (*p == '/')
 			*p = '\\';
-	chooser_path[0] = '\0';
+	snprintf(chooser_path, sizeof(chooser_path), "%s",
+	    default_name != NULL ? default_name : "");
+	chooser_save = save;
 	chooser_finished = 0;
 
 	chooser_thread = CreateThread(NULL, 0, chooser_thread_main, NULL, 0,

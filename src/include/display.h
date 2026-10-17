@@ -171,6 +171,10 @@ typedef void (*files_done_func)(struct machine *, const char *path,
 bool display_can_choose_files(void);
 void display_choose_file(struct machine *, const char *title,
 	const char *start_dir, files_done_func done, void *data);
+void display_choose_new_file(struct machine *, const char *title,
+	const char *start_dir, const char *save_name, files_done_func done,
+	void *data);
+bool display_chooser_open(void);
 void display_files_poll(void);
 
 

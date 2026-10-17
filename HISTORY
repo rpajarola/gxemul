@@ -5267,3 +5267,19 @@ Changelog for GXemul:
 		REQUEST (logical block address out of range), as on a real
 		drive. (4.4BSD reads CD-ROMs: its disk label for one has only
 		partition a, e.g. mount -t cd9660 -r /dev/rz4a /mnt.)
+20261017	Machine configurations are JSON files (machine.json, usually
+		in a directory of their own, with the machine's disk and ROM
+		images; file names in them are relative to that directory).
+		"gxemul machine.json" starts one; the old configuration file
+		format (gxemul @configfile) is gone. Started without
+		arguments, gxemul shows a window with the recently used
+		machines, where machines are created from presets (DECstations
+		with PROM emulation or a real ROM, an SGI O2, the MIPS test
+		machine), edited (machine, boot, drives, display, TURBOchannel
+		option ROMs, network), and started; "gxemul --edit
+		machine.json" opens one in it, and a running machine has Edit
+		Configuration... in its Machine menu. Missing disk images are
+		created when a machine is saved. The list of recent machines
+		is kept in ~/Library/Application Support/gxemul (macOS),
+		%APPDATA%\gxemul (Windows), or ~/.config/gxemul; new machines
+		go in ~/GXemul. Uses cJSON and microui (MIT licensed).

@@ -157,25 +157,18 @@ command line option, e.g.:
 <p><pre>gxemul -e 3max <b>-L /dev/tap0</b> -d nbsd_pmax.img
 </pre>
 
-<p>Here is a simple example of how to enable it when using configuration
-files:
+<p>In a <a href="configfiles.html">machine.json</a> file, it is the
+<tt>tapdev</tt> network setting (Network, Tap device, in the configuration
+window):
 
 <p><pre>
-<font color="#2020cf">!  Configuration file for
-!  virtual Ethernet switch networking
-!  using a tap device.</font>
-
-<b>net(</b>
-	<b>tapdev(</b><font color="#ff003f">"/dev/tap0"</font><b>)</b>
-<b>)</b>
-<b>machine(</b>
-	<b>name(<font color="#ff003f">"guest machine"</font>)</b>
-
-	<b>type(<font color="#ff003f">"dec"</font>)</b>
-	<b>subtype(<font color="#ff003f">"5000/200"</font>)</b>
-
-	<font color="#2020cf">!  Add a disk, etc.</font>
-<b>)</b>
+{
+  "gxemul": 1,
+  "name": "guest machine",
+  "machine": { "type": "decstation", "model": "3max" },
+  "drives": [ { "file": "nbsd_pmax.img" } ],
+  "network": { "tapdev": "/dev/tap0" }
+}
 </pre>
 
 <p>Before starting the emulator, you will need to create the <i>tap</i>
@@ -203,12 +196,9 @@ Here is an example for NetBSD:
 <b># brconfig add tap0 add wm0</b>
 </pre>
 
-<p>Although it <i>is</i> possible to have more than one machine per 
-configuration file, I strongly recommend against it. Please use one 
-configuration file for one emulated machine.  Each configuration file
-must have a unique <i>tap</i> instance, and machines in separate
-configuration files must use bridged <i>tap</i> devices if they wish
-to communicate with each other as if on the same LAN.
+<p>Each emulated machine must have a <i>tap</i> instance of its own, and
+machines must use bridged <i>tap</i> devices if they wish to communicate
+with each other as if on the same LAN.
 
 <p><small>(The section above is written by Jason Thorpe.)</small>
 
@@ -220,59 +210,51 @@ to communicate with each other as if on the same LAN.
 
 <p>The way to emulate a network of multiple emulated machines, whether 
 they are actually running on the same physical host, or on multiple hosts, 
-is to use <a href="configfiles.html">configuration files</a>, and the
+is to run one emulator per machine, each with a
+<a href="configfiles.html">machine.json</a> of its own, and the
 "direct-access" method of networking.
 
-<p>Although it <i>is</i> possible to have more than one machine per 
-configuration file, I strongly recommend against it. Please use one 
-configuration file for one emulated machine.
-
-<p>Here is a simple example:
+<p>Here is a simple example, a client machine netbooting off another
+machine:
 
 <p><table border="0" width="100%"><tr><td width="40">&nbsp;</td>
 <td><pre>
-<font color="#2020cf">!  Configuration file for a
-!  "client" machine, netbooting
-!  of another machine.</font>
-
-<b>net(</b>
-	<b>local_port(15000)</b>
-	<b>add_remote(<font color="#ff003f">"localhost:15001"</font>)</b>
-<b>)</b>
-<b>machine(</b>
-	<b>name(<font color="#ff003f">"client machine"</font>)</b>
-	<b>serial_nr(1)</b>	<font color="#2020cf">!  10.0.0.1</font>
-
-	<b>type(<font color="#ff003f">"sgi"</font>)</b>
-	<b>subtype(<font color="#ff003f">"o2"</font>)</b>
-        <b>load(<font color="#ff003f">"netbsd-GENERIC32_IP3x.gz"</font>)</b>
-<b>)</b>
+{
+  "gxemul": 1,
+  "name": "client machine",
+  "machine": { "type": "sgi", "model": "o2",
+               "serial_nr": 1 },
+  "boot": { "load": [ "netbsd-GENERIC32_IP3x.gz" ] },
+  "network": {
+    "local_port": 15000,
+    "remotes": [ "localhost:15001" ]
+  }
+}
 </pre></td><td width="20">&nbsp;</td><td><pre>
-<font color="#2020cf">!  Configuration file for the
-!  "server" machine.</font>
-
-<b>net(</b>
-	<b>local_port(15001)</b>
-	<b>add_remote(<font color="#ff003f">"localhost:15000"</font>)</b>
-<b>)</b>
-<b>machine(</b>
-	<b>name(<font color="#ff003f">"nfs server"</font>)</b>
-	<b>serial_nr(2)</b>	<font color="#2020cf">!  10.0.0.2</font>
-
-        <b>type(<font color="#ff003f">"dec"</font>)</b>
-        <b>subtype(<font color="#ff003f">"3max"</font>)</b>
-        <b>disk(<font color="#ff003f">"nbsd_pmax.img"</font>)</b>
-<b>)</b>
+{
+  "gxemul": 1,
+  "name": "nfs server",
+  "machine": { "type": "decstation", "model": "3max",
+               "serial_nr": 2 },
+  "drives": [ { "file": "nbsd_pmax.img" } ],
+  "network": {
+    "local_port": 15001,
+    "remotes": [ "localhost:15000" ]
+  }
+}
 </pre></td><td width="20">&nbsp;</td></tr></table>
+
+<p>(The serial numbers make the machines' Ethernet addresses, and
+10.0.0.1 and 10.0.0.2, different.)
 
 <p>This example creates a network using the default settings (10.0.0.0/8), 
 but it also uses the direct-access networking mode to allow the network 
-to be connected to other emulator instances. <tt>local_port(15000)</tt> 
+to be connected to other emulator instances. <tt>"local_port": 15000</tt>
 means that anything coming in to UDP port 15000 on the host is added to 
 the network. All ethernet packets on the network are also sent out to all 
-other connected machines (those added with <tt>add_remote()</tt>).
+other connected machines (those in <tt>remotes</tt>).
 
-<p>As you can see in the example, this is a configuration file for
+<p>As you can see in the example, these are configuration files for
 netbooting a NetBSD/sgimips diskless machine, with a NetBSD/pmax machine
 acting as the nfs server. Note that the nfs server has ports 15000 and 
 15001 reversed, compared to the client!
@@ -291,27 +273,29 @@ security checking of any kind. All UDP packets arriving at the input port
 are added to the emulated ethernet. Use L2TPv3 with a cookie (below) for
 anything but a trusted network.</font>
 
-<p><b>L2TPv3:</b> With <tt>l2tp(yes)</tt>, frames are carried in static
+<p><b>L2TPv3:</b> With <tt>l2tp</tt> enabled, frames are carried in static
 L2TPv3 over UDP (RFC 3931, Ethernet as in RFC 4719), as Linux's
 <tt>ip l2tp</tt>, QEMU's <tt>-netdev l2tpv3</tt> and <tt>bootbridge
 -l2tp</tt> speak it, without the control connection:
 
 <p><table border="0"><tr><td width="40">&nbsp;</td><td><pre>
-<b>net(</b>
-	<b>local_port(1701)</b>
-	<b>add_remote(<font color="#ff003f">"192.168.1.10:1701"</font>)</b>
-	<b>l2tp(yes)</b>
-	<b>l2tp_session(1)</b>			<font color="#2020cf">!  default 1, used in both directions</font>
-	<b>l2tp_cookie(<font color="#ff003f">"0x0123456789abcdef"</font>)</b>	<font color="#2020cf">!  8 or 16 hex digits, or none</font>
-	<font color="#2020cf">!  l2tp_counter(no)		!  default yes: L2-specific sublayer</font>
-<b>)</b>
+"network": {
+  "local_port": 1701,
+  "remotes": [ "192.168.1.10:1701" ],
+  "l2tp": {
+    "enabled": true,
+    "session": 1,                       <font color="#2020cf">default 1, used in both directions</font>
+    "cookie": "0x0123456789abcdef",     <font color="#2020cf">8 or 16 hex digits, or ""</font>
+    "counter": true                     <font color="#2020cf">default true: L2-specific sublayer</font>
+  }
+}
 </pre></td></tr></table>
 
 <p>Datagrams with another session ID or cookie are dropped (a warning is
 printed for the first one), so the cookie works as a password against
 anyone who cannot see the traffic. It is sent in clear, so across
 untrusted networks carry the UDP over WireGuard or an SSH tunnel.
-Both ends must agree on the session, the cookie and <tt>l2tp_counter</tt>.
+Both ends must agree on the session, the cookie and <tt>counter</tt>.
 
 <p>In both modes, a keepalive (an Ethernet loopback frame addressed to
 the first NIC itself) is sent to the remotes every minute, so that a
@@ -334,28 +318,25 @@ program in the <tt>experiments/</tt> directory, <tt>udp_snoop</tt>, which simply
 dumps incoming UDP packets to the terminal, in hex and ASCII.
 
 <p>The easiest way to test the example is to download a <a href="ftp://ftp.netbsd.org/pub/NetBSD/NetBSD-3.1/pmax/binary/kernel/netbsd-INSTALL.gz">
-NetBSD/pmax INSTALL kernel</a>, and start the emulator with a configuration file 
-looking something like this:
+NetBSD/pmax INSTALL kernel</a>, and start the emulator with a
+configuration file, <tt>testconfig.json</tt>, looking something like this:
 
 <pre>
-	net(
-	    add_remote("localhost:12300")
-	)
-
-	machine(
-	    subtype(3max)
-	    load("netbsd-INSTALL.gz")
-	)
+	{
+	  "gxemul": 1,
+	  "machine": { "type": "decstation", "model": "3max" },
+	  "boot": { "load": [ "netbsd-INSTALL.gz" ] },
+	  "network": { "remotes": [ "localhost:12300" ] }
+	}
 </pre>
 
-<p>In addition to the machine section, you can see that there is also a 
-<tt>net()</tt> section. It defaults to emulating a 10.0.0.0/8 IPv4 NATed
-network, but there is also an additional "raw output", to UDP port 12300.
+<p>The network defaults to emulating a 10.0.0.0/8 IPv4 NATed network, but
+there is also an additional "raw output", to UDP port 12300.
 
 <p>Now, do the following:
 <ul>
   <li>Start the emulator with the configuration file, i.e.
-	<tt><b>gxemul @testconfig</b></tt>.
+	<tt><b>gxemul testconfig.json</b></tt>.
   <li>Start <tt><b>udp_snoop 12300</b></tt> in another terminal.
   <li>Inside emulated NetBSD/pmax, type <tt><b>ifconfig le0 10.0.0.1</b></tt>.
 </ul>
