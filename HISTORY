@@ -5257,3 +5257,6 @@ Changelog for GXemul:
 		them from the keyboard. Load... uses the desktop's file
 		chooser: osascript on macOS, zenity or kdialog elsewhere, and
 		the common file dialog on Windows.
+
+==============  RELEASE 1.0.2  ==============
+
