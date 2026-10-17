@@ -187,6 +187,15 @@ documentation for an example of how to use overlays.)
 Force a specific ID number.
 .El
 .Pp
+A CD-ROM or tape drive given without a
+.Ar filename
+(for example
+.Ar 4c: )
+starts empty. CD-ROM and tape images can be changed while the machine
+runs, with the Media menu of a framebuffer window, or the debugger's
+.Ic media
+command.
+.Pp
 For SCSI devices, the ID number is the SCSI ID. For IDE harddisks, the ID 
 number has the following meaning:
 .Bl -tag -width Ds
@@ -334,9 +343,13 @@ Halt if the emulated program attempts to access non-existing memory.
 .It Fl t
 Show a trace tree of all function calls being made.
 .It Fl X
-Show graphical framebuffers in windows (using SDL2, or X11 if GXemul was
-built without SDL2). Clicking in a window grabs the mouse; Ctrl+Alt
-releases it. With SDL2, a window can be resized, which scales its contents.
+Show graphical framebuffers in windows (using SDL2). Clicking in a window
+grabs the mouse; Ctrl+Alt releases it. A window can be resized, which
+scales its contents. Each window has a menu bar, with a Machine menu (to
+save a screenshot, record a video, enter the debugger, or quit) and a
+Media menu (to load and eject CD-ROM and tape images), and a status line
+showing what the CD-ROM and tape drives hold. When the mouse isn't
+grabbed, F10 opens the menus from the keyboard.
 .It Fl Y Ar n
 Scale down framebuffer windows by
 .Ar n

@@ -59,6 +59,7 @@ void display_backend_update(struct fb_window *win, int x, int y,
 	int w, int h) { }
 void display_backend_flush(struct fb_window *win) { }
 void display_backend_check_events(struct machine *m) { }
+void display_backend_raise(struct machine *m) { }
 
 #endif
 
@@ -496,10 +497,13 @@ int display_screenshot(struct machine *m, const char *file)
 			ok = 0;
 	}
 
-	if (ok)
+	if (ok) {
 		printf("saved screenshot %s\n", name);
-	else
+		display_message(m, "Saved screenshot %s", name);
+	} else {
 		printf("couldn't save screenshot %s\n", name);
+		display_message(m, "Could not save screenshot %s", name);
+	}
 	free(rgb);
 	free(name);
 	return ok ? 0 : -1;
@@ -560,6 +564,7 @@ int display_video_start(struct machine *m, const char *file)
 	}
 	if (!have_ffmpeg()) {
 		printf("recording needs ffmpeg, which wasn't found\n");
+		display_message(m, "Recording needs ffmpeg, which wasn't found");
 		return -1;
 	}
 	if ((fbwin = capture_fbwin(m)) == NULL ||
@@ -598,6 +603,7 @@ int display_video_start(struct machine *m, const char *file)
 		return -1;
 
 	printf("recording to %s\n", name);
+	display_message(m, "Recording to %s", name);
 	return 0;
 }
 
@@ -615,18 +621,47 @@ void display_video_stop(void)
 	}
 
 	FILE *f = video_pipe;
+	struct machine *m = video_fbwin->machine;
 	video_tick();
 	if (video_pipe != NULL)
 		f = video_pipe;
 	video_pipe = NULL;
 
-	if (pclose(f) == 0)
+	if (pclose(f) == 0) {
 		printf("saved video %s\n", video_file);
-	else
+		display_message(m, "Saved video %s", video_file);
+	} else {
 		printf("video %s failed\n", video_file);
+		display_message(m, "Video %s failed", video_file);
+	}
 	free(video_file);
 	video_file = NULL;
 	video_fbwin = NULL;
+}
+
+
+/*
+ *  display_video_recording():
+ *
+ *  Returns true while a framebuffer is being recorded.
+ */
+bool display_video_recording(void)
+{
+	return video_pipe != NULL;
+}
+
+
+/*
+ *  display_ticks():
+ *
+ *  Returns a millisecond counter, for timing things in the display.
+ */
+uint32_t display_ticks(void)
+{
+	struct timeval now;
+
+	gettimeofday(&now, NULL);
+	return (uint32_t) now.tv_sec * 1000 + now.tv_usec / 1000;
 }
 
 
@@ -642,5 +677,8 @@ void display_check_event(struct emul *emul)
 
 	/*  If a framebuffer is being recorded, send any frames that are due:  */
 	video_tick();
+
+	/*  Is a file chooser done?  */
+	display_files_poll();
 }
 

@@ -51,6 +51,7 @@ SUCH DAMAGE.
   <li><a href="#compilercontruct">Using GXemul in compiler contruction courses</a>
   <li><a href="#disk">How to start the emulator with a disk image</a>
   <li><a href="#tape_images">How to start the emulator with tape images</a>
+  <li><a href="#media">Changing CD-ROMs and tapes</a>
   <li><a href="#disk_overlays">How to use disk image overlays</a>
   <li><a href="#filexfer">Transfering files to/from the guest OS</a>
   <li><a href="#largeimages">How to extract large gzipped disk images</a>
@@ -303,6 +304,42 @@ each READ returns exactly one block, as on a real tape drive.
 <font color="#ff0000">Note: Tape support is most likely very buggy, 
 because it has not been tested much, and has probably also suffered 
 from bit-rot by now.</font>
+
+
+
+
+
+<p><br>
+<a name="media"></a>
+<h3>Changing CD-ROMs and tapes:</h3>
+
+<p>CD-ROMs and tapes can be ejected, and other images loaded, while the
+emulated machine runs: in a framebuffer window (with <tt>-X</tt>), with the
+<b>Media</b> menu, which has <b>Load...</b> (opening a file chooser) and
+<b>Eject</b> for each CD-ROM and tape drive, or in the debugger, with the
+<tt>media</tt> command:
+
+<pre>
+GXemul> <b>media</b>
+scsi4	SCSI 4 CD-ROM: (empty)
+GXemul> <b>media load scsi4 netbsd-cd.iso</b>
+scsi4: loaded netbsd-cd.iso
+GXemul> <b>media eject scsi4</b>
+scsi4: ejected netbsd-cd.iso
+</pre>
+
+<p>A drive can also start out empty: give the <tt>c</tt> or <tt>t</tt>
+prefix with no file name, for example <tt>-d 4c:</tt>. The status line at
+the bottom of a framebuffer window shows what each drive holds.
+
+<p>As on a real drive, the guest gets "not ready" (medium not present)
+while a drive is empty, and "unit attention" (the medium may have changed)
+once after a new image is loaded, and the guest operating system can eject
+the medium itself (e.g. with an <tt>eject</tt> command), unless it has
+prevented that. A new image is opened like the first one (read-only with
+the <tt>r</tt> prefix, or with a new temporary overlay with the
+<tt>R</tt> prefix); other overlays belong to the image, and are closed
+when it is ejected.
 
 
 

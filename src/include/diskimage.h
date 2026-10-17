@@ -96,6 +96,21 @@ struct diskimage {
 	int		tape_sense_flags;	/*  FM, EOM, ILI bits  */
 	int		tape_sense_info_valid;
 	int32_t		tape_sense_info;
+
+	/*
+	 *  Removable media (CD-ROMs and tapes) can be ejected and loaded
+	 *  while the machine runs.  Without a medium, fname is the last
+	 *  one loaded (or ""), and f is NULL.
+	 */
+	bool		no_medium;
+	bool		medium_changed;		/*  unit attention due  */
+	bool		prevent_removal;	/*  by the guest  */
+	bool		read_only;		/*  r: prefix  */
+	bool		temp_overlay;		/*  R: prefix  */
+
+	/*  Sense data for the next REQUEST SENSE (other than tapes'):  */
+	int		sense_key;
+	int		sense_asc;
 };
 
 
@@ -158,6 +173,14 @@ int diskimage_getname(struct machine *machine, int id, int type,
 int diskimage_is_a_cdrom(struct machine *machine, int id, int type);
 int diskimage_is_a_tape(struct machine *machine, int id, int type);
 void diskimage_dump_info(struct machine *machine);
+bool diskimage_is_removable(const struct diskimage *d);
+void diskimage_device_name(const struct diskimage *d, char *buf, size_t len);
+bool diskimage_load_medium(struct diskimage *d, const char *fname,
+	char *errbuf, size_t errlen);
+void diskimage_eject_medium(struct diskimage *d);
+
+/*  Changes whenever removable media are loaded or ejected:  */
+extern unsigned long diskimage_media_generation;
 
 
 /*

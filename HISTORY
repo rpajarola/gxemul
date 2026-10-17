@@ -5237,3 +5237,23 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.1  ==============
 
+20261017	CD-ROMs and tapes can be ejected, and other images loaded,
+		while the machine runs: with the debugger's new media
+		command, or the Media menu of a framebuffer window. A drive
+		given the c or t prefix without a file name (e.g. -d 4c:)
+		starts empty. As on a real drive, SCSI commands get NOT READY
+		(medium not present) while a drive is empty, and UNIT
+		ATTENTION once after a new medium is loaded; START STOP UNIT
+		with LoEj ejects the medium, unless the guest prevented that
+		with PREVENT ALLOW MEDIUM REMOVAL. REQUEST SENSE no longer
+		prints "XXX(!)".
+		Framebuffer windows have a menu bar (Machine: Save
+		Screenshot, Record Video, Enter Debugger, Quit; Media: Load...
+		and Eject for each CD-ROM and tape drive) and a status line
+		(messages, what to do with the mouse, and what the drives
+		hold), drawn with the Spleen font, as in rpajarola/tme. The
+		machine keeps running while menus are open. When the mouse
+		isn't grabbed, the menus work with the mouse, and F10 opens
+		them from the keyboard. Load... uses the desktop's file
+		chooser: osascript on macOS, zenity or kdialog elsewhere, and
+		the common file dialog on Windows.

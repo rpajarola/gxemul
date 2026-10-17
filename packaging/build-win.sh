@@ -58,7 +58,7 @@ make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 
 # Only Windows' own DLLs and SDL2.dll may be needed:
 "$OBJDUMP" -p gxemul.exe | sed -n 's/^.*DLL Name: //p' > "$work/dlls"
-if grep -viE '^(kernel32|user32|ws2_32|iphlpapi|sdl2|api-ms-win-crt-[a-z0-9-]+)\.dll$' "$work/dlls"; then
+if grep -viE '^(kernel32|user32|ws2_32|iphlpapi|comdlg32|sdl2|api-ms-win-crt-[a-z0-9-]+)\.dll$' "$work/dlls"; then
   echo "gxemul.exe needs the DLLs above, which aren't in the zip" >&2
   exit 1
 fi

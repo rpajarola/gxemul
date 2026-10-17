@@ -88,6 +88,9 @@ struct display_md {
 
 	int	n_fb_windows;
 	struct fb_window **fb_windows;
+
+	/*  The windows' menus (see display_menu.c):  */
+	struct display_menus *menus;
 };
 
 

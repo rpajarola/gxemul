@@ -220,10 +220,75 @@ static void diskimage__switch_tape(struct diskimage *d)
 #define	TAPE_REC_BOT		3
 
 #define	SENSE_KEY_NO_SENSE	0x00
+#define	SENSE_KEY_NOT_READY	0x02
+#define	SENSE_KEY_ILLEGAL_REQUEST 0x05
+#define	SENSE_KEY_UNIT_ATTENTION 0x06
 #define	SENSE_KEY_BLANK_CHECK	0x08
 #define	SENSE_FLAG_FILEMARK	0x80
 #define	SENSE_FLAG_EOM		0x40
 #define	SENSE_FLAG_ILI		0x20
+
+/*  Additional sense codes:  */
+#define	ASC_MEDIUM_MAY_HAVE_CHANGED	0x28
+#define	ASC_MEDIUM_NOT_PRESENT		0x3a
+#define	ASC_MEDIUM_REMOVAL_PREVENTED	0x53	/*  ASCQ 0x02  */
+
+
+/*
+ *  check_condition():
+ *
+ *  Returns CHECK CONDITION status, and remembers the sense key and
+ *  additional sense code for the following REQUEST SENSE.
+ */
+static void check_condition(struct diskimage *d,
+	struct scsi_transfer *xferp, int key, int asc)
+{
+	diskimage__return_default_status_and_message(xferp);
+	xferp->status[0] = 0x02;	/*  CHECK CONDITION  */
+	d->sense_key = key;
+	d->sense_asc = asc;
+}
+
+
+/*
+ *  media_check():
+ *
+ *  Like a real drive, a removable media drive fails commands with NOT
+ *  READY while it has no medium, and the first command after a new one
+ *  is loaded with UNIT ATTENTION.  Returns false if a command fails for
+ *  that reason, and isn't to be carried out.
+ */
+static bool media_check(struct diskimage *d, struct scsi_transfer *xferp)
+{
+	switch (xferp->cmd[0]) {
+	case SCSICMD_INQUIRY:
+	case SCSICMD_REQUEST_SENSE:
+		return true;
+	}
+
+	if (d->medium_changed) {
+		d->medium_changed = false;
+		check_condition(d, xferp, SENSE_KEY_UNIT_ATTENTION,
+		    ASC_MEDIUM_MAY_HAVE_CHANGED);
+		return false;
+	}
+
+	switch (xferp->cmd[0]) {
+	case SCSICMD_START_STOP_UNIT:
+	case SCSICMD_PREVENT_ALLOW_REMOVE:
+	case SCSICMD_MODE_SENSE:
+	case SCSICMD_MODE_SENSE10:
+		return true;
+	}
+
+	if (d->no_medium) {
+		check_condition(d, xferp, SENSE_KEY_NOT_READY,
+		    ASC_MEDIUM_NOT_PRESENT);
+		return false;
+	}
+
+	return true;
+}
 
 
 static int simh_tape_read_marker(struct diskimage *d, uint64_t ofs,
@@ -573,6 +638,11 @@ int diskimage_scsicommand(struct cpu *cpu, int id, int type,
 if (xferp->cmd_len > 7 && xferp->cmd[5] == 0x11)
 	single_step = true;
 #endif
+
+	if (!media_check(d, xferp)) {
+		debug(" (no medium, or a new one) ]\n");
+		return 1;
+	}
 
 	switch (xferp->cmd[0]) {
 
@@ -1061,7 +1131,22 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		for (i=0; i<(ssize_t)xferp->cmd_len; i++)
 			debug(" %02x", xferp->cmd[i]);
 
-		/*  TODO: actualy care about cmd[]  */
+		/*  LoEj without Start ejects a removable medium:  */
+		if ((xferp->cmd[4] & 0x03) == 0x02 &&
+		    diskimage_is_removable(d) && !d->no_medium) {
+			if (d->prevent_removal) {
+				check_condition(d, xferp,
+				    SENSE_KEY_ILLEGAL_REQUEST,
+				    ASC_MEDIUM_REMOVAL_PREVENTED);
+				break;
+			}
+
+			char name[40];
+			diskimage_device_name(d, name, sizeof(name));
+			debugmsg(SUBSYS_DISK, "scsi", VERBOSITY_INFO,
+			    "the guest ejected %s from %s", d->fname, name);
+			diskimage_eject_medium(d);
+		}
 
 		diskimage__return_default_status_and_message(xferp);
 		break;
@@ -1111,9 +1196,15 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 			d->tape_sense_info_valid = 0;
 			d->tape_sense_info = 0;
 		}
+		if (d->sense_key != SENSE_KEY_NO_SENSE) {
+			xferp->data_in[2] = d->sense_key;
+			xferp->data_in[12] = d->sense_asc;
+			if (d->sense_asc == ASC_MEDIUM_REMOVAL_PREVENTED)
+				xferp->data_in[13] = 0x02;
+			d->sense_key = SENSE_KEY_NO_SENSE;
+			d->sense_asc = 0;
+		}
 		debug(": [2]=0x%02x ", xferp->data_in[2]);
-
-		printf(" XXX(!) \n");
 
 		/*  TODO  */
 		xferp->data_in[7] = retlen - 7;	/*  additional sense length  */
@@ -1429,8 +1520,10 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case SCSICMD_PREVENT_ALLOW_REMOVE:
-		debug("[ SCSI 0x%02x Prevent/allow medium removal: "
-		    "TODO ]\n", xferp->cmd[0]);
+		debug("PREVENT_ALLOW_MEDIUM_REMOVAL %i", xferp->cmd[4] & 1);
+
+		/*  (Only the guest's own eject commands are prevented.)  */
+		d->prevent_removal = (xferp->cmd[4] & 1) != 0;
 
 		diskimage__return_default_status_and_message(xferp);
 		break;

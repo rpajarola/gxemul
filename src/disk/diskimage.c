@@ -740,6 +740,120 @@ int get_default_disk_type_for_machine(struct machine *machine)
 
 
 /*
+ *  assign_id():
+ *
+ *  Gives a new disk image an ID: prefix_id, or (if that is -1) the first
+ *  free one.  Returns the ID.
+ */
+static int assign_id(struct machine *machine, struct diskimage *d,
+	int prefix_id)
+{
+	struct diskimage *d2;
+	int id = 0;
+
+	if (prefix_id == -1) {
+		int start = 0;
+		int delta = 1;
+		
+		if (machine->machine_type == MACHINE_LUNA88K) {
+			start = 6;
+			delta = -1;
+		}
+		
+		int free = start;
+		
+		bool collision = true;
+
+		while (collision) {
+			collision = false;
+			d2 = machine->first_diskimage;
+			while (d2 != NULL) {
+				/*  (don't compare against ourselves :)  */
+				if (d2 == d) {
+					d2 = d2->next;
+					continue;
+				}
+				if (d2->id == free && d2->type == d->type) {
+					collision = true;
+					break;
+				}
+				d2 = d2->next;
+			}
+			if (!collision)
+				id = free;
+			else
+				free += delta;
+		}
+		
+		if (id < 0) {
+			fprintf(stderr, "Too many IDs used?\n");
+			exit(1);
+		}
+	} else {
+		id = prefix_id;
+		d2 = machine->first_diskimage;
+		while (d2 != NULL) {
+			/*  (don't compare against ourselves :)  */
+			if (d2 == d) {
+				d2 = d2->next;
+				continue;
+			}
+			if (d2->id == id && d2->type == d->type) {
+				fprintf(stderr, "disk image id %i "
+				    "already in use\n", id);
+				exit(1);
+			}
+			d2 = d2->next;
+		}
+	}
+
+	d->id = id;
+	return id;
+}
+
+
+/*
+ *  add_temp_overlay():
+ *
+ *  Adds a temporary overlay (for the R: prefix), which is removed when
+ *  gxemul exits.
+ */
+static bool add_temp_overlay(struct diskimage *d)
+{
+	char tmpname[1000];
+	const char* tmpdir = temp_dir();
+	
+	int old_umask = umask(077);
+
+	// TODO: Not secure. Both the .img and the .img.map file
+	// need to be created by the process itself to avoid a race.
+	// NOTE/TODO: Ideally fopen mode "x" (from C11) for exclusive open.
+	snprintf(tmpname, sizeof(tmpname), "%s/gxemul.%i.temp-diskimage-overlay.%i.img.map",
+	    tmpdir, d->id, getpid());
+
+	FILE* f_img_map = fopen(tmpname, "wb");
+	fclose(f_img_map);
+
+	snprintf(tmpname, sizeof(tmpname), "%s/gxemul.%i.temp-diskimage-overlay.%i.img",
+	    tmpdir, d->id, getpid());
+
+	FILE* f_img = fopen(tmpname, "wb");
+	fclose(f_img);
+
+	umask(old_umask);
+
+	if (!diskimage_add_overlay(d, tmpname, true)) {
+		debugmsg(SUBSYS_DISK, "", VERBOSITY_ERROR,
+		    "could not add overlay name '%s'",
+		    d->fname);
+		return false;
+	}
+
+	return true;
+}
+
+
+/*
  *  diskimage_add():
  *
  *  Add a disk image.  fname is the filename of the disk image.
@@ -757,8 +871,12 @@ int get_default_disk_type_for_machine(struct machine *machine)
  *	r       read-only (don't allow changes to the file)
  *	s	SCSI (this is the default)
  *	t	tape
+ *	R	read-only, with a temporary overlay for writes
  *	V	add an overlay to a disk image
  *	0-7	force a specific SCSI ID number
+ *
+ *  A CD-ROM or tape drive with an empty filename (e.g. "4c:") starts
+ *  without a medium.
  *
  *  machine is assumed to be non-NULL.
  *
@@ -768,7 +886,7 @@ int get_default_disk_type_for_machine(struct machine *machine)
 int diskimage_add(struct machine *machine, char *fname)
 {
 	struct diskimage *d, *d2;
-	int id = 0, override_heads=0, override_spt=0;
+	int override_heads=0, override_spt=0;
 	int64_t override_base_offset=0;
 	char *cp;
 	int prefix_b=0, prefix_c=0, prefix_d=0, prefix_f=0, prefix_g=0;
@@ -1003,7 +1121,19 @@ int diskimage_add(struct machine *machine, char *fname)
 		d->sectors_per_track = override_spt;
 	}
 
-	if (!diskimage_recalc_size(d))
+	d->read_only = prefix_r;
+	d->temp_overlay = prefix_R;
+
+	/*  A CD-ROM or tape drive without a file name starts empty:  */
+	if (fname[0] == '\0' && (d->is_a_cdrom || d->is_a_tape))
+		d->no_medium = true;
+	else if (fname[0] == '\0') {
+		debugmsg(SUBSYS_DISK, "", VERBOSITY_ERROR,
+		    "only CD-ROM and tape drives (c: and t:) can be empty");
+		return -1;
+	}
+
+	if (!d->no_medium && !diskimage_recalc_size(d))
 		debugmsg(SUBSYS_DISK, "", VERBOSITY_WARNING,
 		    "diskimage_recalc_size() failed!");
 
@@ -1014,6 +1144,9 @@ int diskimage_add(struct machine *machine, char *fname)
 
 	if (prefix_b)
 		d->is_boot_device = 1;
+
+	if (d->no_medium)
+		return assign_id(machine, d, prefix_id);
 
 	bool readable = access(fname, R_OK) == 0? 1 : 0;
 	d->writable = access(fname, W_OK) == 0? 1 : 0;
@@ -1051,97 +1184,13 @@ int diskimage_add(struct machine *machine, char *fname)
 		return -1;
 	}
 
-	/*  Calculate which ID to use:  */
-	if (prefix_id == -1) {
-		int start = 0;
-		int delta = 1;
-		
-		if (machine->machine_type == MACHINE_LUNA88K) {
-			start = 6;
-			delta = -1;
-		}
-		
-		int free = start;
-		
-		bool collision = true;
+	if (assign_id(machine, d, prefix_id) < 0)
+		return -1;
 
-		while (collision) {
-			collision = false;
-			d2 = machine->first_diskimage;
-			while (d2 != NULL) {
-				/*  (don't compare against ourselves :)  */
-				if (d2 == d) {
-					d2 = d2->next;
-					continue;
-				}
-				if (d2->id == free && d2->type == d->type) {
-					collision = true;
-					break;
-				}
-				d2 = d2->next;
-			}
-			if (!collision)
-				id = free;
-			else
-				free += delta;
-		}
-		
-		if (id < 0) {
-			fprintf(stderr, "Too many IDs used?\n");
-			exit(1);
-		}
-	} else {
-		id = prefix_id;
-		d2 = machine->first_diskimage;
-		while (d2 != NULL) {
-			/*  (don't compare against ourselves :)  */
-			if (d2 == d) {
-				d2 = d2->next;
-				continue;
-			}
-			if (d2->id == id && d2->type == d->type) {
-				fprintf(stderr, "disk image id %i "
-				    "already in use\n", id);
-				exit(1);
-			}
-			d2 = d2->next;
-		}
-	}
+	if (prefix_R && !add_temp_overlay(d))
+		return -1;
 
-	d->id = id;
-
-	if (prefix_R) {
-		char tmpname[1000];
-		const char* tmpdir = temp_dir();
-		
-		int old_umask = umask(077);
-
-		// TODO: Not secure. Both the .img and the .img.map file
-		// need to be created by the process itself to avoid a race.
-		// NOTE/TODO: Ideally fopen mode "x" (from C11) for exclusive open.
-		snprintf(tmpname, sizeof(tmpname), "%s/gxemul.%i.temp-diskimage-overlay.%i.img.map",
-		    tmpdir, d->id, getpid());
-
-		FILE* f_img_map = fopen(tmpname, "wb");
-		fclose(f_img_map);
-
-		snprintf(tmpname, sizeof(tmpname), "%s/gxemul.%i.temp-diskimage-overlay.%i.img",
-		    tmpdir, d->id, getpid());
-
-		FILE* f_img = fopen(tmpname, "wb");
-		fclose(f_img);
-
-		umask(old_umask);
-
-		if (!diskimage_add_overlay(d, tmpname, true)) {
-			debugmsg(SUBSYS_DISK, "", VERBOSITY_ERROR,
-			    "could not add overlay name '%s'",
-			    fname);
-			return -1;
-		}
-	}
-
-	return id;
+	return d->id;
 }
 
 
@@ -1310,3 +1359,153 @@ void diskimage_dump_info(struct machine *machine)
 	}
 }
 
+
+
+/**************************************************************************/
+
+/*
+ *  Removable media:
+ *
+ *  CD-ROMs and tapes can be ejected, and other media loaded, while the
+ *  machine runs (from the display's Media menu, or the debugger's media
+ *  command).  A new medium is opened the same way as the first one was,
+ *  read-only with the r: prefix and with a new temporary overlay with
+ *  the R: prefix.  Other overlays belong to the medium, and are closed
+ *  when it is ejected.  The SCSI emulation reports a missing medium
+ *  (NOT READY) and a new one (UNIT ATTENTION), as a real drive does.
+ */
+
+unsigned long diskimage_media_generation = 0;
+
+
+/*
+ *  diskimage_is_removable():
+ *
+ *  Returns true for CD-ROM and tape drives.
+ */
+bool diskimage_is_removable(const struct diskimage *d)
+{
+	return d->is_a_cdrom || d->is_a_tape;
+}
+
+
+/*
+ *  diskimage_device_name():
+ *
+ *  Describes a drive for people, e.g. "SCSI 4 CD-ROM".
+ */
+void diskimage_device_name(const struct diskimage *d, char *buf, size_t len)
+{
+	snprintf(buf, len, "%s %i %s", diskimage_types[d->type], d->id,
+	    d->is_a_tape? "tape" : (d->is_a_cdrom? "CD-ROM" : "disk"));
+}
+
+
+/*  Closes a drive's medium and its overlays, leaving the drive empty.  */
+static void close_medium(struct diskimage *d)
+{
+	if (d->f != NULL)
+		fclose(d->f);
+	d->f = NULL;
+
+	for (int i = 0; i < d->nr_of_overlays; i++) {
+		fclose(d->overlays[i].f_data);
+		fclose(d->overlays[i].f_bitmap);
+		free(d->overlays[i].overlay_basename);
+	}
+	free(d->overlays);
+	d->overlays = NULL;
+	d->nr_of_overlays = 0;
+
+	d->total_size = 0;
+	d->nr_of_logical_blocks = 0;
+	d->writable = 0;
+
+	d->tape_offset = 0;
+	d->tape_filenr = 0;
+	d->filemark = 0;
+	d->tape_sense_key = 0;
+	d->tape_sense_flags = 0;
+	d->tape_sense_info_valid = 0;
+	d->tape_sense_info = 0;
+
+	d->no_medium = true;
+	d->medium_changed = false;
+	d->prevent_removal = false;
+	d->sense_key = 0;
+	d->sense_asc = 0;
+}
+
+
+/*
+ *  diskimage_eject_medium():
+ *
+ *  Ejects a removable medium, if the drive has one.
+ */
+void diskimage_eject_medium(struct diskimage *d)
+{
+	if (d->no_medium)
+		return;
+
+	close_medium(d);
+	diskimage_media_generation ++;
+}
+
+
+/*
+ *  diskimage_load_medium():
+ *
+ *  Loads a file as the new medium of a CD-ROM or tape drive, ejecting any
+ *  old one.  Returns false (with a message in errbuf) if that isn't
+ *  possible, leaving the old medium in place.
+ */
+bool diskimage_load_medium(struct diskimage *d, const char *fname,
+	char *errbuf, size_t errlen)
+{
+	struct stat st;
+	FILE *f;
+
+	if (!diskimage_is_removable(d)) {
+		snprintf(errbuf, errlen, "the medium is not removable");
+		return false;
+	}
+	if (stat(fname, &st) != 0) {
+		snprintf(errbuf, errlen, "%s", strerror(errno));
+		return false;
+	}
+	if (S_ISDIR(st.st_mode)) {
+		snprintf(errbuf, errlen, "it is a folder");
+		return false;
+	}
+
+	/*  A file that can't be written is a write-protected medium:  */
+	bool writable = !d->is_a_cdrom && !d->read_only &&
+	    access(fname, W_OK) == 0;
+
+	f = fopen(fname, writable && !d->temp_overlay ? "r+b" : "rb");
+	if (f == NULL) {
+		snprintf(errbuf, errlen, "%s", strerror(errno));
+		return false;
+	}
+
+	close_medium(d);
+
+	free(d->fname);
+	CHECK_ALLOCATION(d->fname = strdup(fname));
+	d->f = f;
+	d->no_medium = false;
+	d->writable = writable || (d->temp_overlay && !d->is_a_cdrom);
+
+	if (d->is_a_tape)
+		d->tape_simh = strlen(fname) > 4 &&
+		    strcasecmp(fname + strlen(fname) - 4, ".tap") == 0;
+
+	diskimage_recalc_size(d);
+
+	if (d->temp_overlay && d->writable && !add_temp_overlay(d))
+		d->writable = 0;
+
+	d->medium_changed = true;
+	diskimage_media_generation ++;
+	return true;
+}

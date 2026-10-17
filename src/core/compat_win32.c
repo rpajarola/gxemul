@@ -37,10 +37,12 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <iphlpapi.h>
+#include <commdlg.h>
 
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "compat_win32.h"
 
@@ -352,6 +354,71 @@ const char *win32_nameserver(void)
 	    info->DnsServerList.IpAddress.String);
 	free(info);
 	return addr;
+}
+
+/*
+ *  The file chooser:  GetOpenFileName() is modal, so it runs in a thread
+ *  of its own, which sets chooser_finished when it returns.
+ */
+
+static HANDLE chooser_thread;
+static volatile LONG chooser_finished;
+static char chooser_title[256];
+static char chooser_start[MAX_PATH];
+static char chooser_path[MAX_PATH];
+static BOOL chooser_ok;
+
+static DWORD WINAPI chooser_thread_main(LPVOID param)
+{
+	OPENFILENAMEA ofn;
+
+	memset(&ofn, 0, sizeof(ofn));
+	ofn.lStructSize = sizeof(ofn);
+	ofn.lpstrFilter = "All files\0*.*\0";
+	ofn.lpstrFile = chooser_path;
+	ofn.nMaxFile = sizeof(chooser_path);
+	ofn.lpstrInitialDir = chooser_start[0] != '\0' ? chooser_start : NULL;
+	ofn.lpstrTitle = chooser_title;
+
+	/*  (Without OFN_NOCHANGEDIR, the current directory would change.)  */
+	ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR |
+	    OFN_HIDEREADONLY | OFN_EXPLORER;
+
+	chooser_ok = GetOpenFileNameA(&ofn);
+	InterlockedExchange(&chooser_finished, 1);
+	return 0;
+}
+
+bool win32_choose_file(const char *title, const char *start_dir)
+{
+	if (chooser_thread != NULL)
+		return false;
+
+	snprintf(chooser_title, sizeof(chooser_title), "%s", title);
+	snprintf(chooser_start, sizeof(chooser_start), "%s",
+	    start_dir != NULL ? start_dir : "");
+	for (char *p = chooser_start; *p != '\0'; p++)
+		if (*p == '/')
+			*p = '\\';
+	chooser_path[0] = '\0';
+	chooser_finished = 0;
+
+	chooser_thread = CreateThread(NULL, 0, chooser_thread_main, NULL, 0,
+	    NULL);
+	return chooser_thread != NULL;
+}
+
+bool win32_choose_file_done(char **path)
+{
+	if (chooser_thread == NULL || !chooser_finished)
+		return false;
+
+	WaitForSingleObject(chooser_thread, INFINITE);
+	CloseHandle(chooser_thread);
+	chooser_thread = NULL;
+
+	*path = chooser_ok ? strdup(chooser_path) : NULL;
+	return true;
 }
 
 #endif	/*  _WIN32  */

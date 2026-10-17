@@ -54,6 +54,7 @@ SUCH DAMAGE.
 	<li><a href="#breakpoints">Breakpoints</a>
 	<li><a href="#trace">Function call tracing</a>
 	<li><a href="#capture">Screenshots and videos</a>
+	<li><a href="#media">Changing CD-ROMs and tapes</a>
 </ul>
 
 
@@ -445,7 +446,28 @@ the date and time, and saved in the current directory. Screenshots are PNG
 files, written by <tt>ffmpeg</tt> if it is installed, or otherwise PPM
 files. Videos need <tt>ffmpeg</tt>, and are MP4 files at 10 frames per
 second, which keep recording in real time while the emulator runs, and
-while the debugger is in use.
+while the debugger is in use. A framebuffer window's <b>Machine</b> menu
+can also save a screenshot and start and stop a recording.
+
+<p><br>
+<a name="media"></a><h4>Changing CD-ROMs and tapes</h4>
+
+<p>The <tt>media</tt> command lists the CD-ROM and tape drives, and what
+they hold, and loads and ejects images, as a framebuffer window's
+<b>Media</b> menu does (see
+<a href="misc.html#media">Changing CD-ROMs and tapes</a>):
+
+<pre>
+GXemul> <b>media</b>
+scsi4	SCSI 4 CD-ROM: cd1.iso
+GXemul> <b>media load scsi4 cd2.iso</b>
+scsi4: loaded cd2.iso
+GXemul> <b>media eject 4</b>
+scsi4: ejected cd2.iso
+</pre>
+
+<p>A drive is named by its type and ID, or by its ID alone if no other
+CD-ROM or tape drive has that ID.
 
 </p>
 

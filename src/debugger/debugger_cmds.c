@@ -1229,6 +1229,121 @@ static void debugger_cmd_grab(struct machine *m, char *args)
 }
 
 
+/*  A drive's name for the media command, e.g. "scsi4":  */
+static void media_drive_name(const struct diskimage *d, char *buf, size_t len)
+{
+	static const char *types[] = DISKIMAGE_TYPES;
+
+	snprintf(buf, len, "%s%i", types[d->type], d->id);
+	for (; *buf != '\0'; buf++)
+		*buf = tolower((unsigned char) *buf);
+}
+
+
+/*
+ *  Returns the removable media drive called name ("scsi4", or "4" if only
+ *  one drive has that ID), or NULL.
+ */
+static struct diskimage *media_drive(struct machine *m, const char *name)
+{
+	struct diskimage *found = NULL;
+	char id[16];
+	int n = 0;
+
+	for (struct diskimage *d = m->first_diskimage; d != NULL; d = d->next) {
+		if (!diskimage_is_removable(d))
+			continue;
+
+		char drive[32];
+		media_drive_name(d, drive, sizeof(drive));
+		if (strcasecmp(name, drive) == 0)
+			return d;
+		snprintf(id, sizeof(id), "%i", d->id);
+		if (strcmp(name, id) == 0) {
+			found = d;
+			n ++;
+		}
+	}
+
+	return n == 1 ? found : NULL;
+}
+
+
+/*
+ *  debugger_cmd_media():
+ */
+static void debugger_cmd_media(struct machine *m, char *args)
+{
+	char *end = args + strlen(args), *cmd, *drive, *file;
+	struct diskimage *d;
+	char drive_name[32];
+
+	while (end > args && end[-1] == ' ')
+		*--end = '\0';
+
+	if (*args == '\0') {
+		int n = 0;
+		for (d = m->first_diskimage; d != NULL; d = d->next) {
+			if (!diskimage_is_removable(d))
+				continue;
+			char name[40];
+			diskimage_device_name(d, name, sizeof(name));
+			media_drive_name(d, drive_name, sizeof(drive_name));
+			printf("%s\t%s: %s\n", drive_name, name,
+			    d->no_medium ? "(empty)" : d->fname);
+			n ++;
+		}
+		if (n == 0)
+			printf("this machine has no CD-ROM or tape drives\n");
+		return;
+	}
+
+	cmd = args;
+	drive = strchr(cmd, ' ');
+	if (drive != NULL) {
+		*drive++ = '\0';
+		while (*drive == ' ')
+			drive ++;
+	}
+	file = drive == NULL ? NULL : strchr(drive, ' ');
+	if (file != NULL) {
+		*file++ = '\0';
+		while (*file == ' ')
+			file ++;
+	}
+
+	bool eject = strcmp(cmd, "eject") == 0;
+	bool load = strcmp(cmd, "load") == 0;
+	if ((!eject && !load) || drive == NULL || (eject && file != NULL) ||
+	    (load && file == NULL)) {
+		printf("syntax: media [eject drive | load drive file]\n");
+		return;
+	}
+
+	if ((d = media_drive(m, drive)) == NULL) {
+		printf("no CD-ROM or tape drive %s (see \"media\")\n", drive);
+		return;
+	}
+
+	media_drive_name(d, drive_name, sizeof(drive_name));
+	if (eject) {
+		if (d->no_medium) {
+			printf("%s is already empty\n", drive_name);
+			return;
+		}
+		printf("%s: ejected %s\n", drive_name, d->fname);
+		diskimage_eject_medium(d);
+		return;
+	}
+
+	char err[200];
+	if (diskimage_load_medium(d, file, err, sizeof(err)))
+		printf("%s: loaded %s\n", drive_name, file);
+	else
+		printf("could not load %s: %s\n", file, err);
+}
+
+
 /*
  *  debugger_cmd_video():
  */
@@ -1295,6 +1410,9 @@ static struct cmd cmds[] = {
 
 	{ "machine", "", 0, debugger_cmd_machine,
 		"Print a summary of the current machine" },
+
+	{ "media", "[eject d | load d file]", 0, debugger_cmd_media,
+		"list, eject or load CD-ROMs and tapes" },
 
 	{ "ninstrs", "[on|off]", 0, debugger_cmd_ninstrs,
 		"toggle (set or unset) show_nr_of_instructions" },

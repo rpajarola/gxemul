@@ -138,6 +138,8 @@ static void usage(bool longusage)
 	printf("                t      tape\n");
 	printf("                V      add an overlay (also requires explicit ID)\n");
 	printf("                0-7    use a specific ID\n");
+	printf("            A CD-ROM or tape drive with no fname (e.g. -d 4c:) "
+	    "starts empty.\n");
 	printf("  -I hz     set the main cpu frequency to hz (not used by "
 	    "all combinations\n            of machines and guest OSes)\n");
 	printf("  -i        display each instruction as it is executed\n");

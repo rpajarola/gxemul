@@ -40,6 +40,7 @@
 #ifdef _WIN32
 
 #include <io.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -88,6 +89,12 @@ void win32_sockets_init(void);
 
 /*  The host's (first) DNS server, as a string, or NULL:  */
 const char *win32_nameserver(void);
+
+/*  Opens a file chooser in a thread of its own, returning false if that
+    isn't possible.  win32_choose_file_done() returns true when it has
+    closed, with the path chosen (to be freed), or NULL:  */
+bool win32_choose_file(const char *title, const char *start_dir);
+bool win32_choose_file_done(char **path);
 
 #endif	/*  _WIN32  */
 

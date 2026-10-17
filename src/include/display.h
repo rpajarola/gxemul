@@ -103,6 +103,77 @@ enum display_key {
 };
 
 
+/*
+ *  Menus (display_menu.c):
+ *
+ *  Each machine has a menu bar, of submenu items, which the backend
+ *  draws in its windows and works with the mouse and keyboard; what the
+ *  items do is in display_menu.c.  The menus can be rebuilt whenever
+ *  display_menus_update() is called, so the backend must not keep
+ *  pointers to items.  The generation numbers change whenever the menus
+ *  or the status line (a message, and what the removable media hold)
+ *  change, so the backend knows when to draw them again.
+ */
+enum menu_item_type {
+	MENU_ITEM_ACTION,
+	MENU_ITEM_CHECK,
+	MENU_ITEM_SUBMENU,
+	MENU_ITEM_SEPARATOR
+};
+
+struct menu;
+struct menu_item;
+typedef void (*menu_func)(struct machine *, struct menu_item *);
+
+struct menu_item {
+	struct menu_item	*next;
+	enum menu_item_type	type;
+	char			*label;
+	bool			enabled;
+	bool			checked;	/*  check items  */
+	struct menu		*submenu;	/*  submenu items  */
+	menu_func		func;
+	void			*data;
+};
+
+struct menu {
+	struct menu_item	*items;
+};
+
+struct display_menus {
+	struct menu		*bar;
+	unsigned long		generation;
+
+	struct menu		*media;
+	unsigned long		media_generation;	/*  shown  */
+	struct menu_item	*record;
+	struct menu_item	*debugger;
+
+	char			*message;
+	uint32_t		message_expires;	/*  ms ticks  */
+	char			*media_status;
+	unsigned long		status_generation;
+};
+
+struct display_menus *display_menus(struct machine *);
+void display_menus_update(struct machine *);
+void display_menu_activate(struct machine *, struct menu_item *);
+void display_message(struct machine *, const char *fmt, ...);
+
+/*
+ *  File choosers (display_files.c):  display_choose_file() opens the
+ *  desktop's file chooser, and the emulator keeps running while it is
+ *  open.  display_files_poll() calls done with the path chosen, or NULL
+ *  if the chooser was canceled.
+ */
+typedef void (*files_done_func)(struct machine *, const char *path,
+	void *data);
+bool display_can_choose_files(void);
+void display_choose_file(struct machine *, const char *title,
+	const char *start_dir, files_done_func done, void *data);
+void display_files_poll(void);
+
+
 /*  display.c:  */
 void display_init(struct machine *);
 struct fb_window *display_fb_init(int xsize, int ysize, const char *name,
@@ -117,6 +188,8 @@ void display_key(struct machine *m, int key);
 int display_screenshot(struct machine *, const char *file);
 int display_video_start(struct machine *, const char *file);
 void display_video_stop(void);
+bool display_video_recording(void);
+uint32_t display_ticks(void);
 
 
 /*
@@ -137,6 +210,7 @@ void display_backend_update(struct fb_window *win, int x, int y,
 	int w, int h);
 void display_backend_flush(struct fb_window *win);
 void display_backend_check_events(struct machine *m);
+void display_backend_raise(struct machine *m);
 
 
 #endif	/*  DISPLAY_H  */
