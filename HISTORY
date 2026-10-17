@@ -5234,3 +5234,6 @@ Changelog for GXemul:
 		from SO_ERROR, which also works on Windows. On Windows, the
 		host's nameserver is found with GetNetworkParams() (there is
 		no /etc/resolv.conf).
+
+==============  RELEASE 1.0.1  ==============
+
