@@ -34,8 +34,9 @@ if strings "$libdir"/libSDL2*.dylib | grep -q 'libSDL3\.dylib'; then
 fi
 install -d "$root/usr/local/share/gxemul"
 install -m 0755 packaging/macos/uninstall.sh "$root/usr/local/share/gxemul/uninstall.sh"
-# gxemul -V prints the version, then fails for want of a machine:
-banner=$("$root/usr/local/bin/gxemul" -V 2>&1 || true)
+# gxemul -h prints the version (without a machine, gxemul would open
+# the machines window):
+banner=$("$root/usr/local/bin/gxemul" -h 2>&1 || true)
 grep -q "GXemul $VERSION" <<< "$banner"
 
 pkgbuild --root "$root" --identifier io.github.rpajarola.gxemul --version "$VERSION" \

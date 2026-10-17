@@ -71,8 +71,9 @@ for f in README LICENSE HISTORY; do cp "$f" "$dir/$f.txt"; done
 cp "$SDL2_MINGW/LICENSE.txt" "$dir/SDL2-LICENSE.txt"
 cp -R doc/* "$dir/doc/"
 
-# gxemul -V prints the version, then fails for want of a machine:
-banner=$(cd "$dir" && ${run[@]+"${run[@]}"} ./gxemul.exe -V 2>&1 || true)
+# gxemul -h prints the version (without a machine, gxemul would open
+# the machines window):
+banner=$(cd "$dir" && ${run[@]+"${run[@]}"} ./gxemul.exe -h 2>&1 || true)
 grep -q "GXemul $VERSION" <<< "$banner"
 
 mkdir -p dist
