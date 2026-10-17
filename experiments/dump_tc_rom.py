@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 #
 #  dump_tc_rom.py:  dumps a DECstation TURBOchannel option ROM over the
-#  serial console, into an image that gxemul's tc_rom("SLOT:FILE") loads.
+#  serial console, into an option ROM image for gxemul (a machine.json's
+#  "slots": { "SLOT": "FILE" }, or Expansion in the machine editor).
 #
 #  It was written to dump the ROM of the built-in SCSI controller (slot 5,
 #  PMAZ-AA) of a DECstation 5000/200, which is soldered to the system
@@ -390,7 +391,7 @@ and convert the capture with:
 		print("NOTE: a word that is not one byte wide: %s" % w)
 	with open(args.output, "wb") as f:
 		f.write(image)
-	print("wrote %s (%d bytes); use it with tc_rom(\"%d:%s\")"
+	print("wrote %s (%d bytes); use it with \"slots\": { \"%d\": \"%s\" }"
 	    % (args.output, size, args.slot, os.path.basename(args.output)))
 	return 0 if not missing else 2
 

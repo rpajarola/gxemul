@@ -76,6 +76,9 @@ emulated well enough to run anything meaningful. One exception is the
 5000/1xx, aka 3MIN. If you are able to make a backup
 copy of the PROM from your own machine, then you can try to
 <a href="#PROM">run that in the emulator</a>.
+The 5000/200's own PROM can also be run, with dumps of the
+<a href="#PROM200">option ROMs</a> of its SCSI controller and Ethernet
+interface.
 
 
 
@@ -858,10 +861,68 @@ always believe there is 128MB ram anyway), and <tt>-x</tt> is used to give
 each serial port a TCP port for telnet.
 The <tt>0xbfc00000</tt> in front of the filename tells GXemul that it is a raw
 binary file which should be loaded at a specific virtual address.
+</p>
 
 
+<p><br>
+<a name="PROM200"><h3>DECstation 5000/200 with raw PROM and option ROM images:</h3></a>
 
+<p>The 5000/200's PROM has no drivers of its own for the built-in SCSI
+controller and Ethernet interface: like the options in the other
+TURBOchannel slots, they have option ROMs (in slots 5 and 6), which hold
+their diagnostics and their boot code. Without dumps of those ROMs, the
+PROM runs, but can't boot from a disk. With them, it boots as on a real
+5000/200. Start from the "DECstation 5000/200, real ROM" preset, and
+add the images under Expansion; in the <a
+href="configfiles.html#config">machine.json</a>, they are:
 
+<pre>
+{
+  "gxemul": 1,
+  "name": "DECstation 5000/200 (ROM)",
+  "machine": { "type": "decstation", "model": "3max", "memory_mb": 128 },
+  "boot": { "prom_emulation": false, "rom": "decstation5000_200.bin" },
+  "drives": [ { "file": "osf1.dsk", "kind": "disk", "id": 0 } ],
+  "slots": { "5": "pmaz-aa.bin", "6": "pmad-aa.bin" }
+}
+</pre>
+
+<p>(Slot 5 is the SCSI controller, a PMAZ-AA, and slot 6 the Ethernet
+interface, a PMAD-AA.)
+
+<p>The PROM then finds the disks with the SCSI ROM's own driver:
+
+<pre>
+	KN02-AA V5.3s    (PC: 0x0, SP: 0xa0007f00)
+	>><b>cnfg</b>
+	 7: KN02-AA  DEC      V5.3s    TCF0  (0220cpu with 128 MB memory)
+	 6: PMAD-AA  DEC      V5.3a    TCF0  (enet: 10-20-30-00-00-10)
+	 5: PMAZ-AA  DEC      V5.3d    TCF0  (SCSI = 7)
+	 0: PMAG-BA  DEC      V5.3a    TCF0
+	>><b>cnfg 5</b>
+	 5: PMAZ-AA  DEC      V5.3d    TCF0  (SCSI = 7)
+	    ---------------------------------------------------
+	    DEV   PID                VID        REV    SCSI DEV
+	    ===== ================== ========== ====== ========
+	    rz0   RZ58     (C) DEC   DEC        2000   DIR
+	>><b>boot 5/rz0/vmunix -a</b>
+</pre>
+
+<p>(<tt>-a</tt> boots OSF/1 multi-user; without it, it comes
+up single-user.)
+
+<p>An option ROM is one byte wide, with each byte in its own 32-bit word
+of the slot's address space; an option ROM image has one ROM
+byte per byte of the file (the low byte of each word).
+<tt>experiments/dump_tc_rom.py</tt> dumps a
+ROM over a real DECstation's serial console into such a file. The slot 5
+and 6 ROMs are soldered to the 5000/200's system module, but the ROM of
+an option card can be dumped the same way, and loaded in its slot.
+
+<p>The diagnostics in the PMAZ-AA and PMAD-AA ROMs pass (e.g.
+<tt>t 5/cntl</tt>, <tt>t 5/sram</tt>). Some of the PROM's own tests of
+the system module (slot 7: caches, serial lines, and memory ECC) fail,
+as those are not emulated in that detail.
 </p>
 
 <p><br>

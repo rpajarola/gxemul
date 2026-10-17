@@ -257,9 +257,12 @@ DEVICE_ACCESS(dc7085)
 			d->regs.dc_csr &= ~CSR_TRDY;
 			INTERRUPT_DEASSERT(d->irq);
 		} else {
-			/*  read:  */
-			d->regs.dc_msr_tdr |= MSR_DSR2 | MSR_CD2 |
-			    MSR_DSR3 | MSR_CD3;
+			/*  read:  As if a terminal (or modem) were connected
+			    to lines 2 and 3, the ones with modem signals.
+			    (OSF/1 waits for CTS too, besides DSR and CD,
+			    before it sees carrier.)  */
+			d->regs.dc_msr_tdr |= MSR_CTS2 | MSR_DSR2 | MSR_CD2 |
+			    MSR_CTS3 | MSR_DSR3 | MSR_CD3;
 			debug("[ dc7085 read from MSR: (msr_tdr = 0x%04x) ]\n",
 			    d->regs.dc_msr_tdr);
 			odata = d->regs.dc_msr_tdr;

@@ -66,7 +66,10 @@ static const struct machine_preset presets[] = {
 	},
 	{
 		"DECstation 5000/200, real ROM",
-		"Runs the real KN02 system ROM (choose its image under Boot).",
+		"Runs the real KN02 system ROM (choose its image under Boot). "
+		"To boot from a disk, add the PMAZ-AA (SCSI) option ROM image "
+		"in slot 5, and for Ethernet the PMAD-AA one in slot 6 (under "
+		"Expansion).",
 		"{ \"gxemul\": 1, \"name\": \"DECstation 5000/200 (ROM)\","
 		"  \"machine\": { \"type\": \"decstation\", \"model\": \"3max\","
 		"                 \"memory_mb\": 64 },"

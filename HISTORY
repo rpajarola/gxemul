@@ -5283,3 +5283,11 @@ Changelog for GXemul:
 		is kept in ~/Library/Application Support/gxemul (macOS),
 		%APPDATA%\gxemul (Windows), or ~/.config/gxemul; new machines
 		go in ~/GXemul. Uses cJSON and microui (MIT licensed).
+20261017	DC7085: the modem status register also reports CTS on lines
+		2 and 3, besides DSR and CD. OSF/1 waits for all three
+		before it sees carrier, and hung up the console line a
+		second after it was opened, so in single-user mode the
+		shell's first write waited forever. Documenting how to run
+		the 5000/200's own PROM with dumps of the PMAZ-AA (SCSI) and
+		PMAD-AA (Ethernet) option ROMs in slots 5 and 6, in
+		machine_decstation.html#PROM200.
