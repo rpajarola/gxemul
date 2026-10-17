@@ -257,8 +257,11 @@ bool diskimage_recalc_size(struct diskimage *d)
 
 	// printf("c=%i h=%i s=%i\n", d->cylinders, d->heads, d->sectors_per_track);
 
-	// Update size to full cylinders.
-	size = d->heads * d->sectors_per_track * d->cylinders * 512;
+	/*  Update size to full cylinders.  (Not CD-ROMs, whose size is the
+	    image's:  a guest reading the whole medium would get the padding
+	    too.)  */
+	if (!d->is_a_cdrom && !d->is_a_tape)
+		size = d->heads * d->sectors_per_track * d->cylinders * 512;
 
 	d->nr_of_logical_blocks = size / d->logical_block_size;
 	if (size & (d->logical_block_size - 1))

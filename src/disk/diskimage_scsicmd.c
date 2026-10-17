@@ -229,6 +229,7 @@ static void diskimage__switch_tape(struct diskimage *d)
 #define	SENSE_FLAG_ILI		0x20
 
 /*  Additional sense codes:  */
+#define	ASC_LBA_OUT_OF_RANGE		0x21
 #define	ASC_MEDIUM_MAY_HAVE_CHANGED	0x28
 #define	ASC_MEDIUM_NOT_PRESENT		0x3a
 #define	ASC_MEDIUM_REMOVAL_PREVENTED	0x53	/*  ASCQ 0x02  */
@@ -1007,6 +1008,15 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 				    (xferp->cmd[3] << 16) + (xferp->cmd[4] << 8)
 				    + xferp->cmd[5];
 				retlen = (xferp->cmd[7] << 8) + xferp->cmd[8];
+			}
+
+			/*  Past the end of the medium?  */
+			if (ofs + retlen > d->nr_of_logical_blocks) {
+				debug(" (past the end) ]\n");
+				check_condition(d, xferp,
+				    SENSE_KEY_ILLEGAL_REQUEST,
+				    ASC_LBA_OUT_OF_RANGE);
+				break;
 			}
 
 			size = retlen * d->logical_block_size;

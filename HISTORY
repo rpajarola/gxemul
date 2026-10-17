@@ -5260,3 +5260,10 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.2  ==============
 
+20261017	A CD-ROM's capacity is the size of its image, no longer
+		rounded up to whole cylinders (so a guest reading a whole
+		medium got up to half a megabyte of zeros at the end), and a
+		READ past the end of a disk or CD-ROM fails with ILLEGAL
+		REQUEST (logical block address out of range), as on a real
+		drive. (4.4BSD reads CD-ROMs: its disk label for one has only
+		partition a, e.g. mount -t cd9660 -r /dev/rz4a /mnt.)
