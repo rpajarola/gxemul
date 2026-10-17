@@ -36,11 +36,15 @@ jobs:
           cd dist
           unzip -q gxemul-rp-*.zip
           cd gxemul-rp-*/
-          # Load a MIPS ELF program and step through its first instructions:
-          out=$(printf 'step 2\nquit\n' |
-            ./gxemul.exe -q -E testmips -V ../../test/FileLoader_ELF_MIPS 2>&1)
-          echo "$out"
-          grep -q 'ffffffff800100fc: 3c03cccc' <<< "$out"
+          # Load a MIPS ELF program, plain and gzipped, and step through
+          # its first instructions:
+          gzip -c ../../test/FileLoader_ELF_MIPS > elf.gz
+          for f in ../../test/FileLoader_ELF_MIPS elf.gz; do
+            out=$(printf 'step 2\nquit\n' |
+              ./gxemul.exe -q -E testmips -V "$f" 2>&1)
+            echo "$out"
+            grep -q 'ffffffff800100fc: 3c03cccc' <<< "$out"
+          done
       - uses: actions/upload-artifact@v7
         with:
           name: gxemul-windows-x86_64
