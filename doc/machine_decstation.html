@@ -370,6 +370,35 @@ multiple graphics cards. To overcome this problem, use the generic kernel,
 <tt><b>-j genvmunix</b></tt>, whenever you are running the emulator with a 
 different setup than the one you used when Ultrix was installed.)
 
+<p><a name="ultrixdxsession"></a><b>The graphical login logs out right
+away:</b> With Ultrix 4.5 (and possibly other versions), logging in at the
+graphical login box can return to the login box immediately, without an
+error message. Ultrix starts the session with <tt>/etc/ttys</tt> running
+<tt>login -P /usr/bin/Xprompter -C /usr/bin/dxsession -e :0</tt>, and
+<tt>login</tt> leaves the login box (<tt>Xprompter</tt>) as a child of
+<tt>dxsession</tt>. The login box exits once the session starts. On a real
+machine, loading the 4&nbsp;MB <tt>dxsession</tt> from disk takes long
+enough that this happens first, but the emulated disk is so fast that
+<tt>dxsession</tt> is already watching its children, takes the exit as the
+end of its session, and logs out. (<tt>init</tt> then logs
+"<tt>'/usr/bin/login -P /usr/bin/Xprompter ...' failing, sleeping</tt>".)
+
+<p>The workaround is to keep a shell between <tt>login</tt> and
+<tt>dxsession</tt>, so that the login box becomes the shell's child
+instead. Boot single-user (without <tt>-a</tt>), and replace the
+<tt>/usr/bin/dxsession</tt> link with a small script:<pre>
+	<b>fsck -p</b>
+	<b>mount -a</b>
+	<b>mv /usr/bin/dxsession /usr/bin/dxsession.orig</b>
+	<b>echo '#!/bin/sh' &gt; /usr/bin/dxsession</b>
+	<b>echo '/usr/bin/X11/dxsession "$@"' &gt;&gt; /usr/bin/dxsession</b>
+	<b>chmod 755 /usr/bin/dxsession</b>
+	<b>sync</b>
+</pre>
+and reboot to multi-user. (The script must not <tt>exec</tt> the real
+<tt>dxsession</tt>, since that would replace the shell. To undo it, move
+<tt>dxsession.orig</tt> back.)
+
 <p>A note for the historically interested: OSF/1 for MIPS was quite similar
 to Ultrix, so that is possible to run as well.  If you are unsuccessful
 in installing Ultrix or OSF/1 directly in the emulator, you can always
