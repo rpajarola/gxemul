@@ -36,6 +36,7 @@
 #define	WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <windows.h>
+#include <iphlpapi.h>
 
 #include <signal.h>
 #include <stdio.h>
@@ -320,6 +321,37 @@ void win32_sockets_init(void)
 		fprintf(stderr, "Could not start Winsock\n");
 		exit(1);
 	}
+}
+
+/*
+ *  win32_nameserver():
+ *
+ *  Windows has no /etc/resolv.conf; GetNetworkParams() knows the DNS
+ *  servers instead.
+ */
+const char *win32_nameserver(void)
+{
+	static char addr[16];
+	ULONG len = 0;
+	FIXED_INFO *info;
+
+	if (GetNetworkParams(NULL, &len) != ERROR_BUFFER_OVERFLOW)
+		return NULL;
+
+	info = (FIXED_INFO *) malloc(len);
+	if (info == NULL)
+		return NULL;
+
+	if (GetNetworkParams(info, &len) != NO_ERROR ||
+	    info->DnsServerList.IpAddress.String[0] == '\0') {
+		free(info);
+		return NULL;
+	}
+
+	snprintf(addr, sizeof(addr), "%s",
+	    info->DnsServerList.IpAddress.String);
+	free(info);
+	return addr;
 }
 
 #endif	/*  _WIN32  */

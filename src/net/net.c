@@ -544,6 +544,16 @@ static void parse_resolvconf(struct net *net)
 	 *  TODO: This assumes that the first nameserver listed is the
 	 *        one to use.
 	 */
+#ifdef _WIN32
+	{
+		const char *ns = win32_nameserver();
+		if (ns != NULL && inet_pton(AF_INET, ns,
+		    &net->nameserver_ipv4) == 1)
+			net->nameserver_known = 1;
+		return;
+	}
+#endif
+
 	f = fopen("/etc/resolv.conf", "r");
 	if (f == NULL)
 		return;
@@ -694,7 +704,7 @@ void net_dumpinfo(struct net *net)
 	debug(")\n");
 
 	if (!net->nameserver_known) {
-		debug("(could not determine real nameserver from /etc/resolv.conf)\n");
+		debug("(could not determine the host's nameserver)\n");
 	} else {
 		debug("nameserver uses real nameserver ");
 		net_debugaddr(&net->nameserver_ipv4, NET_ADDR_IPV4);

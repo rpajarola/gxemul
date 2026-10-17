@@ -86,6 +86,9 @@ void win32_set_ctrl_c_handler(void (*handler)(int));
 /*  Starts Winsock:  */
 void win32_sockets_init(void);
 
+/*  The host's (first) DNS server, as a string, or NULL:  */
+const char *win32_nameserver(void);
+
 #endif	/*  _WIN32  */
 
 #endif	/*  COMPAT_WIN32_H  */

@@ -5231,4 +5231,6 @@ Changelog for GXemul:
 		Simulated network: an outgoing TCP connection which fails
 		(e.g. refused) is answered with a RST, instead of looking
 		connected and then closing; connect()'s result is taken
-		from SO_ERROR, which also works on Windows.
+		from SO_ERROR, which also works on Windows. On Windows, the
+		host's nameserver is found with GetNetworkParams() (there is
+		no /etc/resolv.conf).

@@ -343,7 +343,7 @@ printf "checking for Windows... "
 printf "#ifndef _WIN32\n#error not Windows\n#endif\nint x;\n" > _testwin.c
 if $CC $CFLAGS -c _testwin.c -o _testwin.o 2> /dev/null; then
 	WINDOWS=YES
-	OTHERLIBS="$OTHERLIBS -lws2_32"
+	OTHERLIBS="$OTHERLIBS -lws2_32 -liphlpapi"
 	printf "yes\n"
 else
 	printf "no\n"
