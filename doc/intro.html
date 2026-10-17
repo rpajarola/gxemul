@@ -130,10 +130,13 @@ that the dyntrans system uses can be executed on any host architecture.
 <p>Most of the development is done on FreeBSD/amd64 using clang and/or GNU C,
 but every now and then the code is built on Linux,
 or on NetBSD or OpenBSD inside GXemul itself.
-Although it is possible that GXemul may build and run on non-Unix-like platforms,
-such as <a href="http://www.cygwin.com/">Cygwin</a> inside Windows, Unix-like
-systems are the primary platform. Some functionality may be lost or not work as
-expected when running on Cygwin.
+
+<p>GXemul also runs natively on 64-bit Windows (10 and later), from a
+terminal such as Windows Terminal. <tt>packaging/build-win.sh</tt> builds
+a zip with <tt>gxemul.exe</tt> and <tt>SDL2.dll</tt>, either in an
+<a href="https://www.msys2.org/">MSYS2</a> UCRT64 shell, or cross-compiled
+with mingw-w64 (see <tt>packaging/README.md</tt>). Tap devices (<tt>-L</tt>)
+are not supported on Windows.
 
 
 
@@ -183,7 +186,8 @@ the emulation starts. (This also happens when you use
 <a href="configfiles.html">configuration files</a> with <i>more than one</i>
 machine specified.) CTRL-B and CTRL-C both have their original meaning
 in those telnet sessions. (macOS no longer comes with telnet, but
-Homebrew has it: <tt>brew install telnet</tt>.)
+Homebrew has it: <tt>brew install telnet</tt>. On Windows, the telnet
+client is an optional feature, or PuTTY can be used.)
 
 
 
