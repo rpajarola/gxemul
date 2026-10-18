@@ -104,7 +104,7 @@ struct machine_config {
 
 	/*  Display and console:  */
 	bool		display;
-	int		scale;		/*  1 = 1:1, 2 = half size, -2 = double  */
+	int		scale;		/*  window size in percent, 0 = fit  */
 	int		gfx_cards;	/*  -1 = default  */
 	bool		serial_telnet;	/*  serial ports on telnet ports  */
 
@@ -168,6 +168,7 @@ struct mc_slot {
 	const char	*device;	/*  e.g. "PMAZ-AA SCSI"  */
 };
 int machine_config_slots(const struct machine_config *, struct mc_slot *);
+int machine_config_max_gfx_cards(const struct machine_config *);
 
 /*  machine_presets.c:  */
 struct machine_preset {

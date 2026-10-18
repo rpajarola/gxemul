@@ -956,13 +956,41 @@ static void ungrab(void)
 
 
 /*  Sizes a window for its screen image and the bars.  */
+/*
+ *  Sizes a window for its screen image, at the machine's zoom: 50%, 100%,
+ *  200%, ... of the image's size, in window points.  Zoom 0 is the largest
+ *  of 200%, 100%, 50%, and 25% that fits the screen (leaving room for the
+ *  window's title bar).
+ */
 static void set_window_size(struct fb_window *win)
 {
 	struct sdl_window *sw = SWIN(win);
+	int zoom = win->machine->display_md.zoom, bars, display;
+	static const int zooms[] = { 200, 100, 50, 25 };
+	SDL_Rect usable;
 
 	font_init(win);
-	SDL_SetWindowSize(sw->window, win->xsize,
-	    win->ysize + 2 * sw->bar_h / sw->scale);
+	bars = 2 * sw->bar_h / sw->scale;
+
+	if (zoom <= 0) {
+		size_t i;
+		display = SDL_GetWindowDisplayIndex(sw->window);
+		if (SDL_GetDisplayUsableBounds(display < 0 ? 0 : display,
+		    &usable) != 0)
+			usable.w = usable.h = 0;
+		zoom = 100;
+		for (i = 0; usable.w > 0 && i < sizeof(zooms) / sizeof(zooms[0]);
+		    i++) {
+			zoom = zooms[i];
+			if ((int64_t) win->xsize * zoom / 100 <= usable.w &&
+			    (int64_t) win->ysize * zoom / 100 + bars + 40 <=
+			    usable.h)
+				break;
+		}
+	}
+
+	SDL_SetWindowSize(sw->window, (int) ((int64_t) win->xsize * zoom / 100),
+	    (int) ((int64_t) win->ysize * zoom / 100) + bars);
 }
 
 
@@ -1032,6 +1060,21 @@ bool display_backend_open(struct fb_window *win)
 
 	set_window_size(win);
 	display_backend_set_title(win);
+
+	/*  Keep a window that grew on the screen:  */
+	{
+		SDL_Rect usable;
+		int x, y, w, h, display = SDL_GetWindowDisplayIndex(sw->window);
+		SDL_GetWindowPosition(sw->window, &x, &y);
+		SDL_GetWindowSize(sw->window, &w, &h);
+		if (SDL_GetDisplayUsableBounds(display < 0 ? 0 : display,
+		    &usable) == 0 && (x + w > usable.x + usable.w ||
+		    y + h > usable.y + usable.h))
+			SDL_SetWindowPosition(sw->window,
+			    SDL_WINDOWPOS_CENTERED_DISPLAY(display < 0 ? 0 :
+			    display), SDL_WINDOWPOS_CENTERED_DISPLAY(
+			    display < 0 ? 0 : display));
+	}
 	return true;
 }
 

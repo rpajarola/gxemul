@@ -89,6 +89,7 @@ struct machine *machine_new(char *name, struct emul *emul, int id)
 	m->boot_string_argument = NULL;
 	m->display_md.scaledown = 1;
 	m->display_md.scaleup = 1;
+	m->display_md.zoom = 100;
 	m->n_gfx_cards = 1;
 	symbol_init(&m->symbol_context);
 

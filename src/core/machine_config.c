@@ -44,7 +44,7 @@
  *	                "id": -1, "readonly": false, "overlay": false,
  *	                "vendor": "", "product": "", "revision": "",
  *	                "boot": false } ],
- *	  "display": { "enabled": false, "scale": 1, "cards": -1 },
+ *	  "display": { "enabled": false, "scale": 0, "cards": -1 },
  *	  "serial": { "telnet": false },
  *	  "slots": { "0": "PMAG-BA.bin" },
  *	  "network": { "enabled": true, "ipv4": "10.0.0.0", "ipv4len": 8,
@@ -187,7 +187,7 @@ struct machine_config *machine_config_new(void)
 	c->prom_emulation = true;
 	c->rom = xstrdup("");
 	c->bootname = xstrdup("");
-	c->scale = 1;
+	c->scale = 0;
 	c->gfx_cards = -1;
 	c->net = true;
 	c->net_ipv4 = xstrdup(NET_DEFAULT_IPV4_MASK);
@@ -743,6 +743,14 @@ struct machine_config *machine_config_parse(const char *text,
 		get_bool(o, "enabled", &c->display, &err);
 		get_int(o, "scale", &c->scale, &err);
 		get_int(o, "cards", &c->gfx_cards, &err);
+
+		/*  (Earlier, 1 = actual size, 2 = half, -2 = double.)  */
+		if (c->scale == 1)
+			c->scale = 100;
+		else if (c->scale == 2)
+			c->scale = 50;
+		else if (c->scale == -2)
+			c->scale = 200;
 	}
 
 	if ((o = section(root, "serial", &err)) != NULL)
@@ -1029,6 +1037,30 @@ static bool lookup_machine(const char *type, const char *model,
 
 
 /*
+ *  machine_config_max_gfx_cards():
+ *
+ *  How many graphics cards a machine can have (with the display on): up to
+ *  3 on the TURBOchannel DECstations, otherwise 1 (or none).
+ */
+int machine_config_max_gfx_cards(const struct machine_config *c)
+{
+	int type, subtype;
+	char *err = NULL;
+
+	if (!lookup_machine(c->type, c->model, &type, &subtype, &err)) {
+		free(err);
+		return 1;
+	}
+	if (type == MACHINE_PMAX && (subtype == MACHINE_DEC_3MAX_5000 ||
+	    subtype == MACHINE_DEC_3MIN_5000 ||
+	    subtype == MACHINE_DEC_3MAXPLUS_5000 ||
+	    subtype == MACHINE_DEC_MAXINE_5000))
+		return 3;
+	return 1;
+}
+
+
+/*
  *  machine_config_slots():
  *
  *  Lists the TURBOchannel slots that have a card in them, which can be
@@ -1114,6 +1146,13 @@ char *machine_config_check_ex(const struct machine_config *c,
 
 	if (c->memory_mb < 0)
 		return xstrdup("the memory size can't be negative");
+	if (c->scale != 0 && (c->scale < 10 || c->scale > 800))
+		return xstrdup("the window scale must be a percentage from 10 "
+		    "to 800, or 0 (fit the screen)");
+	if (c->gfx_cards > machine_config_max_gfx_cards(c))
+		return xprintf("this machine can have at most %i graphics "
+		    "card%s", machine_config_max_gfx_cards(c),
+		    machine_config_max_gfx_cards(c) == 1 ? "" : "s");
 	if (c->ncpus < 0)
 		return xstrdup("the number of CPUs can't be negative");
 
@@ -1353,11 +1392,7 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 		m->boot_string_argument = xstrdup(c->bootarg);
 
 	m->display_md.in_use = c->display;
-	if (c->scale < -1) {
-		m->display_md.scaledown = 1;
-		m->display_md.scaleup = -c->scale;
-	} else if (c->scale > 1)
-		m->display_md.scaledown = c->scale;
+	m->display_md.zoom = c->scale;
 	if (c->gfx_cards >= 0)
 		m->n_gfx_cards = c->gfx_cards;
 	else if (!c->display)

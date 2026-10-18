@@ -5324,3 +5324,11 @@ Changelog for GXemul:
 		and rz(7), for new disk images, and RRD40 and RRD42 CD-ROMs),
 		or any other. The bus is only offered on machines with IDE;
 		an IDE drive on a DECstation (SCSI only) is an error.
+20261017	Framebuffer windows can be zoomed: "scale" in machine.json is
+		the window size in percent (50, 100, 200, ...), or 0, the
+		default, for the largest of 200%, 100%, 50%, and 25% that
+		fits the screen (a window that grows is moved onto the
+		screen). Before, the double size (-2) changed nothing for
+		framebuffers. In the configuration window, the size and the
+		number of graphics cards (1 to 3, on the TURBOchannel
+		DECstations only) are drop-down lists.

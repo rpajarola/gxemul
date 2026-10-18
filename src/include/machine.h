@@ -83,6 +83,7 @@ struct display_md {
 	int	in_use;
 	int	scaledown;
 	int	scaleup;
+	int	zoom;		/*  window size in percent, 0 = fit the screen  */
 	int	n_display_names;		/*  X11 displays (ignored)  */
 	char	**display_names;
 

@@ -113,8 +113,8 @@ Drives
 (disks, CD-ROMs, tapes, and floppies; on a DECstation, a drive can be
 one of DEC's, e.g. an RZ26 disk, which a new disk image gets the size of,
 or say it is any other drive; missing disk images can be created with a
-given size), Display (the framebuffer window, and serial ports on
-telnet ports), Network, and Advanced.  The line above the buttons says what's
+given size), Display (the framebuffer window, its size, the number of
+graphics cards, and serial ports on telnet ports), Network, and Advanced.  The line above the buttons says what's
 missing before the machine can be started.  <b>Save</b> writes the file
 (a new machine gets a directory of its own, and its missing disk images
 are created), and <b>Save and Start</b> also starts it.  Escape or
@@ -210,7 +210,7 @@ shown here, except for the machine type:
   ],
   "display": {
     "enabled": false,           <font color="#2020cf">framebuffer windows (as -X)</font>
-    "scale": 1,                 <font color="#2020cf">2 = half size, -2 = double size (as -Y)</font>
+    "scale": 0,                 <font color="#2020cf">the window size in percent (e.g. 50, 100, 200), 0 = fit the screen</font>
     "cards": -1                 <font color="#2020cf">graphics cards, -1 = the default (as -Z)</font>
   },
   "serial": { "telnet": false },  <font color="#2020cf">serial ports on telnet ports (as -x; on with the framebuffer)</font>

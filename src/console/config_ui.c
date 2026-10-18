@@ -1642,19 +1642,39 @@ static void page_display(void)
 	mu_Context *ctx = ui.ctx;
 	struct machine_config *c = ui.cfg;
 	int full[1] = { -1 };
-	int lw[2] = { CH(22), CH(10) };
+	int lw[2] = { CH(22), CH(34) };
+	static const char *scale_labels[] = { "Fit the screen",
+	    "Actual size (100%)", "Half size (50%)", "Double size (200%)" };
+	static const int scale_values[] = { 0, 100, 50, 200 };
+	static const char *card_labels[] = { "1", "2", "3" };
+	int i, sel, max_cards = machine_config_max_gfx_cards(c);
 
 	row(1, full);
 	check("Framebuffer window (graphics, keyboard and mouse)", &c->display);
-	row(2, lw);
-	mu_label(ctx, "Window scale");
-	int_field(&c->scale);
-	mu_label(ctx, "Graphics cards");
-	int_field(&c->gfx_cards);
+	if (c->display) {
+		row(2, lw);
+		mu_label(ctx, "Window size");
+		sel = -1;
+		for (i = 0; i < 4; i++)
+			if (c->scale == scale_values[i])
+				sel = i;
+		if (dropdown("scale", scale_labels, 4, &sel))
+			c->scale = scale_values[sel];
+
+		if (max_cards > 1) {
+			mu_label(ctx, "Graphics cards");
+			sel = (c->gfx_cards < 1 ? 1 : c->gfx_cards) - 1;
+			if (dropdown("cards", card_labels, max_cards, &sel))
+				c->gfx_cards = sel + 1;
+			mu_label(ctx, "");
+			mu_label(ctx, "(each with a window of its own)");
+		}
+		row(1, full);
+		mu_label(ctx, "");
+		mu_text(ctx, "Fit the screen: the largest of double, actual, "
+		    "half, and quarter size that fits the screen.");
+	}
 	row(1, full);
-	mu_text(ctx, "Scale: 1 = actual size, 2 = half size, -2 = double size.  "
-	    "Graphics cards: -1 = the machine's default (DECstations: up to "
-	    "3, in slots 0..2).");
 	mu_label(ctx, "");
 	check("Serial ports on telnet ports (localhost, 4000 and up)",
 	    &c->serial_telnet);
