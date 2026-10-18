@@ -1,0 +1,48 @@
+{
+  "name": "3max-ultrix-4.5",
+  "description": "Ultrix/RISC 4.5 on a DECstation 5000/200, running its own PROM",
+  "files": [
+    {
+      "path": "../rom/kn02-notests.bin",
+      "sha256": "",
+      "notes": "KN02-AA system ROM of the 5000/200, with the self-tests gxemul fails patched out",
+      "sources": []
+    },
+    {
+      "path": "../rom/pmaz-a.bin",
+      "sha256": "",
+      "notes": "Option ROM of the built-in SCSI controller (PMAZ-AA), slot 5",
+      "sources": []
+    },
+    {
+      "path": "../rom/pmad-aa.bin",
+      "sha256": "",
+      "notes": "Option ROM of the built-in Ethernet interface (PMAD-AA), slot 6",
+      "sources": []
+    },
+    {
+      "path": "../rom/pmagb-b.bin",
+      "sha256": "",
+      "notes": "Option ROM of a PMAGB-BA frame buffer; not in machine.json yet, as the emulated slot 0 card is a PMAG-BA",
+      "sources": []
+    },
+    {
+      "path": "../media/ultrix-4.5.iso",
+      "sha256": "",
+      "notes": "Ultrix/RISC 4.5 install CD (a raw UFS image, not ISO 9660)",
+      "sources": [
+        {
+          "url": "https://musall.de/mirrors/ultrix/ultrix_os/risc/ultrix-risc-4.5-mode1.ufs.bz2",
+          "unpack": "bz2"
+        }
+      ]
+    },
+    {
+      "path": "disk/rz0.img",
+      "sha256": "",
+      "notes": "Root disk with Ultrix installed: start install.json, boot 5/rz4/vmunix at the >> prompt, and install",
+      "create_mb": 800,
+      "sources": []
+    }
+  ]
+}

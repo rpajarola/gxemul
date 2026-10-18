@@ -1,0 +1,7 @@
+# Only the descriptions are kept in git: the images themselves are fetched
+# with test/testdata.py (see README.md).
+*
+!*/
+!.gitignore
+!*.json
+!README.md

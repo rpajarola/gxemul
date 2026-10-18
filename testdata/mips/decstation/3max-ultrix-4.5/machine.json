@@ -1,0 +1,12 @@
+{
+  "gxemul": 1,
+  "name": "Ultrix 4.5 (5000/200)",
+  "machine": { "type": "decstation", "model": "3max", "memory_mb": 128 },
+  "boot": { "prom_emulation": false, "rom": "../rom/kn02-notests.bin" },
+  "drives": [
+    { "file": "disk/rz0.img", "kind": "disk", "id": 0, "overlay": true },
+    { "file": "../media/ultrix-4.5.iso", "kind": "cdrom", "id": 4 }
+  ],
+  "display": { "enabled": true },
+  "slots": { "5": "../rom/pmaz-a.bin", "6": "../rom/pmad-aa.bin" }
+}
