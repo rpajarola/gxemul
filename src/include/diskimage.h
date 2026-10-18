@@ -102,6 +102,13 @@ struct diskimage {
 	int		tape_sense_info_valid;
 	int32_t		tape_sense_info;
 
+	/*  The rest of a record, read in fixed block mode (see
+	    diskimage__simh_tape_read()), while the tape is still at
+	    tape_partial_at:  */
+	uint64_t	tape_partial_ofs;
+	uint32_t	tape_partial_len;
+	uint64_t	tape_partial_at;
+
 	/*
 	 *  Removable media (CD-ROMs and tapes) can be ejected and loaded
 	 *  while the machine runs.  Without a medium, fname is the last

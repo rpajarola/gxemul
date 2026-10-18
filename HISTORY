@@ -5365,3 +5365,12 @@ Changelog for GXemul:
 		Reset (the machine is started again, by exec, with the same
 		configuration; the telnet ports are close-on-exec, so it gets
 		the same ones), and a View menu for the window's size.
+20261018	SIMH tapes in fixed block mode: the blocks are cut from a
+		file's records as from a stream, instead of each block being
+		one record. A TK50 (as which DECstation tape drives identify
+		themselves) is a fixed 512-byte block drive, and OSF/1 reads
+		it that way, while SIMH images usually keep dump's 10240-byte
+		records; OSF/1 2.0's restore of the root file system from its
+		installation tape failed with "no header after volume mark!".
+		MODE SELECT on a tape sets the fixed block length (or keeps
+		it, for 0, variable) instead of warning.

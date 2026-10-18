@@ -428,8 +428,15 @@ static void tape_check_condition(struct diskimage *d,
  *  diskimage__simh_tape_read():
  *
  *  READ from a SIMH-format tape. In variable block mode, exactly one
- *  record is read, no matter how short it is. In fixed block mode, each
- *  of the requested blocks is one record of logical_block_size bytes.
+ *  record is read, no matter how short it is.
+ *
+ *  In fixed block mode, the blocks (of logical_block_size bytes) are cut
+ *  from the records of a file as from a stream, up to its filemark.  A
+ *  fixed-block drive such as a TK50 writes what dump writes in 10240 bytes
+ *  as 20 blocks of 512 bytes, while a SIMH image of such a tape often has
+ *  the 10240-byte record, which the drive's host reads a block at a time
+ *  (e.g. OSF/1's restore).  The rest of a record is kept for the next
+ *  READ, until the tape is moved otherwise.
  */
 static void diskimage__simh_tape_read(struct diskimage *d,
 	struct scsi_transfer *xferp)
@@ -439,7 +446,7 @@ static void diskimage__simh_tape_read(struct diskimage *d,
 	    xferp->cmd[4];
 	uint32_t blocksize = fixed? d->logical_block_size : count;
 	uint32_t nblocks = fixed? count : 1;
-	uint32_t i, reclen, n;
+	uint32_t reclen, n;
 	uint64_t data_ofs;
 	size_t done = 0, got;
 	int res;
@@ -457,43 +464,72 @@ static void diskimage__simh_tape_read(struct diskimage *d,
 	scsi_transfer_allocbuf(&xferp->data_in_len, &xferp->data_in,
 	    (size_t)nblocks * blocksize, 1);
 
-	for (i = 0; i < nblocks; i++) {
-		res = simh_tape_forward(d, &reclen, &data_ofs);
+	if (fixed) {
+		size_t want = (size_t) nblocks * blocksize;
 
-		if (res == TAPE_REC_FILEMARK) {
-			tape_check_condition(d, xferp, SENSE_KEY_NO_SENSE,
-			    SENSE_FLAG_FILEMARK, fixed? nblocks - i : count);
-			break;
-		}
-		if (res != TAPE_REC_DATA) {
-			tape_check_condition(d, xferp, SENSE_KEY_BLANK_CHECK,
-			    0, fixed? nblocks - i : count);
-			break;
+		if (d->tape_partial_at != d->tape_offset)
+			d->tape_partial_len = 0;
+
+		while (done < want) {
+			if (d->tape_partial_len == 0) {
+				res = simh_tape_forward(d, &reclen, &data_ofs);
+				if (res != TAPE_REC_DATA) {
+					tape_check_condition(d, xferp,
+					    res == TAPE_REC_FILEMARK?
+					    SENSE_KEY_NO_SENSE :
+					    SENSE_KEY_BLANK_CHECK,
+					    res == TAPE_REC_FILEMARK?
+					    SENSE_FLAG_FILEMARK : 0,
+					    nblocks - done / blocksize);
+					break;
+				}
+				d->tape_partial_ofs = data_ofs;
+				d->tape_partial_len = reclen;
+			}
+
+			n = d->tape_partial_len < want - done?
+			    d->tape_partial_len : (uint32_t) (want - done);
+			got = 0;
+			if (fseeko(d->f, d->tape_partial_ofs, SEEK_SET) == 0)
+				got = fread(xferp->data_in + done, 1, n, d->f);
+			if (got < n)
+				fatal("[ tape id %i: short record data at ofs "
+				    "%lli ]\n", d->id,
+				    (long long)d->tape_partial_ofs);
+			done += n;
+			d->tape_partial_ofs += n;
+			d->tape_partial_len -= n;
 		}
 
-		n = reclen < blocksize? reclen : blocksize;
-		got = 0;
-		if (n > 0 && fseeko(d->f, data_ofs, SEEK_SET) == 0)
-			got = fread(xferp->data_in + done, 1, n, d->f);
-		if (got < n)
-			fatal("[ tape id %i: short record data at ofs %lli ]\n",
-			    d->id, (long long)data_ofs);
-		done += n;
-
-		if (reclen != blocksize) {
-			/*  Incorrect length. The tape is still positioned
-			    after the whole record.  */
-			if (fixed)
-				tape_check_condition(d, xferp,
-				    SENSE_KEY_NO_SENSE, SENSE_FLAG_ILI,
-				    nblocks - i);
-			else if (reclen > blocksize || !sili)
-				tape_check_condition(d, xferp,
-				    SENSE_KEY_NO_SENSE, SENSE_FLAG_ILI,
-				    (int32_t)(blocksize - reclen));
-			break;
-		}
+		d->tape_partial_at = d->tape_offset;
+		xferp->data_in_len = done - done % blocksize;
+		return;
 	}
+
+	/*  Variable block mode:  one record.  */
+	res = simh_tape_forward(d, &reclen, &data_ofs);
+	if (res != TAPE_REC_DATA) {
+		tape_check_condition(d, xferp, res == TAPE_REC_FILEMARK?
+		    SENSE_KEY_NO_SENSE : SENSE_KEY_BLANK_CHECK,
+		    res == TAPE_REC_FILEMARK? SENSE_FLAG_FILEMARK : 0, count);
+		xferp->data_in_len = 0;
+		return;
+	}
+
+	n = reclen < blocksize? reclen : blocksize;
+	got = 0;
+	if (n > 0 && fseeko(d->f, data_ofs, SEEK_SET) == 0)
+		got = fread(xferp->data_in, 1, n, d->f);
+	if (got < n)
+		fatal("[ tape id %i: short record data at ofs %lli ]\n",
+		    d->id, (long long)data_ofs);
+	done = n;
+
+	/*  Incorrect length (the tape is still positioned after the whole
+	    record):  */
+	if (reclen > blocksize || (reclen < blocksize && !sili))
+		tape_check_condition(d, xferp, SENSE_KEY_NO_SENSE,
+		    SENSE_FLAG_ILI, (int32_t)(blocksize - reclen));
 
 	/*  Only the data actually read from the tape is returned.  */
 	xferp->data_in_len = done;
@@ -1519,6 +1555,16 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 		/*  TODO:  Care about cmd?  */
 
+		/*  A tape's block descriptor: a block length for fixed block
+		    mode, or 0 for variable (which keeps the fixed length):  */
+		if (d->is_a_tape && xferp->data_out_len >= 12 &&
+		    xferp->data_out[3] == 0x08) {
+			int len = (xferp->data_out[9] << 16) +
+			    (xferp->data_out[10] << 8) + xferp->data_out[11];
+			if (len > 0)
+				d->logical_block_size = len;
+			debug("[ tape block length %i ]\n", len);
+		} else
 		/*  Set sector size to 2048:  */
 		/*  00 05 00 08 00 03 ca 40 00 00 08 00  */
 		if (xferp->data_out[0] == 0x00 &&
