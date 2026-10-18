@@ -5336,3 +5336,6 @@ Changelog for GXemul:
 		the configuration in another gxemul (--edit machine.json
 		--no-start), whose editor only saves it, and says that the
 		changes take effect when the machine is restarted.
+
+==============  RELEASE 1.0.3  ==============
+
