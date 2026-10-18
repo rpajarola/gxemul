@@ -73,12 +73,12 @@ static bool skip_srandom_call = false;
 static char *config_file = NULL;
 
 /*  Set by the Edit Configuration menu item, to start again with --edit:  */
-char *restart_edit_path = NULL;
 
 /*  The configuration window is wanted (no machine on the command line, or
     --edit), with the file to edit, if any:  */
 static bool want_ui = false;
 static char *edit_path = NULL;
+static bool edit_no_start = false;
 
 
 /*
@@ -687,6 +687,21 @@ int main(int argc, char *argv[])
 			break;
 		}
 
+	/*  --no-start, with --edit: for a machine that is running (from its
+	    Edit Configuration... menu item):  */
+	for (i = 1; i < argc; i++)
+		if (strcmp(argv[i], "--no-start") == 0) {
+			memmove(&argv[i], &argv[i + 1],
+			    sizeof(char *) * (argc - i));
+			argc --;
+			edit_no_start = true;
+			break;
+		}
+	if (edit_no_start && edit_path == NULL) {
+		fprintf(stderr, "--no-start needs --edit machine.json.\n");
+		return 1;
+	}
+
 	get_cmd_args(argc, argv, emul, &diskimages, &n_diskimages, &tap_devname);
 
 	/*
@@ -712,7 +727,7 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "--edit needs a window system.\n");
 			return 1;
 		}
-		chosen = config_ui_run(edit_path);
+		chosen = config_ui_run(edit_path, edit_no_start);
 		if (chosen == NULL)
 			return 0;
 	}
@@ -834,13 +849,6 @@ int main(int argc, char *argv[])
 
 	settings_remove_all(global_settings);
 	settings_destroy(global_settings);
-
-	if (restart_edit_path != NULL) {
-		execlp(progname, progname, "--edit", restart_edit_path,
-		    (char *) NULL);
-		perror(progname);
-		return 1;
-	}
 
 	return 0;
 }

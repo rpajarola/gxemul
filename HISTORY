@@ -5332,3 +5332,7 @@ Changelog for GXemul:
 		framebuffers. In the configuration window, the size and the
 		number of graphics cards (1 to 3, on the TURBOchannel
 		DECstations only) are drop-down lists.
+20261017	Edit Configuration... no longer stops the machine: it opens
+		the configuration in another gxemul (--edit machine.json
+		--no-start), whose editor only saves it, and says that the
+		changes take effect when the machine is restarted.

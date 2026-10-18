@@ -98,6 +98,9 @@ bool win32_choose_file(const char *title, const char *start_dir, bool save,
 	const char *default_name);
 bool win32_choose_file_done(char **path);
 
+/*  Starts another gxemul (this executable), without waiting for it:  */
+bool win32_spawn_self(const char *const *args);
+
 #endif	/*  _WIN32  */
 
 #endif	/*  COMPAT_WIN32_H  */

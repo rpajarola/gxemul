@@ -41,9 +41,12 @@ struct machine_config;
  *  Shows the list of machines, or with edit_path, the editor for that
  *  configuration file (a new one if it doesn't exist).  Returns the
  *  configuration to start (which the caller frees), or NULL if the window
- *  was closed.  ui_available is false if there is no window system.
+ *  was closed.  config_ui_available() is false if there is no window
+ *  system.  With running, the configuration is that of a machine which is
+ *  running (in another gxemul): the editor only saves it, and the window
+ *  closes when it is left.
  */
 bool config_ui_available(void);
-struct machine_config *config_ui_run(const char *edit_path);
+struct machine_config *config_ui_run(const char *edit_path, bool running);
 
 #endif	/*  CONFIG_UI_H  */

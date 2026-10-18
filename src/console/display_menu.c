@@ -41,6 +41,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include "debugger.h"
 #include "diskimage.h"
@@ -164,16 +169,52 @@ static void menu_debugger(struct machine *m, struct menu_item *item)
  *  Edit Configuration: the machine stops, and gxemul starts again with
  *  --edit (see main()).
  */
-extern bool emul_shutdown;
-extern char *restart_edit_path;
+extern char *progname;
+
+/*
+ *  Opens the configuration window for a machine's configuration file, in
+ *  another gxemul ("--edit file --no-start"), while the machine keeps
+ *  running.  The other gxemul gets no terminal input (it shares this one's
+ *  terminal, whose settings it must not touch), and on POSIX hosts, it is
+ *  a grandchild, so that it isn't left a zombie when it exits.
+ */
+static bool spawn_editor(const char *path)
+{
+#ifdef _WIN32
+	const char *args[] = { "--edit", path, "--no-start", NULL };
+	return win32_spawn_self(args);
+#else
+	pid_t pid = fork();
+	int status;
+
+	if (pid < 0)
+		return false;
+	if (pid == 0) {
+		if (fork() == 0) {
+			int fd = open("/dev/null", O_RDONLY);
+			if (fd >= 0)
+				dup2(fd, 0);
+			setsid();
+			execlp(progname, progname, "--edit", path,
+			    "--no-start", (char *) NULL);
+			_exit(1);
+		}
+		_exit(0);
+	}
+	waitpid(pid, &status, 0);
+	return true;
+#endif
+}
 
 static void menu_edit_config(struct machine *m, struct menu_item *item)
 {
 	(void) item;
-	printf("[ Edit Configuration was chosen in the menu; stopping the "
-	    "machine ]\n");
-	CHECK_ALLOCATION(restart_edit_path = strdup(m->config_path));
-	emul_shutdown = true;
+	if (spawn_editor(m->config_path))
+		display_message(m, "Editing the configuration in another "
+		    "window; changes take effect when the machine is "
+		    "restarted");
+	else
+		display_message(m, "Could not open the configuration window");
 }
 
 

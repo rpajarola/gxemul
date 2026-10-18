@@ -357,6 +357,39 @@ const char *win32_nameserver(void)
 }
 
 /*
+ *  win32_spawn_self():
+ *
+ *  Starts another gxemul (this executable) with the arguments given (a
+ *  NULL-terminated list, without the program name), without waiting for
+ *  it, and without a console (it shares none with this one).
+ */
+bool win32_spawn_self(const char *const *args)
+{
+	char exe[MAX_PATH], cmd[8192];
+	STARTUPINFOA si;
+	PROCESS_INFORMATION pi;
+	size_t n;
+
+	if (GetModuleFileNameA(NULL, exe, sizeof(exe)) == 0)
+		return false;
+	snprintf(cmd, sizeof(cmd), "\"%s\"", exe);
+	for (; *args != NULL; args++) {
+		n = strlen(cmd);
+		snprintf(cmd + n, sizeof(cmd) - n, " \"%s\"", *args);
+	}
+
+	memset(&si, 0, sizeof(si));
+	si.cb = sizeof(si);
+	if (!CreateProcessA(exe, cmd, NULL, NULL, FALSE, DETACHED_PROCESS,
+	    NULL, NULL, &si, &pi))
+		return false;
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+	return true;
+}
+
+
+/*
  *  The file chooser:  GetOpenFileName() is modal, so it runs in a thread
  *  of its own, which sets chooser_finished when it returns.
  */

@@ -65,9 +65,10 @@ bool config_ui_available(void)
 	return false;
 }
 
-struct machine_config *config_ui_run(const char *edit_path)
+struct machine_config *config_ui_run(const char *edit_path, bool running)
 {
 	(void) edit_path;
+	(void) running;
 	return NULL;
 }
 
@@ -156,6 +157,9 @@ static struct {
 
 	/*  The open drop-down list, if any:  */
 	mu_Container	*open_list;
+
+	/*  Editing the configuration of a running machine (only that):  */
+	bool		running;
 } ui;
 
 
@@ -1865,12 +1869,22 @@ static void screen_editor(void)
 
 	int bw[5] = { CH(10), -CH(30), CH(10), -1 };
 	row(4, bw);
-	if (mu_button(ctx, "Cancel")) {
+	if (mu_button(ctx, ui.running ? "Close" : "Cancel")) {
 		ui.screen = SCREEN_LIST;
 		free(ui.message);
 		ui.message = NULL;
+		if (ui.running)
+			ui.quit = true;
 	}
 	mu_label(ctx, c->path != NULL ? c->path : "(not saved yet)");
+	if (ui.running) {
+		/*  (Starting it again would use the same disk images.)  */
+		mu_label(ctx, "");
+		if (mu_button(ctx, "Save") && save())
+			set_message(false, "Saved; the changes take effect "
+			    "when the machine is restarted");
+		return;
+	}
 	if (mu_button(ctx, "Save") && save())
 		list_load(c->path);
 	if (mu_button(ctx, "Save and Start") && save()) {
@@ -2019,8 +2033,11 @@ static void handle_event(const SDL_Event *ev)
 		    ui.open_list != NULL && ui.open_list->open)
 			ui.open_list->open = 0;
 		else if (ev->type == SDL_KEYDOWN && k == SDLK_ESCAPE &&
-		    ui.screen != SCREEN_LIST && !ui.pick_open)
+		    ui.screen != SCREEN_LIST && !ui.pick_open) {
 			ui.screen = SCREEN_LIST;
+			if (ui.running)
+				ui.quit = true;
+		}
 		break;
 	}
 	}
@@ -2033,7 +2050,7 @@ bool config_ui_available(void)
 }
 
 
-struct machine_config *config_ui_run(const char *edit_path)
+struct machine_config *config_ui_run(const char *edit_path, bool running)
 {
 	SDL_Event ev;
 
@@ -2083,12 +2100,19 @@ struct machine_config *config_ui_run(const char *edit_path)
 			if (c == NULL) {
 				fprintf(stderr, "%s\n", err);
 				free(err);
+				if (running)
+					return NULL;
 			} else
 				open_editor(c, false);
 		} else {
 			/*  A new machine, to be saved at edit_path:  */
 			new_machine(edit_path);
 		}
+	}
+	if (running && ui.screen == SCREEN_EDITOR) {
+		ui.running = true;
+		set_message(false, "The machine is running: the changes take "
+		    "effect when it is restarted");
 	}
 
 	while (!ui.quit && ui.result == NULL) {
