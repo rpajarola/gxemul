@@ -246,9 +246,12 @@ int load_bootblock(struct machine *m, struct cpu *cpu,
 			    " for SCSI id %i.\n\n",
 			    (uint32_t)bootblock_loadaddr, boot_disk_id);
 			if (bootblock_loadaddr == 0) {
-				fatal("I'm assuming that this is _not_ a "
-				    "DEC bootblock.\nAre you sure you are"
-				    " booting from the correct disk?\n");
+				fatal("This disk has no DEC boot block. To "
+				    "boot a kernel file with PROM emulation, "
+				    "load it:\ngive it on the command line "
+				    "(e.g. gxemul -e 3max -d disk.img vmunix), "
+				    "or in\nthe files to load of a machine."
+				    "json (\"load\": [ \"vmunix\" ]).\n");
 				exit(1);
 			}
 		}

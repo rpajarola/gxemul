@@ -1699,7 +1699,8 @@ static void page_firmware(void)
 	mu_label(ctx, "Boot file name");
 	text_field(&c->bootname);
 	mu_label(ctx, "");
-	mu_label(ctx, "e.g. vmunix or netbsd (PROM emulation); empty = default");
+	mu_label(ctx, "the name the kernel is told it booted from (it isn't "
+	    "loaded: add the file above); empty = default");
 
 	bool has_arg = c->bootarg != NULL;
 	row(1, full);

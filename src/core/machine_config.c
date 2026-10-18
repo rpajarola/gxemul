@@ -1437,6 +1437,45 @@ char *machine_config_check_ex(const struct machine_config *c,
 		return xstrdup("without PROM emulation, a file to load is "
 		    "needed");
 
+	/*
+	 *  With PROM emulation and no file to load, a DECstation boots
+	 *  from the boot block of its boot drive (the one marked to boot
+	 *  from, or else the first), which must give a load address in
+	 *  kseg0 or kseg1 (see src/disk/bootblock.c):
+	 */
+	if (c->prom_emulation && c->n_load == 0 && c->n_drives > 0 &&
+	    machine_config_machine_type(c->type) == MACHINE_PMAX) {
+		const struct mc_drive *b = &c->drives[0];
+		unsigned char hdr[0x14];
+		FILE *fp;
+
+		for (i = 0; i < c->n_drives; i++)
+			if (c->drives[i].boot) {
+				b = &c->drives[i];
+				break;
+			}
+		f = b->file[0] ? machine_config_resolve(c, b->file) : NULL;
+		fp = f != NULL ? fopen(f, "rb") : NULL;
+		if (fp != NULL && fread(hdr, 1, sizeof(hdr), fp) ==
+		    sizeof(hdr)) {
+			uint32_t la = hdr[0x10] | (hdr[0x11] << 8) |
+			    (hdr[0x12] << 16) | ((uint32_t) hdr[0x13] << 24);
+			if ((la & 0xf0000000) != 0x80000000 &&
+			    (la & 0xf0000000) != 0xa0000000) {
+				fclose(fp);
+				err = xprintf("%s has no DEC boot block to "
+				    "boot from; add the kernel (e.g. vmunix) "
+				    "to the files to load (under Firmware)",
+				    f);
+				free(f);
+				return err;
+			}
+		}
+		if (fp != NULL)
+			fclose(fp);
+		free(f);
+	}
+
 	return NULL;
 }
 
