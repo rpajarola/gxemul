@@ -5339,3 +5339,17 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.3  ==============
 
+20261018	Configuration window: a new machine is saved where the user
+		chooses (a folder for it, or a .json file), not always in
+		~/GXemul/<name>; its new disk images get names that aren't
+		taken there. File choosers start in the folder used last
+		(kept in settings.json, also for Media > Load...). File names
+		are kept relative to the machine's folder when they are in
+		it, or else absolute, and tidied (".", "..", "//", and
+		backslashes on Windows). ROM images given by name are looked
+		for in the machine's folder, then in the common ROM folder
+		(~/GXemul/ROMs, or as set), then in other folders, all set
+		with Settings...; a ROM image in one of them is kept by its
+		name there. On Windows, saving over an existing machine.json
+		works (rename() doesn't replace files there), and folders
+		can be chosen (SHBrowseForFolder).

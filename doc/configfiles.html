@@ -98,10 +98,11 @@ summary of it, and:
   <li><b>New...</b> opens a new machine in the editor.
   <li><b>Open...</b> adds an existing <tt>machine.json</tt> to the list.
   <li><b>Edit</b> opens the selected machine in the editor.
-  <li><b>Duplicate</b> makes a copy of it, as a new machine (in a
-	directory of its own; it uses the same disk images, unless you
-	change them).
+  <li><b>Duplicate</b> makes a copy of it, as a new machine (it uses the
+	same disk images, unless you change them).
   <li><b>Forget</b> removes it from the list (its files are kept).
+  <li><b>Settings...</b> sets the folders where ROM images are looked
+	for (see <a href="#files">below</a>).
   <li><b>Start</b> starts it.
 </ul>
 
@@ -115,9 +116,13 @@ one of DEC's, e.g. an RZ26 disk, which a new disk image gets the size of,
 or say it is any other drive; missing disk images can be created with a
 given size), Display (the framebuffer window, its size, the number of
 graphics cards, and serial ports on telnet ports), Network, and Advanced.  The line above the buttons says what's
-missing before the machine can be started.  <b>Save</b> writes the file
-(a new machine gets a directory of its own, and its missing disk images
-are created), and <b>Save and Start</b> also starts it.  Escape or
+missing before the machine can be started.  <b>Save</b> writes the file,
+and creates the disk images that are missing; <b>Save and Start</b> also
+starts the machine.  The first time a new machine is saved, a file
+chooser asks where: the name given is a folder for the machine (with its
+<tt>machine.json</tt>, and its new disk images), or, if it ends in
+<tt>.json</tt>, the configuration file itself.  File choosers start in the
+folder used last.  Escape or
 <b>Cancel</b> leaves the editor without saving.
 
 <p>The machine is chosen on the General page, with an architecture (MIPS,
@@ -148,13 +153,24 @@ typing), and Ctrl+V (Command+V on macOS) pastes.
 <a name="files"></a>
 <h3>Where machines and settings are kept:</h3>
 
-<p>Each machine is a directory with its <tt>machine.json</tt>, and
-usually its disk and ROM images.  File names in <tt>machine.json</tt> are
-relative to its directory, unless they are absolute, so the directory can
-be moved or copied as a whole.  New machines are created in
-<tt>~/GXemul/</tt><i>name</i> (<tt>Documents\GXemul</tt> on Windows).
+<p>A machine is usually a folder with its <tt>machine.json</tt>, and its
+disk images.  File names in <tt>machine.json</tt> are relative to its
+folder, unless they are absolute.  When it is saved, a file in its folder
+(or below it) is kept relative to it, so the folder can be moved or copied
+as a whole, and other files by their absolute names.  New machines are
+saved in <tt>~/GXemul</tt> (<tt>Documents\GXemul</tt> on Windows), unless
+another place is chosen.
 
-<p>The list of recently used machines (<tt>recent.json</tt>) is kept in:
+<p>ROM images (the <tt>"rom"</tt> and <tt>"slots"</tt> files) given by a
+relative name are looked for in the machine's folder, then in the common
+ROM folder, <tt>~/GXemul/ROMs</tt> by default, and then in other folders.
+These are set with <b>Settings...</b> in the machines window.  A ROM image
+in one of these folders is kept by its name relative to that folder, so
+several machines can use the same ROM images, wherever they are.
+
+<p>The list of recently used machines (<tt>recent.json</tt>), and the
+settings (<tt>settings.json</tt>: the ROM folders, and the folder last used
+in a file chooser) are kept in:
 <ul>
   <li>macOS:  <tt>~/Library/Application Support/gxemul/</tt>
   <li>Windows:  <tt>%APPDATA%\gxemul\</tt>

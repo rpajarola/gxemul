@@ -44,6 +44,7 @@
 
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,7 +91,7 @@ extern struct machine_entry *first_machine_entry;
 #define	MAX_EDITS		400
 #define	DEFAULT_DISK_MB		2048
 
-enum screen { SCREEN_LIST, SCREEN_EDITOR };
+enum screen { SCREEN_LIST, SCREEN_EDITOR, SCREEN_SETTINGS };
 enum page { PAGE_GENERAL, PAGE_FIRMWARE, PAGE_DRIVES, PAGE_DISPLAY,
 	PAGE_NETWORK, PAGE_ADVANCED, N_PAGES };
 
@@ -138,9 +139,7 @@ static struct {
 	bool		fresh;		/*  new, and gets a model's defaults  */
 	char		*auto_name;	/*  the name it got from them  */
 	bool		show_all;	/*  also models without a preset  */
-	bool		planned_dir;	/*  cfg->dir is where it will be saved  */
-	char		*planned_name;
-	bool		start_after_save;
+	bool		start_after_save;	/*  (when saved as)  */
 	enum page	page;
 	int		disk_mb[64];	/*  for creating missing disk images  */
 	bool		custom[64];	/*  editing a drive's INQUIRY strings  */
@@ -153,10 +152,15 @@ static struct {
 
 	/*  The open file chooser's target:  */
 	char		**pick_field;
+	bool		pick_rom;	/*  a ROM image (see picked())  */
 	bool		pick_open;
 
 	/*  The open drop-down list, if any:  */
 	mu_Container	*open_list;
+
+	/*  The settings: the ROM folders besides the common one:  */
+	int		n_rom_dirs;
+	char		**rom_dirs;
 
 	/*  Editing the configuration of a running machine (only that):  */
 	bool		running;
@@ -636,15 +640,22 @@ static void picked(struct machine *m, const char *path, void *data)
 	(void) m; (void) data;
 	ui.pick_open = false;
 	if (path != NULL && ui.pick_field != NULL) {
-		machine_config_set(ui.pick_field, path);
+		/*  (Relative to the machine's folder, or for a ROM image, to
+		    a ROM folder, if it is in one.)  */
+		char *p = machine_config_normalize(ui.cfg, path, ui.pick_rom);
+		machine_config_set(ui.pick_field, p);
+		free(p);
 		edits_clear();
 	}
 	ui.pick_field = NULL;
 }
 
 
+/*  Where a file chooser starts: where the last one was used.  */
 static const char *start_dir(void)
 {
+	if (appdirs_last_dir() != NULL)
+		return appdirs_last_dir();
 	if (ui.cfg != NULL && ui.cfg->dir != NULL)
 		return ui.cfg->dir;
 	return appdirs_machines_dir();
@@ -652,9 +663,10 @@ static const char *start_dir(void)
 
 
 /*  Lets the user choose a file for a field of the configuration:  */
-static void pick_file(char **field, const char *title)
+static void pick_file(char **field, const char *title, bool rom)
 {
 	ui.pick_field = field;
+	ui.pick_rom = rom;
 	ui.pick_open = true;
 	display_choose_file(NULL, title, start_dir(), picked, NULL);
 	if (!display_chooser_open())
@@ -663,7 +675,29 @@ static void pick_file(char **field, const char *title)
 
 
 /*  A file name field, with a Browse button:  */
-static void file_field(char **field, const char *title, bool clear_button)
+/*  Says where a ROM image given by name was found, or that it wasn't:  */
+static void rom_found(const char *name)
+{
+	struct stat st;
+	char *f, buf[1200];
+
+	if (name == NULL || name[0] == '\0')
+		return;
+	f = machine_config_resolve_rom(ui.cfg, name);
+	if (stat(f, &st) == 0)
+		snprintf(buf, sizeof(buf), "(%s)", f);
+	else
+		snprintf(buf, sizeof(buf), "(not found in the machine's folder, "
+		    "or in the ROM folders under Settings)");
+	free(f);
+	int full[1] = { -1 };
+	row(1, full);
+	mu_label(ui.ctx, buf);
+}
+
+
+static void file_field(char **field, const char *title, bool clear_button,
+	bool rom)
 {
 	int widths[3] = { -CH(clear_button ? 20 : 10), CH(9), CH(8) };
 
@@ -671,7 +705,7 @@ static void file_field(char **field, const char *title, bool clear_button)
 	row(clear_button ? 3 : 2, widths);
 	text_field(field);
 	if (mu_button(ui.ctx, "Browse..."))
-		pick_file(field, title);
+		pick_file(field, title, rom);
 	if (clear_button && mu_button(ui.ctx, "Clear")) {
 		machine_config_set(field, "");
 		edits_clear();
@@ -739,11 +773,6 @@ static void open_editor(struct machine_config *c, bool is_new)
 	ui.fresh = false;
 	ui.open_list = NULL;
 
-	/*  A new machine from a preset has its files in the directory it
-	    will be saved in (named after the machine):  */
-	ui.planned_dir = is_new && c->path == NULL && c->dir == NULL;
-	free(ui.planned_name);
-	ui.planned_name = NULL;
 	ui.page = PAGE_GENERAL;
 	ui.start_after_save = false;
 	for (i = 0; i < 64; i++) {
@@ -796,6 +825,7 @@ static void start(struct machine_config *c)
 
 
 static void new_machine(const char *path);
+static void open_settings(void);
 
 static void screen_list(void)
 {
@@ -845,14 +875,16 @@ static void screen_list(void)
 	mu_end_panel(ctx);
 
 	/*  The buttons:  */
-	int bw[7] = { CH(10), CH(10), CH(8), CH(12), CH(9), -CH(12), -1 };
-	row(7, bw);
+	int bw[8] = { CH(10), CH(10), CH(8), CH(12), CH(9), CH(13), -CH(12),
+	    -1 };
+	row(8, bw);
 	if (mu_button(ctx, "New..."))
 		new_machine(NULL);
 	if (mu_button(ctx, "Open...")) {
 		ui.pick_open = true;
 		display_choose_file(NULL, "Open a machine configuration "
-		    "(machine.json)", appdirs_machines_dir(), opened, NULL);
+		    "(machine.json)", appdirs_last_dir() != NULL ?
+		    appdirs_last_dir() : appdirs_machines_dir(), opened, NULL);
 		if (!display_chooser_open())
 			ui.pick_open = false;
 	}
@@ -872,6 +904,8 @@ static void screen_list(void)
 		set_message(false, "Removed from the list (the files are "
 		    "still there)");
 	}
+	if (mu_button(ctx, "Settings..."))
+		open_settings();
 	mu_label(ctx, "");
 	if (mu_button(ctx, "Start") && sel != NULL)
 		start(sel);
@@ -881,43 +915,148 @@ static void screen_list(void)
 /****************************************************************************/
 
 /*
- *  The editor
+ *  The settings: where ROM images are looked for
  */
 
-static void make_dir(const char *path);
-
-/*  Where a new machine is saved (a directory of its own):  */
-static char *new_machine_dir(const char *name)
+static void rom_dirs_free(void)
 {
-	char safe[200], *dir;
-	size_t i, n = 0;
-	struct stat st;
-	int k;
+	int i;
 
-	for (i = 0; name[i] != '\0' && n < sizeof(safe) - 1; i++) {
-		char c = name[i];
-		if (c == '/' || c == '\\' || c == ':' || c < ' ')
-			c = '-';
-		safe[n++] = c;
-	}
-	safe[n] = '\0';
-	if (n == 0)
-		snprintf(safe, sizeof(safe), "machine");
-
-	CHECK_ALLOCATION(dir = (char *) malloc(strlen(appdirs_machines_dir()) +
-	    sizeof(safe) + 20));
-	for (k = 1; ; k++) {
-		if (k == 1)
-			sprintf(dir, "%s/%s", appdirs_machines_dir(), safe);
-		else
-			sprintf(dir, "%s/%s %i", appdirs_machines_dir(), safe,
-			    k);
-		if (stat(dir, &st) != 0)
-			break;
-	}
-	return dir;
+	for (i = 0; i < ui.n_rom_dirs; i++)
+		free(ui.rom_dirs[i]);
+	free(ui.rom_dirs);
+	ui.rom_dirs = NULL;
+	ui.n_rom_dirs = 0;
 }
 
+static void rom_dirs_save(void)
+{
+	appdirs_set_rom_dirs(ui.n_rom_dirs, ui.rom_dirs);
+}
+
+static void open_settings(void)
+{
+	char **dirs;
+	int n = appdirs_rom_dirs(&dirs), i;
+
+	/*  (The first is the common folder, which isn't edited here.)  */
+	rom_dirs_free();
+	for (i = 0; i < n; i++) {
+		if (i > 0)
+			machine_config_add_string(&ui.n_rom_dirs,
+			    &ui.rom_dirs, dirs[i]);
+		free(dirs[i]);
+	}
+	free(dirs);
+	edits_clear();
+	free(ui.message);
+	ui.message = NULL;
+	ui.screen = SCREEN_SETTINGS;
+}
+
+/*  A ROM folder was chosen: for ROM folder data - 1, a new one (data 0),
+    or the common one (data -1):  */
+static void rom_dir_picked(struct machine *m, const char *path, void *data)
+{
+	int i = (int) (intptr_t) data - 1;
+
+	(void) m;
+	ui.pick_open = false;
+	if (path == NULL)
+		return;
+	if (i == -2) {
+		appdirs_set_roms_dir(path);
+		return;
+	}
+	if (i >= 0 && i < ui.n_rom_dirs)
+		machine_config_set(&ui.rom_dirs[i], path);
+	else
+		machine_config_add_string(&ui.n_rom_dirs, &ui.rom_dirs, path);
+	edits_clear();
+	rom_dirs_save();
+}
+
+static void pick_rom_dir(int i)
+{
+	ui.pick_open = true;
+	display_choose_folder(NULL, "Choose a folder with ROM images",
+	    NULL, rom_dir_picked, (void *) (intptr_t) (i + 1));
+	if (!display_chooser_open())
+		ui.pick_open = false;
+}
+
+static void screen_settings(void)
+{
+	mu_Context *ctx = ui.ctx;
+	int full[1] = { -1 };
+	int i;
+
+	mu_layout_row(ctx, 1, full, -row_height() * 2 - ctx->style->padding);
+	mu_begin_panel(ctx, "settings");
+	row(1, full);
+	mu_label(ctx, "ROM images");
+	mu_text(ctx, "A ROM image given by name (e.g. a system ROM, or an "
+	    "option ROM) is looked for in the machine's folder, then in the "
+	    "common ROM folder, and then in the other folders listed here.  "
+	    "A ROM image chosen in one of these folders is kept by its name, "
+	    "so machines can share them.");
+	mu_label(ctx, "");
+	int cw[4] = { CH(16), -CH(22), CH(11), CH(9) };
+	row(4, cw);
+	mu_label(ctx, "Common folder:");
+	mu_label(ctx, appdirs_roms_dir());
+	if (mu_button(ctx, "Browse..."))
+		pick_rom_dir(-2);
+	if (mu_button(ctx, "Default"))
+		appdirs_set_roms_dir(NULL);
+
+	for (i = 0; i < ui.n_rom_dirs; i++) {
+		int w[4] = { CH(16), -CH(22), CH(11), CH(9) };
+		mu_push_id(ctx, &i, sizeof(i));
+		row(4, w);
+		mu_label(ctx, i == 0 ? "Other folders:" : "");
+		{
+			struct edit *e = edit_for(&ui.rom_dirs[i],
+			    ui.rom_dirs[i]);
+			if (mu_textbox_ex(ctx, e->buf, sizeof(e->buf), 0) &
+			    MU_RES_CHANGE) {
+				machine_config_set(&ui.rom_dirs[i], e->buf);
+				rom_dirs_save();
+			}
+		}
+		if (mu_button(ctx, "Browse..."))
+			pick_rom_dir(i);
+		if (mu_button(ctx, "Remove")) {
+			machine_config_remove_string(&ui.n_rom_dirs,
+			    &ui.rom_dirs, i);
+			edits_clear();
+			rom_dirs_save();
+			mu_pop_id(ctx);
+			break;
+		}
+		mu_pop_id(ctx);
+	}
+	int aw[2] = { CH(16), CH(14) };
+	row(2, aw);
+	mu_label(ctx, "");
+	if (mu_button(ctx, "Add folder..."))
+		pick_rom_dir(-1);
+	mu_end_panel(ctx);
+
+	int bw[1] = { CH(10) };
+	row(1, bw);
+	if (mu_button(ctx, "Back")) {
+		rom_dirs_save();
+		ui.screen = SCREEN_LIST;
+	}
+}
+
+
+/****************************************************************************/
+
+/*
+ *  The editor
+ */
 
 static void make_dir(const char *path)
 {
@@ -995,29 +1134,13 @@ static bool create_missing_disks(void)
 }
 
 
-static bool save(void)
+/*  Saves the configuration in a file, and creates its missing disks:  */
+static bool save_to(const char *path)
 {
 	struct machine_config *c = ui.cfg;
-	char *err, *path;
+	char *err;
 
-	if (c->path == NULL) {
-		/*  A new machine gets a directory of its own:  */
-		char *dir;
-		if (ui.planned_dir && c->dir != NULL) {
-			CHECK_ALLOCATION(dir = strdup(c->dir));
-		} else
-			dir = new_machine_dir(c->name);
-		make_dir(dir);
-		CHECK_ALLOCATION(path = (char *) malloc(strlen(dir) + 20));
-		sprintf(path, "%s/machine.json", dir);
-		if (!machine_config_save(c, path, &err)) {
-			set_message(true, "%s", err);
-			free(err); free(path); free(dir);
-			return false;
-		}
-		free(path);
-		free(dir);
-	} else if (!machine_config_save(c, c->path, &err)) {
+	if (!machine_config_save(c, path, &err)) {
 		set_message(true, "%s", err);
 		free(err);
 		return false;
@@ -1027,11 +1150,136 @@ static bool save(void)
 	if (!create_missing_disks())
 		return false;
 	appdirs_add_recent(c->path);
+	list_load(c->path);
 	ui.is_new = false;
 	ui.fresh = false;
-	ui.planned_dir = false;
 	set_message(false, "Saved %s", c->path);
 	return true;
+}
+
+
+/*
+ *  A new machine's disk images are created where it is saved: if one with
+ *  the same name is there already (another machine's), the new one gets
+ *  another name (e.g. disk-2.img), instead of using it.
+ */
+static void new_disk_names(const char *file)
+{
+	struct machine_config *c = ui.cfg;
+	struct stat st;
+	char *dir, *slash;
+	int i, k;
+
+	if (c->dir != NULL)
+		return;
+	CHECK_ALLOCATION(dir = strdup(file));
+	slash = strrchr(dir, '/');
+	if (slash == NULL) {
+		free(dir);
+		return;
+	}
+	*slash = '\0';
+
+	for (i = 0; i < c->n_drives; i++) {
+		struct mc_drive *d = &c->drives[i];
+		char path[2000], name[1000];
+		const char *dot;
+
+		if (d->kind != MC_DRIVE_DISK || d->file[0] == '\0' ||
+		    d->file[0] == '/' || strchr(d->file, ':') != NULL)
+			continue;
+		snprintf(path, sizeof(path), "%s/%s", dir, d->file);
+		if (stat(path, &st) != 0)
+			continue;
+		dot = strrchr(d->file, '.');
+		if (dot == NULL || strchr(dot, '/') != NULL)
+			dot = d->file + strlen(d->file);
+		for (k = 2; k < 1000; k++) {
+			snprintf(name, sizeof(name), "%.*s-%i%s",
+			    (int) (dot - d->file), d->file, k, dot);
+			snprintf(path, sizeof(path), "%s/%s", dir, name);
+			if (stat(path, &st) != 0)
+				break;
+		}
+		machine_config_set(&d->file, name);
+	}
+	free(dir);
+}
+
+
+/*
+ *  Where a new machine was chosen to be saved: a folder for it (with its
+ *  machine.json, and the disk images created for it), or a .json file.
+ */
+static void saved_as(struct machine *m, const char *path, void *data)
+{
+	struct stat st;
+	char *file;
+	size_t n;
+
+	(void) m; (void) data;
+	ui.pick_open = false;
+	if (path == NULL)
+		return;
+
+	n = strlen(path);
+	if (n > 5 && strcasecmp(path + n - 5, ".json") == 0) {
+		CHECK_ALLOCATION(file = strdup(path));
+	} else {
+		if (stat(path, &st) == 0 && !S_ISDIR(st.st_mode)) {
+			set_message(true, "%s is a file; choose a name for a "
+			    "folder for the machine, or a .json file", path);
+			return;
+		}
+		make_dir(path);
+		CHECK_ALLOCATION(file = (char *) malloc(n + 20));
+		sprintf(file, "%s/machine.json", path);
+		if (stat(file, &st) == 0) {
+			set_message(true, "%s already has a machine.json; "
+			    "choose another name", path);
+			free(file);
+			return;
+		}
+	}
+
+	new_disk_names(file);
+	if (save_to(file) && ui.start_after_save)
+		start(ui.cfg);
+	free(file);
+}
+
+
+/*
+ *  Saves the configuration.  A new one is saved where the user chooses
+ *  (later, so this returns false); then, with then_start, it is started.
+ */
+static bool save(bool then_start)
+{
+	struct machine_config *c = ui.cfg;
+	char name[200];
+	const char *dir = appdirs_last_dir();
+	size_t i;
+
+	if (c->path != NULL)
+		return save_to(c->path);
+
+	/*  The machine's name, as a file name:  */
+	snprintf(name, sizeof(name), "%s", c->name[0] ? c->name : "machine");
+	for (i = 0; name[i] != '\0'; i++)
+		if (name[i] == '/' || name[i] == '\\' || name[i] == ':')
+			name[i] = '-';
+
+	if (dir == NULL) {
+		make_dir(appdirs_machines_dir());
+		dir = appdirs_machines_dir();
+	}
+	ui.start_after_save = then_start;
+	ui.pick_open = true;
+	display_choose_new_file(NULL, "Save the machine as (a folder for it, "
+	    "or a .json file)", dir, name, saved_as, NULL);
+	if (!display_chooser_open())
+		ui.pick_open = false;
+	return false;
 }
 
 
@@ -1167,7 +1415,7 @@ static void new_machine(const char *path)
 	/*  (With an absolute path, file names are relative to its
 	    directory.)  */
 	machine_presets(&presets);
-	abs = path != NULL ? machine_config_absolute(path) : NULL;
+	abs = path != NULL ? machine_config_clean_path(path) : NULL;
 	c = machine_config_parse(presets[0].json, abs, &err);
 	free(abs);
 	if (c == NULL) {
@@ -1343,7 +1591,8 @@ static void option_roms(void)
 		if (c->slot_rom[i] == NULL)
 			machine_config_set(&c->slot_rom[i], "");
 		file_field(&c->slot_rom[i], "Choose an option ROM image",
-		    true);
+		    true, true);
+		rom_found(c->slot_rom[i]);
 	}
 }
 
@@ -1367,7 +1616,8 @@ static void page_firmware(void)
 	if (machine_config_uses_rom(c)) {
 		row(1, full);
 		mu_label(ctx, "System ROM image:");
-		file_field(&c->rom, "Choose the system ROM image", true);
+		file_field(&c->rom, "Choose the system ROM image", true, true);
+		rom_found(c->rom);
 		option_roms();
 		row(1, full);
 		mu_label(ctx, "");
@@ -1384,7 +1634,7 @@ static void page_firmware(void)
 		row(3, w);
 		text_field(&c->load[i]);
 		if (mu_button(ctx, "Browse..."))
-			pick_file(&c->load[i], "Choose a file to load");
+			pick_file(&c->load[i], "Choose a file to load", false);
 		if (mu_button(ctx, "Remove")) {
 			machine_config_remove_string(&c->n_load, &c->load, i);
 			edits_clear();
@@ -1522,7 +1772,7 @@ static void page_drives(void)
 		}
 		text_field(&d->file);
 		if (mu_button(ctx, "Browse..."))
-			pick_file(&d->file, "Choose a drive image");
+			pick_file(&d->file, "Choose a drive image", false);
 		if (mu_button(ctx, "Remove")) {
 			machine_config_remove_drive(c, i);
 			memmove(&ui.custom[i < 63 ? i : 63],
@@ -1590,10 +1840,11 @@ static void page_drives(void)
 				mu_label(ctx, "New image, size (MB):");
 				int_field(&ui.disk_mb[i]);
 			}
-			if (mu_button(ctx, "Create now")) {
+			if (c->dir == NULL)
+				mu_label(ctx, "(created when saved)");
+			else if (mu_button(ctx, "Create now")) {
 				char *err;
-				if (c->dir != NULL)
-					make_dir(c->dir);
+				make_dir(c->dir);
 				f = machine_config_resolve(c, d->file);
 				if (machine_config_create_disk(f,
 				    disk_size(i), &err))
@@ -1808,15 +2059,6 @@ static void screen_editor(void)
 	char *problem;
 	int i;
 
-	/*  A new machine's directory follows its name, until it is saved:  */
-	if (ui.planned_dir && (ui.planned_name == NULL ||
-	    strcmp(ui.planned_name, c->name) != 0)) {
-		char *dir = new_machine_dir(c->name);
-		machine_config_set(&c->dir, dir);
-		free(dir);
-		machine_config_set(&ui.planned_name, c->name);
-	}
-
 	/*  The pages:  */
 	int tw[N_PAGES];
 	for (i = 0; i < N_PAGES; i++)
@@ -1880,17 +2122,15 @@ static void screen_editor(void)
 	if (ui.running) {
 		/*  (Starting it again would use the same disk images.)  */
 		mu_label(ctx, "");
-		if (mu_button(ctx, "Save") && save())
+		if (mu_button(ctx, "Save") && save(false))
 			set_message(false, "Saved; the changes take effect "
 			    "when the machine is restarted");
 		return;
 	}
-	if (mu_button(ctx, "Save") && save())
-		list_load(c->path);
-	if (mu_button(ctx, "Save and Start") && save()) {
-		list_load(c->path);
+	if (mu_button(ctx, "Save"))
+		save(false);
+	if (mu_button(ctx, "Save and Start") && save(true))
 		start(c);
-	}
 }
 
 
@@ -1904,6 +2144,7 @@ static void frame(void)
 {
 	mu_Context *ctx = ui.ctx;
 	const char *title = ui.screen == SCREEN_LIST ? "GXemul: Machines" :
+	    ui.screen == SCREEN_SETTINGS ? "Settings" :
 	    "Machine configuration";
 	mu_Container *cnt;
 
@@ -1934,6 +2175,7 @@ static void frame(void)
 		switch (ui.screen) {
 		case SCREEN_LIST:	screen_list(); break;
 		case SCREEN_EDITOR:	screen_editor(); break;
+		case SCREEN_SETTINGS:	screen_settings(); break;
 		}
 
 		if (ui.screen != SCREEN_EDITOR) {
@@ -2127,8 +2369,8 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 	}
 
 	list_free();
+	rom_dirs_free();
 	machine_config_free(ui.cfg);
-	free(ui.planned_name);
 	free(ui.message);
 	free(ui.ctx);
 	if (ui.font != NULL)

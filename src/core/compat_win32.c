@@ -38,7 +38,9 @@
 #include <windows.h>
 #include <iphlpapi.h>
 #include <commdlg.h>
+#include <shlobj.h>
 
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -357,6 +359,22 @@ const char *win32_nameserver(void)
 }
 
 /*
+ *  win32_replace_file():
+ *
+ *  Renames a file, replacing the file that has the new name (if any),
+ *  which Windows' rename() doesn't do.  Sets errno on failure.
+ */
+bool win32_replace_file(const char *from, const char *to)
+{
+	if (MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING |
+	    MOVEFILE_WRITE_THROUGH))
+		return true;
+	errno = GetLastError() == ERROR_ACCESS_DENIED ? EACCES : EIO;
+	return false;
+}
+
+
+/*
  *  win32_spawn_self():
  *
  *  Starts another gxemul (this executable) with the arguments given (a
@@ -400,11 +418,50 @@ static char chooser_title[256];
 static char chooser_start[MAX_PATH];
 static char chooser_path[MAX_PATH];
 static bool chooser_save;
+static bool chooser_folder;
 static BOOL chooser_ok;
+
+/*  Starts the folder chooser in chooser_start:  */
+static int CALLBACK folder_callback(HWND hwnd, UINT msg, LPARAM lparam,
+	LPARAM data)
+{
+	(void) lparam;
+	if (msg == BFFM_INITIALIZED && chooser_start[0] != '\0')
+		SendMessageA(hwnd, BFFM_SETSELECTIONA, TRUE, data);
+	return 0;
+}
+
+static BOOL choose_folder(void)
+{
+	BROWSEINFOA bi;
+	LPITEMIDLIST pidl;
+	BOOL ok = FALSE;
+
+	/*  (The "new" dialog, with Make New Folder, needs OLE.)  */
+	OleInitialize(NULL);
+	memset(&bi, 0, sizeof(bi));
+	bi.lpszTitle = chooser_title;
+	bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+	bi.lpfn = folder_callback;
+	bi.lParam = (LPARAM) chooser_start;
+	pidl = SHBrowseForFolderA(&bi);
+	if (pidl != NULL) {
+		ok = SHGetPathFromIDListA(pidl, chooser_path);
+		CoTaskMemFree(pidl);
+	}
+	OleUninitialize();
+	return ok;
+}
 
 static DWORD WINAPI chooser_thread_main(LPVOID param)
 {
 	OPENFILENAMEA ofn;
+
+	if (chooser_folder) {
+		chooser_ok = choose_folder();
+		InterlockedExchange(&chooser_finished, 1);
+		return 0;
+	}
 
 	memset(&ofn, 0, sizeof(ofn));
 	ofn.lStructSize = sizeof(ofn);
@@ -430,7 +487,7 @@ static DWORD WINAPI chooser_thread_main(LPVOID param)
 }
 
 bool win32_choose_file(const char *title, const char *start_dir, bool save,
-	const char *default_name)
+	const char *default_name, bool folder)
 {
 	if (chooser_thread != NULL)
 		return false;
@@ -444,6 +501,7 @@ bool win32_choose_file(const char *title, const char *start_dir, bool save,
 	snprintf(chooser_path, sizeof(chooser_path), "%s",
 	    default_name != NULL ? default_name : "");
 	chooser_save = save;
+	chooser_folder = folder;
 	chooser_finished = 0;
 
 	chooser_thread = CreateThread(NULL, 0, chooser_thread_main, NULL, 0,

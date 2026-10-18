@@ -44,6 +44,7 @@
 #endif
 
 #include "machine.h"
+#include "machine_config.h"
 #include "misc.h"
 #include "display.h"
 
@@ -53,15 +54,39 @@ static bool chooser_open = false;
 static struct machine *open_machine;
 static files_done_func open_done;
 static void *open_data;
+static bool open_folder;
 
 
-/*  Calls the done function of the open chooser, with what was chosen.  */
+/*
+ *  Calls the done function of the open chooser, with what was chosen, and
+ *  remembers the folder it was chosen in (for the next chooser).
+ */
 static void chosen(const char *path)
 {
+	char *clean = NULL;
+
 	chooser_open = false;
+	if (path != NULL) {
+		/*  (osascript ends a folder with a slash.)  */
+		clean = machine_config_clean_path(path);
+		path = clean;
+		if (open_folder)
+			appdirs_set_last_dir(clean);
+		else {
+			char *dir, *slash;
+			CHECK_ALLOCATION(dir = strdup(clean));
+			slash = strrchr(dir, '/');
+			if (slash != NULL) {
+				slash[slash == dir ? 1 : 0] = '\0';
+				appdirs_set_last_dir(dir);
+			}
+			free(dir);
+		}
+	}
 	if (open_machine != NULL)
 		display_backend_raise(open_machine);
 	open_done(open_machine, path, open_data);
+	free(clean);
 }
 
 
@@ -84,10 +109,10 @@ bool display_can_choose_files(void)
 
 
 static bool start_chooser(const char *title, const char *start_dir,
-	const char *save_name)
+	const char *save_name, bool folder)
 {
 	return win32_choose_file(title, start_dir, save_name != NULL,
-	    save_name);
+	    save_name, folder);
 }
 
 
@@ -179,7 +204,7 @@ static void append_applescript(char *buf, size_t len, const char *text)
 
 
 static bool start_chooser(const char *title, const char *start_dir,
-	const char *save_name)
+	const char *save_name, bool folder)
 {
 	const char *argv[8];
 	char script[3000], arg1[300], arg2[1100];
@@ -188,8 +213,8 @@ static bool start_chooser(const char *title, const char *start_dir,
 	switch (which_chooser()) {
 	case OSASCRIPT:
 		snprintf(script, sizeof(script), "activate\nset chosen to %s "
-		    "with prompt ", save_name != NULL ? "choose file name" :
-		    "choose file");
+		    "with prompt ", folder ? "choose folder" : save_name !=
+		    NULL ? "choose file name" : "choose file");
 		append_applescript(script, sizeof(script), title);
 		if (start_dir != NULL) {
 			strcat(script, " default location (POSIX file ");
@@ -211,6 +236,8 @@ static bool start_chooser(const char *title, const char *start_dir,
 		argv[argc++] = "--file-selection";
 		if (save_name != NULL)
 			argv[argc++] = "--save";
+		if (folder)
+			argv[argc++] = "--directory";
 		snprintf(arg1, sizeof(arg1), "--title=%s", title);
 		argv[argc++] = arg1;
 		if (start_dir != NULL || save_name != NULL) {
@@ -225,7 +252,8 @@ static bool start_chooser(const char *title, const char *start_dir,
 		argv[argc++] = "kdialog";
 		argv[argc++] = "--title";
 		argv[argc++] = title;
-		argv[argc++] = save_name != NULL ? "--getsavefilename" :
+		argv[argc++] = folder ? "--getexistingdirectory" :
+		    save_name != NULL ? "--getsavefilename" :
 		    "--getopenfilename";
 		snprintf(arg2, sizeof(arg2), "%s%s%s",
 		    start_dir != NULL ? start_dir : ".",
@@ -319,7 +347,7 @@ void display_files_poll(void)
  *  poll()) with the path chosen, or NULL.  m may be NULL.
  */
 static void choose(struct machine *m, const char *title, const char *start_dir,
-	const char *save_name, files_done_func done, void *data)
+	const char *save_name, bool folder, files_done_func done, void *data)
 {
 	struct stat st;
 
@@ -327,6 +355,8 @@ static void choose(struct machine *m, const char *title, const char *start_dir,
 		files_message(m, "A file chooser is already open");
 		return;
 	}
+	if (start_dir == NULL)
+		start_dir = appdirs_last_dir();
 
 	/*  Only start in a folder that exists:  */
 	if (start_dir != NULL &&
@@ -339,7 +369,7 @@ static void choose(struct machine *m, const char *title, const char *start_dir,
 	start_dir = abs_dir;
 #endif
 
-	bool started = start_chooser(title, start_dir, save_name);
+	bool started = start_chooser(title, start_dir, save_name, folder);
 
 #ifndef _WIN32
 	free(abs_dir);
@@ -354,12 +384,13 @@ static void choose(struct machine *m, const char *title, const char *start_dir,
 	open_machine = m;
 	open_done = done;
 	open_data = data;
+	open_folder = folder;
 }
 
 void display_choose_file(struct machine *m, const char *title,
 	const char *start_dir, files_done_func done, void *data)
 {
-	choose(m, title, start_dir, NULL, done, data);
+	choose(m, title, start_dir, NULL, false, done, data);
 }
 
 void display_choose_new_file(struct machine *m, const char *title,
@@ -367,7 +398,13 @@ void display_choose_new_file(struct machine *m, const char *title,
 	void *data)
 {
 	choose(m, title, start_dir, save_name != NULL ? save_name : "",
-	    done, data);
+	    false, done, data);
+}
+
+void display_choose_folder(struct machine *m, const char *title,
+	const char *start_dir, files_done_func done, void *data)
+{
+	choose(m, title, start_dir, NULL, true, done, data);
 }
 
 bool display_chooser_open(void)

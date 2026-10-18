@@ -33,8 +33,12 @@
  *	others:   $XDG_CONFIG_HOME/gxemul/ (~/.config/gxemul/)
  *
  *  recent.json there is a JSON list of configuration file names, most
- *  recently used first.  New machines are created in ~/GXemul/<name>/ by
- *  default (Documents\GXemul on Windows).
+ *  recently used first.  settings.json holds the directory last used in a
+ *  file chooser ("last_dir"), and the directories searched for ROM images
+ *  ("roms_dir", the common one, if not the default, and "rom_dirs", the
+ *  others).  New machines are saved in
+ *  ~/GXemul by default (Documents\GXemul on Windows), and ROM images go in
+ *  its ROMs folder.
  */
 
 #include <errno.h>
@@ -272,4 +276,165 @@ void appdirs_remove_recent(const char *path)
 	for (i = 0; i < nn; i++)
 		free(newlist[i]);
 	free(newlist);
+}
+
+
+/*
+ *  Settings (settings.json):
+ */
+
+static cJSON *settings = NULL;
+
+static char *settings_file(void)
+{
+	char *f;
+	size_t n = strlen(appdirs_state_dir()) + 20;
+	CHECK_ALLOCATION(f = (char *) malloc(n));
+	snprintf(f, n, "%s/settings.json", appdirs_state_dir());
+	return f;
+}
+
+static cJSON *settings_get(void)
+{
+	char *fname, *text = NULL;
+	FILE *f;
+	long len;
+
+	if (settings != NULL)
+		return settings;
+
+	fname = settings_file();
+	f = fopen(fname, "rb");
+	free(fname);
+	if (f != NULL) {
+		fseek(f, 0, SEEK_END);
+		len = ftell(f);
+		fseek(f, 0, SEEK_SET);
+		if (len > 0 && len < 1048576) {
+			CHECK_ALLOCATION(text = (char *) calloc(1, len + 1));
+			if ((long) fread(text, 1, len, f) != len)
+				text[0] = '\0';
+		}
+		fclose(f);
+	}
+	if (text != NULL)
+		settings = cJSON_Parse(text);
+	free(text);
+	if (!cJSON_IsObject(settings)) {
+		cJSON_Delete(settings);
+		settings = cJSON_CreateObject();
+	}
+	return settings;
+}
+
+static void settings_write(void)
+{
+	char *fname = settings_file(), *text = cJSON_Print(settings_get());
+	FILE *f = fopen(fname, "w");
+
+	if (f != NULL) {
+		fputs(text, f);
+		fputs("\n", f);
+		fclose(f);
+	}
+	free(text);
+	free(fname);
+}
+
+
+/*
+ *  appdirs_last_dir(), appdirs_set_last_dir():
+ *
+ *  The directory last used in a file chooser (NULL if none yet).
+ */
+const char *appdirs_last_dir(void)
+{
+	cJSON *d = cJSON_GetObjectItemCaseSensitive(settings_get(),
+	    "last_dir");
+	return cJSON_IsString(d) ? d->valuestring : NULL;
+}
+
+void appdirs_set_last_dir(const char *dir)
+{
+	const char *old = appdirs_last_dir();
+
+	if (dir == NULL || dir[0] == '\0' ||
+	    (old != NULL && strcmp(old, dir) == 0))
+		return;
+	cJSON_DeleteItemFromObjectCaseSensitive(settings_get(), "last_dir");
+	cJSON_AddStringToObject(settings_get(), "last_dir", dir);
+	settings_write();
+}
+
+
+/*
+ *  appdirs_roms_dir(), appdirs_set_roms_dir():
+ *
+ *  The common directory for ROM images (it may not exist yet): ROMs in the
+ *  machines' directory, unless another one is set (NULL for the default).
+ */
+const char *appdirs_roms_dir(void)
+{
+	static char *dir = NULL;
+	cJSON *d = cJSON_GetObjectItemCaseSensitive(settings_get(),
+	    "roms_dir");
+
+	if (cJSON_IsString(d) && d->valuestring[0])
+		return d->valuestring;
+	if (dir == NULL) {
+		size_t n = strlen(appdirs_machines_dir()) + 10;
+		CHECK_ALLOCATION(dir = (char *) malloc(n));
+#ifdef _WIN32
+		snprintf(dir, n, "%s\\ROMs", appdirs_machines_dir());
+#else
+		snprintf(dir, n, "%s/ROMs", appdirs_machines_dir());
+#endif
+	}
+	return dir;
+}
+
+
+void appdirs_set_roms_dir(const char *dir)
+{
+	cJSON_DeleteItemFromObjectCaseSensitive(settings_get(), "roms_dir");
+	if (dir != NULL && dir[0])
+		cJSON_AddStringToObject(settings_get(), "roms_dir", dir);
+	settings_write();
+}
+
+
+/*
+ *  appdirs_rom_dirs(), appdirs_set_rom_dirs():
+ *
+ *  The directories searched for ROM images: the common one first, then the
+ *  others given (which appdirs_set_rom_dirs() sets; the list returned
+ *  includes the common one, and is freed by the caller, with its strings).
+ */
+int appdirs_rom_dirs(char ***listp)
+{
+	cJSON *a = cJSON_GetObjectItemCaseSensitive(settings_get(),
+	    "rom_dirs"), *e;
+	int n = 0;
+
+	*listp = NULL;
+	machine_config_add_string(&n, listp, appdirs_roms_dir());
+	if (cJSON_IsArray(a))
+		cJSON_ArrayForEach(e, a)
+			if (cJSON_IsString(e) && e->valuestring[0])
+				machine_config_add_string(&n, listp,
+				    e->valuestring);
+	return n;
+}
+
+void appdirs_set_rom_dirs(int n, char **list)
+{
+	cJSON *a = cJSON_CreateArray();
+	int i;
+
+	for (i = 0; i < n; i++)
+		if (list[i] != NULL && list[i][0])
+			cJSON_AddItemToArray(a, cJSON_CreateString(list[i]));
+	cJSON_DeleteItemFromObjectCaseSensitive(settings_get(), "rom_dirs");
+	cJSON_AddItemToObject(settings_get(), "rom_dirs", a);
+	settings_write();
 }

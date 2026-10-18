@@ -50,6 +50,7 @@
 #include "debugger.h"
 #include "diskimage.h"
 #include "machine.h"
+#include "machine_config.h"
 #include "misc.h"
 #include "display.h"
 
@@ -267,11 +268,13 @@ static void menu_media_load(struct machine *m, struct menu_item *item)
 	diskimage_device_name(d, name, sizeof(name));
 	snprintf(title, sizeof(title), "Load %s", name);
 
-	/*  Start in the folder of the last medium (relative names are in the
-	    current directory):  */
+	/*  Start in the folder last chosen from, or else in that of the last
+	    medium (relative names are in the current directory):  */
 	char *start;
 	const char *base = basename_of(d->fname);
-	if (base != d->fname) {
+	if (appdirs_last_dir() != NULL) {
+		CHECK_ALLOCATION(start = strdup(appdirs_last_dir()));
+	} else if (base != d->fname) {
 		CHECK_ALLOCATION(start = strdup(d->fname));
 		start[base - d->fname - (base - d->fname > 1)] = '\0';
 	} else

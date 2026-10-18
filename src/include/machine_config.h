@@ -142,6 +142,10 @@ bool machine_config_save(struct machine_config *, const char *path,
 bool machine_config_is_config_file(const char *path);
 char *machine_config_resolve(const struct machine_config *, const char *);
 char *machine_config_absolute(const char *path);
+char *machine_config_clean_path(const char *path);
+char *machine_config_resolve_rom(const struct machine_config *, const char *);
+char *machine_config_normalize(const struct machine_config *, const char *p,
+	bool rom);
 char *machine_config_check(const struct machine_config *);
 char *machine_config_check_ex(const struct machine_config *,
 	bool missing_disks_ok);
@@ -195,5 +199,11 @@ const char *appdirs_machines_dir(void);
 int appdirs_recent(char ***listp);
 void appdirs_add_recent(const char *path);
 void appdirs_remove_recent(const char *path);
+const char *appdirs_last_dir(void);
+void appdirs_set_last_dir(const char *dir);
+const char *appdirs_roms_dir(void);
+void appdirs_set_roms_dir(const char *dir);
+int appdirs_rom_dirs(char ***listp);
+void appdirs_set_rom_dirs(int n, char **list);
 
 #endif	/*  MACHINE_CONFIG_H  */

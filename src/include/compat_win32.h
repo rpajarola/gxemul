@@ -95,8 +95,11 @@ const char *win32_nameserver(void);
     win32_choose_file_done() returns true when it has closed, with the path
     chosen (to be freed), or NULL:  */
 bool win32_choose_file(const char *title, const char *start_dir, bool save,
-	const char *default_name);
+	const char *default_name, bool folder);
 bool win32_choose_file_done(char **path);
+
+/*  rename(), replacing the file that has the new name (if any):  */
+bool win32_replace_file(const char *from, const char *to);
 
 /*  Starts another gxemul (this executable), without waiting for it:  */
 bool win32_spawn_self(const char *const *args);

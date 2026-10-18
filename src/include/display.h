@@ -164,7 +164,8 @@ void display_message(struct machine *, const char *fmt, ...);
  *  File choosers (display_files.c):  display_choose_file() opens the
  *  desktop's file chooser, and the emulator keeps running while it is
  *  open.  display_files_poll() calls done with the path chosen, or NULL
- *  if the chooser was canceled.
+ *  if the chooser was canceled.  display_choose_folder() chooses a folder.
+ *  Without a start_dir, a chooser starts in the folder last chosen from.
  */
 typedef void (*files_done_func)(struct machine *, const char *path,
 	void *data);
@@ -174,6 +175,8 @@ void display_choose_file(struct machine *, const char *title,
 void display_choose_new_file(struct machine *, const char *title,
 	const char *start_dir, const char *save_name, files_done_func done,
 	void *data);
+void display_choose_folder(struct machine *, const char *title,
+	const char *start_dir, files_done_func done, void *data);
 bool display_chooser_open(void);
 void display_files_poll(void);
 

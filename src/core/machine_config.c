@@ -320,6 +320,18 @@ static char *dirname_of(const char *path)
 }
 
 
+/*  Renames a file, replacing the file that has the new name, if any:  */
+static bool replace_file(const char *from, const char *to)
+{
+#ifdef _WIN32
+	/*  (Windows' rename() doesn't replace files.)  */
+	return win32_replace_file(from, to);
+#else
+	return rename(from, to) == 0;
+#endif
+}
+
+
 /*
  *  machine_config_absolute():
  *
@@ -351,14 +363,175 @@ char *machine_config_resolve(const struct machine_config *c, const char *p)
 }
 
 
-/*  Returns p relative to dir if it is inside it, else p itself:  */
-static char *relative_to(const char *dir, const char *p)
+static bool file_exists(const char *path);
+
+
+/*
+ *  machine_config_clean_path():
+ *
+ *  Returns a file name as an absolute one (relative to the current
+ *  directory), tidied up: "." and ".." resolved, no repeated slashes, and
+ *  on Windows, slashes instead of backslashes.  The caller frees it.
+ */
+char *machine_config_clean_path(const char *path)
+{
+	char *abs = machine_config_absolute(path), *out;
+	const char *p;
+	size_t root = 0, n;
+
+#ifdef _WIN32
+	for (out = abs; *out; out++)
+		if (*out == '\\')
+			*out = '/';
+	if (isalpha((unsigned char) abs[0]) && abs[1] == ':')
+		root = abs[2] == '/' ? 3 : 2;
+	else
+#endif
+	if (abs[0] == '/')
+		root = 1;
+
+	CHECK_ALLOCATION(out = (char *) malloc(strlen(abs) + 2));
+	memcpy(out, abs, root);
+	n = root;
+	for (p = abs + root; *p; ) {
+		const char *e = strchr(p, '/');
+		size_t l = e != NULL ? (size_t) (e - p) : strlen(p);
+
+		if (l == 0 || (l == 1 && p[0] == '.'))
+			;
+		else if (l == 2 && p[0] == '.' && p[1] == '.') {
+			while (n > root && out[n - 1] != '/')
+				n --;
+			if (n > root)
+				n --;
+		} else {
+			if (n > root)
+				out[n++] = '/';
+			memcpy(out + n, p, l);
+			n += l;
+		}
+		p += l;
+		if (*p == '/')
+			p ++;
+	}
+	out[n] = '\0';
+	free(abs);
+	return out;
+}
+
+
+/*  The part of a clean path after a clean directory, if it is in it:  */
+static const char *inside(const char *dir, const char *path)
 {
 	size_t n = strlen(dir);
 
-	if (p[0] != '\0' && strncmp(p, dir, n) == 0 && p[n] == '/')
-		return xstrdup(p + n + 1);
-	return xstrdup(p);
+	if (n > 0 && dir[n - 1] == '/')
+		n --;
+#ifdef _WIN32
+	if (strncasecmp(path, dir, n) == 0 && path[n] == '/')
+#else
+	if (strncmp(path, dir, n) == 0 && path[n] == '/')
+#endif
+		return path + n + 1;
+	return NULL;
+}
+
+
+/*
+ *  A file name as it is kept in a configuration in dir: relative to dir if
+ *  it is in it (without ".."), or for a ROM image, relative to the ROM
+ *  directory it is in, or else absolute.  abs is a clean path.
+ */
+static char *shorten(const char *abs, const char *dir, bool rom)
+{
+	const char *rest = NULL;
+	char *d, **dirs, *r;
+	int n, i;
+
+	if (dir != NULL) {
+		d = machine_config_clean_path(dir);
+		rest = inside(d, abs);
+		r = rest != NULL ? xstrdup(rest) : NULL;
+		free(d);
+		if (r != NULL)
+			return r;
+	}
+	if (rom) {
+		r = NULL;
+		n = appdirs_rom_dirs(&dirs);
+		for (i = 0; i < n; i++) {
+			d = machine_config_clean_path(dirs[i]);
+			if (r == NULL && (rest = inside(d, abs)) != NULL)
+				r = xstrdup(rest);
+			free(d);
+			free(dirs[i]);
+		}
+		free(dirs);
+		if (r != NULL)
+			return r;
+	}
+	return xstrdup(abs);
+}
+
+
+/*
+ *  machine_config_resolve_rom():
+ *
+ *  Like machine_config_resolve(), for a ROM image: a relative name which
+ *  isn't in the configuration's directory is looked for in the ROM
+ *  directories (see appdirs_rom_dirs()).  The caller frees it.
+ */
+char *machine_config_resolve_rom(const struct machine_config *c,
+	const char *p)
+{
+	char *f, **dirs, *found = NULL;
+	int n, i;
+
+	f = machine_config_resolve(c, p);
+	if (p == NULL || p[0] == '\0' || is_absolute(p) || file_exists(f))
+		return f;
+
+	n = appdirs_rom_dirs(&dirs);
+	for (i = 0; i < n; i++) {
+		char *g = xprintf("%s/%s", dirs[i], p);
+		if (found == NULL && file_exists(g))
+			found = g;
+		else
+			free(g);
+		free(dirs[i]);
+	}
+	free(dirs);
+	if (found != NULL) {
+		free(f);
+		return found;
+	}
+	return f;
+}
+
+
+/*
+ *  machine_config_normalize():
+ *
+ *  Returns a file name (e.g. one chosen in a file chooser) as the
+ *  configuration keeps it: see shorten().  Until the configuration has a
+ *  directory, relative names are kept as they are.  The caller frees it.
+ */
+char *machine_config_normalize(const struct machine_config *c,
+	const char *p, bool rom)
+{
+	char *f, *abs, *r;
+
+	if (p == NULL || p[0] == '\0')
+		return xstrdup("");
+	if (!is_absolute(p) && c->dir == NULL)
+		return xstrdup(p);
+	f = rom ? machine_config_resolve_rom(c, p) :
+	    machine_config_resolve(c, p);
+	abs = machine_config_clean_path(f);
+	r = shorten(abs, c->dir, rom);
+	free(f);
+	free(abs);
+	return r;
 }
 
 
@@ -395,39 +568,44 @@ static char *resolve_load(const struct machine_config *c, const char *spec)
 
 
 /*
- *  Rewrites the configuration's file names for a new directory: names
- *  that were relative to the old directory become absolute, and absolute
- *  names inside the new directory become relative.
+ *  Rewrites the configuration's file names for a (new) directory, as
+ *  shorten() keeps them.  Relative names in a configuration without a
+ *  directory yet stay relative (to the new one).
  */
 static void rebase_one(const struct machine_config *c, const char *newdir,
-	char **field, bool is_load)
+	char **field, bool is_load, bool rom)
 {
 	size_t n;
-	char *abs, *rel;
+	char *f, *abs, *rel;
 
 	if (*field == NULL || (*field)[0] == '\0')
 		return;
 	n = is_load ? load_prefix_len(*field) : 0;
-	abs = machine_config_resolve(c, *field + n);
-	rel = relative_to(newdir, abs);
+	if (c->dir == NULL && !is_absolute(*field + n))
+		return;
+	f = rom ? machine_config_resolve_rom(c, *field + n) :
+	    machine_config_resolve(c, *field + n);
+	abs = machine_config_clean_path(f);
+	rel = shorten(abs, newdir, rom);
+	free(f);
 	free(abs);
-	abs = xprintf("%.*s%s", (int) n, *field, rel);
+	f = xprintf("%.*s%s", (int) n, *field, rel);
 	free(rel);
 	free(*field);
-	*field = abs;
+	*field = f;
 }
 
 static void rebase_paths(struct machine_config *c, const char *newdir)
 {
 	int i;
 
-	rebase_one(c, newdir, &c->rom, false);
+	rebase_one(c, newdir, &c->rom, false, true);
 	for (i = 0; i < c->n_load; i++)
-		rebase_one(c, newdir, &c->load[i], true);
+		rebase_one(c, newdir, &c->load[i], true, false);
 	for (i = 0; i < c->n_drives; i++)
-		rebase_one(c, newdir, &c->drives[i].file, false);
+		rebase_one(c, newdir, &c->drives[i].file, false, false);
 	for (i = 0; i < MC_MAX_SLOTS; i++)
-		rebase_one(c, newdir, &c->slot_rom[i], false);
+		rebase_one(c, newdir, &c->slot_rom[i], false, true);
 
 	machine_config_set(&c->dir, newdir);
 }
@@ -610,7 +788,7 @@ struct machine_config *machine_config_load(const char *path, char **errp)
 	if (text == NULL)
 		return NULL;
 
-	abs = machine_config_absolute(path);
+	abs = machine_config_clean_path(path);
 	c = machine_config_parse(text, abs, errp);
 	free(text);
 	free(abs);
@@ -825,7 +1003,7 @@ static void add_list(cJSON *o, const char *key, int n, char **list)
 bool machine_config_save(struct machine_config *c, const char *path,
 	char **errp)
 {
-	char *abs = machine_config_absolute(path), *dir = dirname_of(abs);
+	char *abs = machine_config_clean_path(path), *dir = dirname_of(abs);
 	char *text, *tmp;
 	cJSON *root, *o, *a, *d, *l2;
 	FILE *f;
@@ -833,8 +1011,9 @@ bool machine_config_save(struct machine_config *c, const char *path,
 
 	*errp = NULL;
 
-	if (c->dir == NULL || strcmp(c->dir, dir) != 0)
-		rebase_paths(c, dir);
+	/*  (Also when the directory is the same, so that the file names are
+	    kept as shorten() keeps them.)  */
+	rebase_paths(c, dir);
 
 	root = cJSON_CreateObject();
 	cJSON_AddNumberToObject(root, "gxemul", CONFIG_VERSION);
@@ -921,7 +1100,7 @@ bool machine_config_save(struct machine_config *c, const char *path,
 	tmp = xprintf("%s.tmp", abs);
 	f = fopen(tmp, "w");
 	if (f == NULL || fputs(text, f) < 0 || fputs("\n", f) < 0 ||
-	    fclose(f) != 0 || rename(tmp, abs) != 0) {
+	    fclose(f) != 0 || !replace_file(tmp, abs)) {
 		*errp = xprintf("%s: %s", abs, strerror(errno));
 		remove(tmp);
 		free(tmp); free(text); free(abs); free(dir);
@@ -1157,7 +1336,7 @@ char *machine_config_check_ex(const struct machine_config *c,
 		return xstrdup("the number of CPUs can't be negative");
 
 	if (machine_config_uses_rom(c) && c->rom[0]) {
-		f = machine_config_resolve(c, c->rom);
+		f = machine_config_resolve_rom(c, c->rom);
 		if (!file_exists(f)) {
 			err = xprintf("ROM image %s not found", f);
 			free(f);
@@ -1225,7 +1404,7 @@ char *machine_config_check_ex(const struct machine_config *c,
 				return xprintf("slot %i has an option ROM, but "
 				    "no card (a framebuffer is there only with "
 				    "the display on, and enough cards)", i);
-			f = machine_config_resolve(c, c->slot_rom[i]);
+			f = machine_config_resolve_rom(c, c->slot_rom[i]);
 			if (!file_exists(f)) {
 				err = xprintf("slot %i: option ROM %s not "
 				    "found", i, f);
@@ -1403,7 +1582,7 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	for (i = 0; machine_config_uses_rom(c) && i < MC_MAX_SLOTS &&
 	    i < MACHINE_MAX_TC_SLOTS; i++)
 		if (c->slot_rom[i] != NULL && c->slot_rom[i][0])
-			m->tc_rom_filename[i] = machine_config_resolve(c,
+			m->tc_rom_filename[i] = machine_config_resolve_rom(c,
 			    c->slot_rom[i]);
 
 	for (i = 0; i < c->n_drives; i++) {
@@ -1468,7 +1647,7 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	/*  Files to load: the system ROM, or the others (with PROM
 	    emulation):  */
 	if (machine_config_uses_rom(c)) {
-		char *f = machine_config_resolve(c, c->rom);
+		char *f = machine_config_resolve_rom(c, c->rom);
 		s = xprintf("0x%llx:%s", (unsigned long long)
 		    machine_config_rom_address(c->type), f);
 		machine_config_add_string(&n_loads, &loads, s);
