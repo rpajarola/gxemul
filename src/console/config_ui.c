@@ -90,10 +90,10 @@ extern struct machine_entry *first_machine_entry;
 #define	DEFAULT_DISK_MB		2048
 
 enum screen { SCREEN_LIST, SCREEN_EDITOR };
-enum page { PAGE_GENERAL, PAGE_BOOT, PAGE_DRIVES, PAGE_DISPLAY,
+enum page { PAGE_GENERAL, PAGE_FIRMWARE, PAGE_DRIVES, PAGE_DISPLAY,
 	PAGE_EXPANSION, PAGE_NETWORK, PAGE_ADVANCED, N_PAGES };
 
-static const char *page_names[N_PAGES] = { "General", "Boot", "Drives",
+static const char *page_names[N_PAGES] = { "General", "Firmware", "Drives",
 	"Display", "Expansion", "Network", "Advanced" };
 
 static const char *kind_labels[] = { "Disk", "CD-ROM", "Tape", "Floppy" };
@@ -511,8 +511,11 @@ static void check(const char *label, bool *field)
 {
 	int v = *field;
 
+	/*  (mu_checkbox() can't tell checkboxes apart by themselves.)  */
+	mu_push_id(ui.ctx, &field, sizeof(field));
 	if (mu_checkbox(ui.ctx, label, &v))
 		*field = v != 0;
+	mu_pop_id(ui.ctx);
 }
 
 
@@ -1154,7 +1157,7 @@ static void page_general(void)
 	const struct machine_preset *preset = NULL;
 	const char *labels[200];
 	void *items[200];
-	int i, n, sel, show_all;
+	int i, n, sel;
 
 	/*  The machine type and model chosen:  */
 	for (me = first_machine_entry; me != NULL; me = me->next)
@@ -1239,10 +1242,7 @@ static void page_general(void)
 	}
 
 	mu_label(ctx, "");
-	show_all = ui.show_all;
-	if (mu_checkbox(ctx, "Show all machines, also untested ones",
-	    &show_all))
-		ui.show_all = show_all != 0;
+	check("Show all machines, also untested ones", &ui.show_all);
 
 	int lw2[2] = { CH(16), -1 };
 	row(2, lw2);
@@ -1271,7 +1271,7 @@ static void page_general(void)
 }
 
 
-static void page_boot(void)
+static void page_firmware(void)
 {
 	mu_Context *ctx = ui.ctx;
 	struct machine_config *c = ui.cfg;
@@ -1279,18 +1279,25 @@ static void page_boot(void)
 	int full[1] = { -1 };
 	int lw[2] = { CH(16), -1 };
 
-	row(1, full);
-	check("PROM emulation (gxemul provides the firmware)",
-	    &c->prom_emulation);
-
+	/*  A machine with a known system ROM runs either that, or PROM
+	    emulation (and then boots a kernel itself):  */
 	if (machine_config_rom_address(c->type) != 0) {
 		row(1, full);
-		mu_label(ctx, "System ROM image (instead of PROM emulation):");
+		check("PROM emulation (gxemul provides the firmware, and boots "
+		    "a kernel itself)", &c->prom_emulation);
+		mu_label(ctx, "");
+	}
+	if (machine_config_uses_rom(c)) {
+		row(1, full);
+		mu_label(ctx, "System ROM image:");
 		file_field(&c->rom, "Choose the system ROM image", true);
+		row(1, full);
+		mu_label(ctx, "");
+		check("Start paused, in the debugger", &c->start_paused);
+		return;
 	}
 
 	row(1, full);
-	mu_label(ctx, "");
 	mu_label(ctx, "Files to load (a kernel or program; prefix "
 	    "\"address:\" for raw images):");
 	for (i = 0; i < c->n_load; i++) {
@@ -1653,7 +1660,7 @@ static void screen_editor(void)
 	mu_begin_panel(ctx, page_names[ui.page]);
 	switch (ui.page) {
 	case PAGE_GENERAL:	page_general(); break;
-	case PAGE_BOOT:		page_boot(); break;
+	case PAGE_FIRMWARE:		page_firmware(); break;
 	case PAGE_DRIVES:	page_drives(); break;
 	case PAGE_DISPLAY:	page_display(); break;
 	case PAGE_EXPANSION:	page_expansion(); break;

@@ -5303,3 +5303,11 @@ Changelog for GXemul:
 		bottom buttons were cut off), and --edit with a relative
 		name of a new file saved its disk image under the wrong
 		name.
+20261017	Configuration window: the checkboxes work (microui gave them
+		all the same id, so clicks were lost). The Boot page is now
+		Firmware: on a machine with a system ROM (DECstations), it
+		shows either the ROM image, or, with PROM emulation, the
+		files to load and the boot settings. The DECstation presets
+		run a real ROM by default. In machine.json, "rom" is only
+		used without PROM emulation, and "load", "bootname",
+		"bootarg", and "netboot" only with it, on those machines.

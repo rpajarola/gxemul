@@ -40,14 +40,14 @@
 static const struct machine_preset presets[] = {
 	{
 		"decstation", "3max",
-		"Boots NetBSD, OpenBSD, Ultrix, or Sprite from a disk or "
-		"CD-ROM image. With PROM emulation, no ROM image is needed; "
-		"for the real KN02 system ROM, turn PROM emulation off and "
-		"choose its image under Boot.",
+		"Runs the real KN02 system ROM: choose its image under "
+		"Firmware. With PROM emulation instead (a checkbox there), "
+		"no ROM image is needed, and NetBSD, OpenBSD, Ultrix, or "
+		"Sprite boot from a disk or CD-ROM image.",
 		"{ \"gxemul\": 1, \"name\": \"DECstation 5000/200\","
 		"  \"machine\": { \"type\": \"decstation\", \"model\": \"3max\","
 		"                 \"memory_mb\": 64 },"
-		"  \"boot\": { \"prom_emulation\": true, \"bootarg\": \"-a\" },"
+		"  \"boot\": { \"prom_emulation\": false, \"bootarg\": \"-a\" },"
 		"  \"drives\": [ { \"file\": \"disk.img\", \"kind\": \"disk\","
 		"                  \"id\": 0 },"
 		"                { \"file\": \"\", \"kind\": \"cdrom\", \"id\": 4 } ],"
@@ -55,14 +55,14 @@ static const struct machine_preset presets[] = {
 	},
 	{
 		"decstation", "3min",
-		"With PROM emulation, no ROM image is needed. For the real "
-		"KN02-BA system ROM, turn PROM emulation off and choose its "
-		"image under Boot; for a graphics console, add the PMAG-BA "
-		"option ROM image in slot 0 under Expansion.",
+		"Runs the real KN02-BA system ROM: choose its image under "
+		"Firmware, and for a graphics console, add the PMAG-BA option "
+		"ROM image in slot 0 under Expansion. With PROM emulation "
+		"instead (a checkbox under Firmware), no ROM image is needed.",
 		"{ \"gxemul\": 1, \"name\": \"DECstation 5000/1xx\","
 		"  \"machine\": { \"type\": \"decstation\", \"model\": \"3min\","
 		"                 \"memory_mb\": 32 },"
-		"  \"boot\": { \"prom_emulation\": true, \"bootarg\": \"-a\" },"
+		"  \"boot\": { \"prom_emulation\": false, \"bootarg\": \"-a\" },"
 		"  \"drives\": [ { \"file\": \"disk.img\", \"kind\": \"disk\","
 		"                  \"id\": 0 },"
 		"                { \"file\": \"\", \"kind\": \"cdrom\", \"id\": 4 } ],"
@@ -70,12 +70,13 @@ static const struct machine_preset presets[] = {
 	},
 	{
 		"decstation", "pmax",
-		"The first MIPS DECstation, with PROM emulation, a serial "
-		"console, and a disk and CD-ROM.",
+		"The first MIPS DECstation, with a serial console, and a disk "
+		"and CD-ROM. Runs the real KN01 system ROM (choose its image "
+		"under Firmware), or PROM emulation (a checkbox there).",
 		"{ \"gxemul\": 1, \"name\": \"DECstation 3100\","
 		"  \"machine\": { \"type\": \"decstation\", \"model\": \"pmax\","
 		"                 \"memory_mb\": 24 },"
-		"  \"boot\": { \"prom_emulation\": true, \"bootarg\": \"-a\" },"
+		"  \"boot\": { \"prom_emulation\": false, \"bootarg\": \"-a\" },"
 		"  \"drives\": [ { \"file\": \"disk.img\", \"kind\": \"disk\","
 		"                  \"id\": 0 },"
 		"                { \"file\": \"\", \"kind\": \"cdrom\", \"id\": 4 } ] }"
@@ -94,7 +95,7 @@ static const struct machine_preset presets[] = {
 	{
 		"testmips", "",
 		"gxemul's simple MIPS machine, for running a program of your "
-		"own (add it under Boot, Files to load).",
+		"own (add it under Firmware, Files to load).",
 		"{ \"gxemul\": 1, \"name\": \"MIPS test machine\","
 		"  \"machine\": { \"type\": \"testmips\" } }"
 	},

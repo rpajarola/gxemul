@@ -106,8 +106,9 @@ summary of it, and:
 </ul>
 
 <p>The editor has a page for each part of the configuration: General
-(name, architecture, machine type and model, memory, CPU), Boot (PROM emulation, a
-system ROM image, files to load, the boot file name and argument), Drives
+(name, architecture, machine type and model, memory, CPU), Firmware (a
+system ROM image, or PROM emulation with files to load and the boot file
+name and argument), Drives
 (disks, CD-ROMs, tapes, and floppies; missing disk images can be created
 with a given size), Display (the framebuffer window, and serial ports on
 telnet ports), Expansion (option ROM images for DECstation TURBOchannel
@@ -125,9 +126,10 @@ DECstations 3100, 5000/200, and 5000/1xx, the SGI O2, and the MIPS test
 machine.  <b>Show all machines</b> also offers the others, which may not
 work.  A new machine starts as a DECstation 5000/200, and until it is
 saved, choosing another model gives it that model's defaults (memory,
-drives, PROM emulation, and display).  On a DECstation, PROM emulation
-is on by default; to run a real ROM, turn it off on the Boot page and
-choose the ROM image there.
+drives, firmware, and display).  A new DECstation runs a real system ROM
+image, chosen on the Firmware page; with PROM emulation (a checkbox
+there), no ROM image is needed, and gxemul boots a kernel itself, from a
+drive or from files to load.
 
 <p>A running machine started from a configuration file has <b>Edit
 Configuration...</b> in its window's Machine menu.  This stops the

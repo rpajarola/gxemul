@@ -154,6 +154,7 @@ struct emul *machine_config_create_emul(struct machine_config *);
 
 /*  Machine descriptions (what the configuration window offers):  */
 uint64_t machine_config_rom_address(const char *type);
+bool machine_config_uses_rom(const struct machine_config *);
 int machine_config_n_slots(const char *type, const char *model);
 
 /*  machine_presets.c:  */

@@ -57,7 +57,9 @@
  *  are absolute.  "rom" is the system ROM image, loaded where the machine
  *  has its ROM (only known for some machines, see machine_config_rom_
  *  address()); "load" are other files to load, which may be prefixed with
- *  an address, as on the command line (e.g. "0xbfc00000:rom.bin").
+ *  an address, as on the command line (e.g. "0xbfc00000:rom.bin").  On a
+ *  machine with a known ROM address, "rom" is used only without PROM
+ *  emulation, and "load", "bootname", "bootarg", and "netboot" only with it.
  */
 
 #include <ctype.h>
@@ -935,6 +937,19 @@ uint64_t machine_config_rom_address(const char *type)
 
 
 /*
+ *  machine_config_uses_rom():
+ *
+ *  True if the machine runs a system ROM image: without PROM emulation, on
+ *  a machine type that has one.  It then boots from that alone; the files
+ *  to load and the boot settings are for PROM emulation.
+ */
+bool machine_config_uses_rom(const struct machine_config *c)
+{
+	return !c->prom_emulation && machine_config_rom_address(c->type) != 0;
+}
+
+
+/*
  *  machine_config_n_slots():
  *
  *  Returns the number of expansion slots (for option ROM images) of a
@@ -1016,11 +1031,7 @@ char *machine_config_check_ex(const struct machine_config *c,
 	if (c->ncpus < 0)
 		return xstrdup("the number of CPUs can't be negative");
 
-	if (c->rom[0]) {
-		if (machine_config_rom_address(c->type) == 0)
-			return xprintf("a system ROM image can't be used for "
-			    "this machine type (use \"load\" with an "
-			    "address)");
+	if (machine_config_uses_rom(c) && c->rom[0]) {
 		f = machine_config_resolve(c, c->rom);
 		if (!file_exists(f)) {
 			err = xprintf("ROM image %s not found", f);
@@ -1030,7 +1041,7 @@ char *machine_config_check_ex(const struct machine_config *c,
 		free(f);
 	}
 
-	for (i = 0; i < c->n_load; i++) {
+	for (i = 0; !machine_config_uses_rom(c) && i < c->n_load; i++) {
 		f = machine_config_resolve(c, c->load[i] +
 		    load_prefix_len(c->load[i]));
 		if (!file_exists(f)) {
@@ -1089,13 +1100,19 @@ char *machine_config_check_ex(const struct machine_config *c,
 			free(f);
 		}
 
-	if (c->rom[0] == '\0' && c->n_load == 0 && c->n_drives == 0)
-		return xstrdup("nothing to boot: add a drive, a ROM image, "
-		    "or a file to load");
-
-	if (!c->prom_emulation && c->rom[0] == '\0' && c->n_load == 0)
+	if (machine_config_uses_rom(c) && c->rom[0] == '\0')
 		return xstrdup("without PROM emulation, a system ROM image "
-		    "(or a file to load) is needed");
+		    "is needed (under Firmware)");
+
+	if (!machine_config_uses_rom(c) && c->n_load == 0 &&
+	    c->n_drives == 0)
+		return xstrdup("nothing to boot: add a drive, or a file to "
+		    "load");
+
+	if (!c->prom_emulation && !machine_config_uses_rom(c) &&
+	    c->n_load == 0)
+		return xstrdup("without PROM emulation, a file to load is "
+		    "needed");
 
 	return NULL;
 }
@@ -1117,7 +1134,8 @@ char *machine_config_summary(const struct machine_config *c)
 		snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf),
 		    ", %i MB", c->memory_mb);
 	snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ", %s",
-	    c->rom[0] ? "real ROM" : c->prom_emulation ? "PROM emulation" :
+	    machine_config_uses_rom(c) ? "real ROM" :
+	    c->prom_emulation ? "PROM emulation" :
 	    "no PROM emulation");
 	if (c->display)
 		snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf),
@@ -1233,9 +1251,9 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	}
 
 	m->prom_emulation = c->prom_emulation;
-	m->force_netboot = c->force_netboot;
+	m->force_netboot = c->force_netboot && !machine_config_uses_rom(c);
 	m->start_paused = c->start_paused;
-	if (c->bootarg != NULL)
+	if (c->bootarg != NULL && !machine_config_uses_rom(c))
 		m->boot_string_argument = xstrdup(c->bootarg);
 
 	m->display_md.in_use = c->display;
@@ -1304,8 +1322,9 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 		}
 	}
 
-	/*  Files to load: the system ROM, then the others:  */
-	if (c->rom[0]) {
+	/*  Files to load: the system ROM, or the others (with PROM
+	    emulation):  */
+	if (machine_config_uses_rom(c)) {
 		char *f = machine_config_resolve(c, c->rom);
 		s = xprintf("0x%llx:%s", (unsigned long long)
 		    machine_config_rom_address(c->type), f);
@@ -1313,16 +1332,16 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 		free(s);
 		free(f);
 	}
-	for (i = 0; i < c->n_load; i++) {
+	for (i = 0; !machine_config_uses_rom(c) && i < c->n_load; i++) {
 		s = resolve_load(c, c->load[i]);
 		machine_config_add_string(&n_loads, &loads, s);
 		free(s);
 	}
 
 	/*  The boot file name; by default, that of the last file loaded:  */
-	if (c->bootname[0])
+	if (c->bootname[0] && !machine_config_uses_rom(c))
 		m->boot_kernel_filename = xstrdup(c->bootname);
-	else if (c->n_load > 0) {
+	else if (n_loads > 0 && !machine_config_uses_rom(c)) {
 		const char *last = loads[n_loads - 1];
 		const char *slash = strrchr(last, '/');
 		m->boot_kernel_filename = xstrdup(slash ? slash + 1 :
