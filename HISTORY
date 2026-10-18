@@ -5395,3 +5395,5 @@ Changelog for GXemul:
 		systype is in the environment (as getsysid() returns it, in
 		hex, which Ultrix 3.1D's kernel and ultrixboot read), and
 		the old jump table's close() is implemented.
+
+==============  RELEASE 1.0.4  ==============
