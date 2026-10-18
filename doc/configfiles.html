@@ -110,8 +110,10 @@ summary of it, and:
 system ROM image and the option ROM images of the TURBOchannel cards, or
 PROM emulation with files to load and the boot file name and argument),
 Drives
-(disks, CD-ROMs, tapes, and floppies; missing disk images can be created
-with a given size), Display (the framebuffer window, and serial ports on
+(disks, CD-ROMs, tapes, and floppies; on a DECstation, a drive can be
+one of DEC's, e.g. an RZ26 disk, which a new disk image gets the size of,
+or say it is any other drive; missing disk images can be created with a
+given size), Display (the framebuffer window, and serial ports on
 telnet ports), Network, and Advanced.  The line above the buttons says what's
 missing before the machine can be started.  <b>Save</b> writes the file
 (a new machine gets a directory of its own, and its missing disk images
@@ -201,7 +203,10 @@ shown here, except for the machine type:
       "id": -1,                 <font color="#2020cf">the SCSI ID, -1 = the next free one</font>
       "readonly": false,
       "overlay": false,         <font color="#2020cf">writes go to a temporary overlay (as the R prefix of -d)</font>
-      "boot": false }
+      "boot": false,
+      "vendor": "",             <font color="#2020cf">what a SCSI drive says it is (INQUIRY), "" = the usual:</font>
+      "product": "",            <font color="#2020cf">  e.g. "DEC", "RZ26     (C) DEC", "T386" (up to 8, 16,</font>
+      "revision": "" }          <font color="#2020cf">  and 4 characters)</font>
   ],
   "display": {
     "enabled": false,           <font color="#2020cf">framebuffer windows (as -X)</font>

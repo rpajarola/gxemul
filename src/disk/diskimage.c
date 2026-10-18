@@ -729,16 +729,28 @@ int diskimage_access(struct machine *machine, int id, int type, int writeflag,
 }
 
 
-int get_default_disk_type_for_machine(struct machine *machine)
+/*
+ *  diskimage_default_type():
+ *
+ *  The bus of a machine's drives, unless given: SCSI for machines that have
+ *  only that, IDE for the others.
+ */
+int diskimage_default_type(int machine_type)
 {
-	if (machine->machine_type == MACHINE_PMAX ||
-	    machine->machine_type == MACHINE_ARC ||
-	    machine->machine_type == MACHINE_SGI ||
-	    machine->machine_type == MACHINE_LUNA88K ||
-	    machine->machine_type == MACHINE_MVME88K)
+	if (machine_type == MACHINE_PMAX ||
+	    machine_type == MACHINE_ARC ||
+	    machine_type == MACHINE_SGI ||
+	    machine_type == MACHINE_LUNA88K ||
+	    machine_type == MACHINE_MVME88K)
 		return DISKIMAGE_SCSI;
 
 	return DISKIMAGE_IDE;
+}
+
+
+int get_default_disk_type_for_machine(struct machine *machine)
+{
+	return diskimage_default_type(machine->machine_type);
 }
 
 

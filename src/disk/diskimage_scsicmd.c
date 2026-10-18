@@ -172,6 +172,18 @@ static void diskimage__return_default_status_and_message(
 }
 
 
+/*  Puts a string in an INQUIRY field, padded with spaces (unless NULL):  */
+static void inquiry_string(unsigned char *field, size_t len, const char *s)
+{
+	size_t i;
+
+	if (s == NULL)
+		return;
+	for (i = 0; i < len; i++)
+		field[i] = *s ? (unsigned char) *s++ : ' ';
+}
+
+
 /*
  *  diskimage__switch_tape():
  *
@@ -769,6 +781,11 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 				memcpy(xferp->data_in+32, "2000", 4);
 			}
 		}
+
+		/*  Strings given in the machine's configuration:  */
+		inquiry_string(xferp->data_in + 8, 8, d->inq_vendor);
+		inquiry_string(xferp->data_in + 16, 16, d->inq_product);
+		inquiry_string(xferp->data_in + 32, 4, d->inq_revision);
 
 		diskimage__return_default_status_and_message(xferp);
 		break;

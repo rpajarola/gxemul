@@ -81,6 +81,11 @@ struct diskimage {
 
 	int64_t		nr_of_logical_blocks;		// in logical blocks
 
+	/*  SCSI INQUIRY strings, NULL = the machine's usual ones:  */
+	char		*inq_vendor;	/*  up to 8 characters  */
+	char		*inq_product;	/*  up to 16  */
+	char		*inq_revision;	/*  up to 4  */
+
 	int		writable;
 	int		is_a_cdrom;
 	int		is_boot_device;
@@ -168,6 +173,7 @@ bool diskimage_recalc_size(struct diskimage *d);
 int diskimage_exist(struct machine *machine, int id, int type);
 int diskimage_bootdev(struct machine *machine, int *typep);
 int diskimage_add(struct machine *machine, char *fname);
+int diskimage_default_type(int machine_type);
 int diskimage_getname(struct machine *machine, int id, int type,
 	char *buf, size_t bufsize);
 int diskimage_is_a_cdrom(struct machine *machine, int id, int type);

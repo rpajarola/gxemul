@@ -142,6 +142,7 @@ static struct {
 	bool		start_after_save;
 	enum page	page;
 	int		disk_mb[64];	/*  for creating missing disk images  */
+	bool		custom[64];	/*  editing a drive's INQUIRY strings  */
 	struct edit	edits[MAX_EDITS];
 	int		n_edits;
 
@@ -741,8 +742,10 @@ static void open_editor(struct machine_config *c, bool is_new)
 	ui.planned_name = NULL;
 	ui.page = PAGE_GENERAL;
 	ui.start_after_save = false;
-	for (i = 0; i < 64; i++)
+	for (i = 0; i < 64; i++) {
 		ui.disk_mb[i] = DEFAULT_DISK_MB;
+		ui.custom[i] = false;
+	}
 	edits_clear();
 	ui.screen = SCREEN_EDITOR;
 	free(ui.message);
@@ -936,6 +939,32 @@ static void make_dir(const char *path)
 }
 
 
+/*  The real drive that a drive says it is, if any:  */
+static const struct mc_drive_model *drive_model(const struct mc_drive *d)
+{
+	const struct mc_drive_model *models;
+	int n = machine_drive_models(ui.cfg->type, &models), i;
+
+	for (i = 0; i < n; i++)
+		if (models[i].kind == d->kind &&
+		    strcmp(models[i].vendor, d->vendor) == 0 &&
+		    strcmp(models[i].product, d->product) == 0 &&
+		    strcmp(models[i].revision, d->revision) == 0)
+			return &models[i];
+	return NULL;
+}
+
+/*  The size of a new disk image: the real drive's, or the one given:  */
+static int64_t disk_size(int i)
+{
+	const struct mc_drive_model *model = drive_model(&ui.cfg->drives[i]);
+
+	if (model != NULL && model->sectors > 0)
+		return model->sectors * 512;
+	return (int64_t) ui.disk_mb[i < 64 ? i : 63] * 1048576;
+}
+
+
 /*  Creates the disk images that don't exist yet; returns false on error:  */
 static bool create_missing_disks(void)
 {
@@ -950,7 +979,7 @@ static bool create_missing_disks(void)
 			continue;
 		f = machine_config_resolve(c, c->drives[i].file);
 		if (stat(f, &st) != 0 && !machine_config_create_disk(f,
-		    ui.disk_mb[i < 64 ? i : 63], &err)) {
+		    disk_size(i), &err)) {
 			set_message(true, "%s", err);
 			free(err);
 			free(f);
@@ -1397,18 +1426,80 @@ static void page_firmware(void)
 }
 
 
+/*
+ *  What a drive says it is: gxemul's default, a real one (which
+ *  also gives a new disk image its size), or strings given.
+ */
+static void drive_identity(int i)
+{
+	struct machine_config *c = ui.cfg;
+	struct mc_drive *d = &c->drives[i];
+	const struct mc_drive_model *models, *model = drive_model(d);
+	int n = machine_drive_models(c->type, &models), k, nl = 0, sel;
+	const char *labels[64];
+	const struct mc_drive_model *items[64];
+	static char names[64][40];
+	char name[40];
+
+	labels[nl] = "Default";
+	items[nl++] = NULL;
+	for (k = 0; k < n && nl < 62; k++) {
+		if (models[k].kind != d->kind)
+			continue;
+		if (models[k].sectors > 0)
+			snprintf(names[nl], sizeof(names[nl]), "%s, %lli MB",
+			    models[k].name, (long long) models[k].sectors *
+			    512 / 1000000);
+		else
+			snprintf(names[nl], sizeof(names[nl]), "%s",
+			    models[k].name);
+		labels[nl] = names[nl];
+		items[nl++] = &models[k];
+	}
+	labels[nl++] = "Other...";
+
+	bool custom = i < 64 && ui.custom[i];
+	sel = 0;
+	if (custom || (model == NULL && (d->vendor[0] || d->product[0] ||
+	    d->revision[0])))
+		sel = nl - 1;
+	else
+		for (k = 1; k < nl - 1; k++)
+			if (items[k] == model)
+				sel = k;
+
+	snprintf(name, sizeof(name), "model%i", i);
+	if (dropdown(name, labels, nl, &sel)) {
+		if (sel == nl - 1) {
+			if (i < 64)
+				ui.custom[i] = true;
+		} else {
+			const struct mc_drive_model *m = items[sel];
+			machine_config_set(&d->vendor, m ? m->vendor : "");
+			machine_config_set(&d->product, m ? m->product : "");
+			machine_config_set(&d->revision, m ? m->revision : "");
+			if (i < 64)
+				ui.custom[i] = false;
+			edits_clear();
+		}
+	}
+}
+
+
 static void page_drives(void)
 {
 	mu_Context *ctx = ui.ctx;
 	struct machine_config *c = ui.cfg;
+	bool has_ide = machine_config_has_ide(c->type);
 	struct stat st;
 	int i;
 	int full[1] = { -1 };
 
 	for (i = 0; i < c->n_drives; i++) {
 		struct mc_drive *d = &c->drives[i];
+		const struct mc_drive_model *model;
 		char name[40], *f;
-		bool missing;
+		bool missing, scsi;
 
 		mu_push_id(ctx, &i, sizeof(i));
 		int w1[6] = { CH(10), CH(3), CH(5), -CH(22), CH(11), CH(9) };
@@ -1430,6 +1521,9 @@ static void page_drives(void)
 			pick_file(&d->file, "Choose a drive image");
 		if (mu_button(ctx, "Remove")) {
 			machine_config_remove_drive(c, i);
+			memmove(&ui.custom[i < 63 ? i : 63],
+			    &ui.custom[i < 63 ? i + 1 : 63],
+			    sizeof(bool) * (i < 63 ? 63 - i : 0));
 			edits_clear();
 			mu_pop_id(ctx);
 			break;
@@ -1440,24 +1534,65 @@ static void page_drives(void)
 		    stat(f, &st) != 0;
 		free(f);
 
-		int w2[7] = { CH(10), CH(13), CH(13), CH(11), CH(8),
-		    CH(8), CH(14) };
-		row(missing ? 7 : 5, w2);
+		/*  The bus (only where there is a choice), what the drive
+		    says it is (on SCSI), and its flags:  */
+		scsi = d->kind != MC_DRIVE_FLOPPY && (d->bus == MC_BUS_SCSI ||
+		    (d->bus == MC_BUS_DEFAULT && !has_ide));
+		int w2[6] = { CH(10), has_ide || d->bus == MC_BUS_IDE ?
+		    CH(14) : CH(6), CH(24), CH(13), CH(11), CH(8) };
+		row(6, w2);
 		mu_label(ctx, "");
 		snprintf(name, sizeof(name), "bus%i", i);
-		dropdown(name, bus_labels, 3, &d->bus);
+		if (has_ide || d->bus == MC_BUS_IDE)
+			dropdown(name, bus_labels, 3, &d->bus);
+		else
+			mu_label(ctx, d->kind == MC_DRIVE_FLOPPY ? "" : "SCSI");
+		if (scsi)
+			drive_identity(i);
+		else
+			mu_label(ctx, "");
 		check("Read-only", &d->readonly);
 		check("Overlay", &d->overlay);
 		check("Boot", &d->boot);
+
+		/*  The strings, if not those of the usual or a real drive:  */
+		model = drive_model(d);
+		if (scsi && ((i < 64 && ui.custom[i]) || (model == NULL &&
+		    (d->vendor[0] || d->product[0] || d->revision[0])))) {
+			int w3[7] = { CH(10), CH(7), CH(10), CH(8), CH(18),
+			    CH(9), CH(6) };
+			row(7, w3);
+			mu_label(ctx, "");
+			mu_label(ctx, "Vendor");
+			text_field(&d->vendor);
+			mu_label(ctx, "Product");
+			text_field(&d->product);
+			mu_label(ctx, "Revision");
+			text_field(&d->revision);
+		}
+
+		/*  A disk image to create:  */
 		if (missing && i < 64) {
-			int_field(&ui.disk_mb[i]);
-			if (mu_button(ctx, "Create (MB)")) {
+			int w4[4] = { CH(10), CH(30), CH(10), CH(14) };
+			row(4, w4);
+			mu_label(ctx, "");
+			if (model != NULL && model->sectors > 0) {
+				char size[60];
+				snprintf(size, sizeof(size), "New image: %lli "
+				    "sectors", (long long) model->sectors);
+				mu_label(ctx, size);
+				mu_label(ctx, "");
+			} else {
+				mu_label(ctx, "New image, size (MB):");
+				int_field(&ui.disk_mb[i]);
+			}
+			if (mu_button(ctx, "Create now")) {
 				char *err;
 				if (c->dir != NULL)
 					make_dir(c->dir);
 				f = machine_config_resolve(c, d->file);
 				if (machine_config_create_disk(f,
-				    ui.disk_mb[i], &err))
+				    disk_size(i), &err))
 					set_message(false, "Created %s", f);
 				else {
 					set_message(true, "%s", err);
@@ -1495,9 +1630,10 @@ static void page_drives(void)
 	mu_text(ctx, "An empty ID is the next free one.  A CD-ROM or tape drive "
 	    "may start empty, and media can be changed in the running "
 	    "machine's Media menu.  Overlay keeps the image unchanged: writes "
-	    "go to a temporary file.  A disk image that doesn't exist yet can "
-	    "be created with the size given (it is also created when a new "
-	    "machine is saved).");
+	    "go to a temporary file.  A drive can say it is a real one (the "
+	    "SCSI INQUIRY vendor, product, and revision), which for a disk "
+	    "also gives a new image that drive's size.  A disk image that "
+	    "doesn't exist yet is created when the machine is saved.");
 }
 
 

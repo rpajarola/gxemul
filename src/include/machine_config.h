@@ -63,6 +63,11 @@ struct mc_drive {
 	bool		readonly;
 	bool		overlay;	/*  writes go to a temporary overlay  */
 	bool		boot;		/*  boot from this drive  */
+
+	/*  What the drive says it is (SCSI INQUIRY), "" = the usual:  */
+	char		*vendor;	/*  up to 8 characters  */
+	char		*product;	/*  up to 16  */
+	char		*revision;	/*  up to 4  */
 };
 
 struct machine_config {
@@ -141,7 +146,8 @@ char *machine_config_check(const struct machine_config *);
 char *machine_config_check_ex(const struct machine_config *,
 	bool missing_disks_ok);
 char *machine_config_summary(const struct machine_config *);
-bool machine_config_create_disk(const char *path, int size_mb, char **errp);
+bool machine_config_create_disk(const char *path, int64_t size,
+	char **errp);
 void machine_config_add_drive(struct machine_config *, const char *file,
 	int kind, int id);
 void machine_config_remove_drive(struct machine_config *, int i);
@@ -153,6 +159,8 @@ bool machine_config_apply(struct machine_config *, struct emul *,
 struct emul *machine_config_create_emul(struct machine_config *);
 
 /*  Machine descriptions (what the configuration window offers):  */
+int machine_config_machine_type(const char *type);
+bool machine_config_has_ide(const char *type);
 uint64_t machine_config_rom_address(const char *type);
 bool machine_config_uses_rom(const struct machine_config *);
 struct mc_slot {
@@ -169,6 +177,16 @@ struct machine_preset {
 	const char	*json;
 };
 int machine_presets(const struct machine_preset **listp);
+
+/*  Real drives, which a drive can say it is (with its size, for a disk):  */
+struct mc_drive_model {
+	int		kind;		/*  MC_DRIVE_*  */
+	const char	*name;		/*  e.g. "RZ58"  */
+	const char	*vendor, *product, *revision;
+	int64_t		sectors;	/*  512-byte sectors, 0 = any  */
+};
+int machine_drive_models(const char *type,
+	const struct mc_drive_model **listp);
 
 /*  appdirs.c:  */
 const char *appdirs_state_dir(void);

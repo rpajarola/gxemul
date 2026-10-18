@@ -42,6 +42,7 @@
  *	            "start_paused": false },
  *	  "drives": [ { "file": "disk.img", "kind": "disk", "bus": "default",
  *	                "id": -1, "readonly": false, "overlay": false,
+ *	                "vendor": "", "product": "", "revision": "",
  *	                "boot": false } ],
  *	  "display": { "enabled": false, "scale": 1, "cards": -1 },
  *	  "serial": { "telnet": false },
@@ -146,6 +147,17 @@ void machine_config_add_drive(struct machine_config *c, const char *file,
 	d->kind = kind;
 	d->bus = MC_BUS_DEFAULT;
 	d->id = id;
+	d->vendor = xstrdup("");
+	d->product = xstrdup("");
+	d->revision = xstrdup("");
+}
+
+static void free_drive(struct mc_drive *d)
+{
+	free(d->file);
+	free(d->vendor);
+	free(d->product);
+	free(d->revision);
 }
 
 
@@ -153,7 +165,7 @@ void machine_config_remove_drive(struct machine_config *c, int i)
 {
 	if (i < 0 || i >= c->n_drives)
 		return;
-	free(c->drives[i].file);
+	free_drive(&c->drives[i]);
 	memmove(&c->drives[i], &c->drives[i + 1],
 	    sizeof(struct mc_drive) * (c->n_drives - i - 1));
 	c->n_drives --;
@@ -203,7 +215,7 @@ void machine_config_free(struct machine_config *c)
 		free(c->load[i]);
 	free(c->load);
 	for (i = 0; i < c->n_drives; i++)
-		free(c->drives[i].file);
+		free_drive(&c->drives[i]);
 	free(c->drives);
 	for (i = 0; i < MC_MAX_SLOTS; i++)
 		free(c->slot_rom[i]);
@@ -246,8 +258,12 @@ struct machine_config *machine_config_copy(const struct machine_config *src)
 	for (i = 0; i < src->n_drives; i++) {
 		machine_config_add_drive(c, src->drives[i].file,
 		    src->drives[i].kind, src->drives[i].id);
+		free_drive(&c->drives[i]);
 		c->drives[i] = src->drives[i];
 		c->drives[i].file = xstrdup(src->drives[i].file);
+		c->drives[i].vendor = xstrdup(src->drives[i].vendor);
+		c->drives[i].product = xstrdup(src->drives[i].product);
+		c->drives[i].revision = xstrdup(src->drives[i].revision);
 	}
 
 	for (i = 0; i < MC_MAX_SLOTS; i++)
@@ -717,6 +733,9 @@ struct machine_config *machine_config_parse(const char *text,
 			get_bool(e, "readonly", &d->readonly, &err);
 			get_bool(e, "overlay", &d->overlay, &err);
 			get_bool(e, "boot", &d->boot, &err);
+			get_str(e, "vendor", &d->vendor, &err);
+			get_str(e, "product", &d->product, &err);
+			get_str(e, "revision", &d->revision, &err);
 		}
 	}
 
@@ -849,6 +868,9 @@ bool machine_config_save(struct machine_config *c, const char *path,
 		cJSON_AddBoolToObject(d, "readonly", dr->readonly);
 		cJSON_AddBoolToObject(d, "overlay", dr->overlay);
 		cJSON_AddBoolToObject(d, "boot", dr->boot);
+		cJSON_AddStringToObject(d, "vendor", dr->vendor);
+		cJSON_AddStringToObject(d, "product", dr->product);
+		cJSON_AddStringToObject(d, "revision", dr->revision);
 		cJSON_AddItemToArray(a, d);
 	}
 
@@ -913,6 +935,37 @@ bool machine_config_save(struct machine_config *c, const char *path,
  */
 
 /*
+ *  machine_config_machine_type():
+ *
+ *  The machine type (MACHINE_*) of a type name, or MACHINE_NONE.
+ */
+int machine_config_machine_type(const char *type)
+{
+	struct machine_entry *me;
+	int i;
+
+	for (me = first_machine_entry; me != NULL; me = me->next)
+		for (i = 0; i < me->n_aliases; i++)
+			if (strcasecmp(me->aliases[i], type) == 0)
+				return me->machine_type;
+	return MACHINE_NONE;
+}
+
+
+/*
+ *  machine_config_has_ide():
+ *
+ *  False for machines that have only SCSI (where the drives' bus can't be
+ *  chosen).
+ */
+bool machine_config_has_ide(const char *type)
+{
+	return diskimage_default_type(machine_config_machine_type(type)) !=
+	    DISKIMAGE_SCSI;
+}
+
+
+/*
  *  machine_config_rom_address():
  *
  *  Returns where a machine type has its system ROM, or 0 if it isn't known
@@ -920,16 +973,7 @@ bool machine_config_save(struct machine_config *c, const char *path,
  */
 uint64_t machine_config_rom_address(const char *type)
 {
-	int t = MACHINE_NONE;
-	struct machine_entry *me;
-	int i;
-
-	for (me = first_machine_entry; me != NULL; me = me->next)
-		for (i = 0; i < me->n_aliases; i++)
-			if (strcasecmp(me->aliases[i], type) == 0)
-				t = me->machine_type;
-
-	switch (t) {
+	switch (machine_config_machine_type(type)) {
 	case MACHINE_PMAX:	return 0xbfc00000ULL;
 	}
 	return 0;
@@ -1096,6 +1140,14 @@ char *machine_config_check_ex(const struct machine_config *c,
 
 	for (i = 0; i < c->n_drives; i++) {
 		const struct mc_drive *d = &c->drives[i];
+		if (d->bus == MC_BUS_IDE && !machine_config_has_ide(c->type))
+			return xprintf("drive %i is on the IDE bus, but this "
+			    "machine has only SCSI", i + 1);
+		if (strlen(d->vendor) > 8 || strlen(d->product) > 16 ||
+		    strlen(d->revision) > 4)
+			return xprintf("drive %i: the vendor, product, and "
+			    "revision can be at most 8, 16, and 4 characters",
+			    i + 1);
 		if (d->file[0] == '\0') {
 			if (d->kind != MC_DRIVE_CDROM &&
 			    d->kind != MC_DRIVE_TAPE)
@@ -1202,18 +1254,18 @@ char *machine_config_summary(const struct machine_config *c)
 /*
  *  machine_config_create_disk():
  *
- *  Creates an empty disk image of size_mb megabytes (a sparse file, where
+ *  Creates an empty disk image of a size in bytes (a sparse file, where
  *  the host supports that).  Returns false, with an error message in *errp,
  *  if it couldn't.
  */
-bool machine_config_create_disk(const char *path, int size_mb, char **errp)
+bool machine_config_create_disk(const char *path, int64_t size, char **errp)
 {
 	FILE *f;
 	char zero = 0;
 
 	*errp = NULL;
-	if (size_mb < 1) {
-		*errp = xstrdup("the size must be at least 1 MB");
+	if (size < 512) {
+		*errp = xstrdup("the size must be at least one sector");
 		return false;
 	}
 	if (file_exists(path)) {
@@ -1222,9 +1274,9 @@ bool machine_config_create_disk(const char *path, int size_mb, char **errp)
 	}
 	f = fopen(path, "wb");
 #ifdef _WIN32
-	if (f == NULL || _fseeki64(f, (__int64) size_mb * 1048576 - 1,
+	if (f == NULL || _fseeki64(f, (__int64) size - 1,
 #else
-	if (f == NULL || fseeko(f, (off_t) size_mb * 1048576 - 1,
+	if (f == NULL || fseeko(f, (off_t) size - 1,
 #endif
 	    SEEK_SET) != 0 || fwrite(&zero, 1, 1, f) != 1 || fclose(f) != 0) {
 		*errp = xprintf("%s: %s", path, strerror(errno));
@@ -1348,6 +1400,17 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 			return false;
 		}
 		free(spec);
+
+		/*  The drive just added is the last one:  */
+		struct diskimage *di = m->first_diskimage;
+		while (di->next != NULL)
+			di = di->next;
+		if (d->vendor[0])
+			di->inq_vendor = xstrdup(d->vendor);
+		if (d->product[0])
+			di->inq_product = xstrdup(d->product);
+		if (d->revision[0])
+			di->inq_revision = xstrdup(d->revision);
 	}
 
 	if (c->net) {

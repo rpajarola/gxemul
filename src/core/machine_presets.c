@@ -33,7 +33,9 @@
  */
 
 #include <stddef.h>
+#include <stdio.h>
 
+#include "machine.h"
 #include "machine_config.h"
 
 
@@ -113,4 +115,49 @@ int machine_presets(const struct machine_preset **listp)
 {
 	*listp = presets;
 	return (int) (sizeof(presets) / sizeof(presets[0]));
+}
+
+
+/*
+ *  DEC's SCSI drives, as DECstations know them.  The capacities are from
+ *  DEC's rz(4) (Ultrix 4.4) and rz(7) (Tru64 4.0F) manual pages; Ultrix
+ *  has a partition table for each of these disks.  (gxemul's DECstation
+ *  disks are RZ58s, rev 2000, of any size, unless given.)
+ */
+static const struct mc_drive_model dec_drives[] = {
+	{ MC_DRIVE_DISK, "RZ22",  "DEC", "RZ22     (C) DEC", "", 102431 },
+	{ MC_DRIVE_DISK, "RZ23",  "DEC", "RZ23     (C) DEC", "", 204864 },
+	{ MC_DRIVE_DISK, "RZ23L", "DEC", "RZ23L    (C) DEC", "", 237588 },
+	{ MC_DRIVE_DISK, "RZ24",  "DEC", "RZ24     (C) DEC", "", 409792 },
+	{ MC_DRIVE_DISK, "RZ24L", "DEC", "RZ24L    (C) DEC", "", 479350 },
+	{ MC_DRIVE_DISK, "RZ25",  "DEC", "RZ25     (C) DEC", "0900", 832527 },
+	{ MC_DRIVE_DISK, "RZ25L", "DEC", "RZ25L    (C) DEC", "", 1046206 },
+	{ MC_DRIVE_DISK, "RZ26",  "DEC", "RZ26     (C) DEC", "", 2050860 },
+	{ MC_DRIVE_DISK, "RZ26L", "DEC", "RZ26L    (C) DEC", "", 2050860 },
+	{ MC_DRIVE_DISK, "RZ28",  "DEC", "RZ28     (C) DEC", "", 4110480 },
+	{ MC_DRIVE_DISK, "RZ29B", "DEC", "RZ29B    (C) DEC", "", 8380080 },
+	{ MC_DRIVE_DISK, "RZ55",  "DEC", "RZ55     (C) DEC", "", 649040 },
+	{ MC_DRIVE_DISK, "RZ56",  "DEC", "RZ56     (C) DEC", "", 1299174 },
+	{ MC_DRIVE_DISK, "RZ57",  "DEC", "RZ57     (C) DEC", "", 1954050 },
+	{ MC_DRIVE_DISK, "RZ58",  "DEC", "RZ58     (C) DEC", "2000", 2698061 },
+	{ MC_DRIVE_DISK, "RZ73",  "DEC", "RZ73     (C) DEC", "", 3907911 },
+	{ MC_DRIVE_DISK, "RZ74",  "DEC", "RZ74     (C) DEC", "", 6976375 },
+	{ MC_DRIVE_CDROM, "RRD40", "DEC", "RRD40   (C) DEC ", "", 0 },
+	{ MC_DRIVE_CDROM, "RRD42", "DEC", "RRD42   (C) DEC ", "4.5d", 0 },
+};
+
+
+/*
+ *  machine_drive_models():
+ *
+ *  Returns the real drives known for a machine type, and how many there
+ *  are (0 if none).
+ */
+int machine_drive_models(const char *type,
+	const struct mc_drive_model **listp)
+{
+	*listp = dec_drives;
+	if (machine_config_machine_type(type) == MACHINE_PMAX)
+		return (int) (sizeof(dec_drives) / sizeof(dec_drives[0]));
+	return 0;
 }
