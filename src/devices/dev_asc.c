@@ -603,6 +603,7 @@ static int dev_asc_select(struct cpu *cpu, struct asc_data *d, int from_id,
 	int to_id, int dmaflag, int n_messagebytes)
 {
 	int ok, len, i, ch;
+	int dma_ofs = 0;	/*  bytes taken from the DMA buffer so far  */
 
 	if (!quiet_mode)
 		debug(" { SELECT id %i: ", to_id);
@@ -617,9 +618,19 @@ static int dev_asc_select(struct cpu *cpu, struct asc_data *d, int from_id,
 		scsi_transfer_allocbuf(&d->xferp->msg_out_len,
 		    &d->xferp->msg_out, n_messagebytes, 0);
 
+		/*
+		 *  With a DMA selection, the message bytes come before the
+		 *  command bytes in the DMA buffer (Ultrix 3.1D selects
+		 *  with ATN this way), unless the driver put them in the
+		 *  FIFO.
+		 */
+		bool msg_from_dma = dmaflag && d->n_bytes_in_fifo == 0;
+
 		i = 0;
 		while (n_messagebytes-- > 0) {
-			int ch2 = dev_asc_fifo_read(d);
+			int ch2 = msg_from_dma ? d->dma[(d->dma_address_reg +
+			    dma_ofs++) & (ASC_DMA_SIZE-1)] :
+			    dev_asc_fifo_read(d);
 			if (!quiet_mode)
 				debug(" %02x", ch2);
 			d->xferp->msg_out[i++] = ch2;
@@ -699,11 +710,18 @@ static int dev_asc_select(struct cpu *cpu, struct asc_data *d, int from_id,
 		if (len == 0)
 			len = 65536;
 
-		scsi_transfer_allocbuf(&d->xferp->cmd_len,
-		    &d->xferp->cmd, len, 0);
+		/*  The transfer count includes the message bytes:  */
+		int cmd_len = len - dma_ofs;
+		if (cmd_len < 1) {
+			fatal(" (DMA selection without command bytes) }");
+			return 0;
+		}
 
-		for (i=0; i<len; i++) {
-			int ofs = d->dma_address_reg + i;
+		scsi_transfer_allocbuf(&d->xferp->cmd_len,
+		    &d->xferp->cmd, cmd_len, 0);
+
+		for (i=0; i<cmd_len; i++) {
+			int ofs = d->dma_address_reg + dma_ofs + i;
 			ch = d->dma[ofs & (ASC_DMA_SIZE-1)];
 			d->xferp->cmd[i] = ch;
 			if (!quiet_mode)

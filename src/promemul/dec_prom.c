@@ -87,6 +87,7 @@ static unsigned char mem_readchar(struct cpu *cpu, int regbase, int offset)
  *	0x18	3	reinit()
  *	0x30	6	open()
  *	0x38	7	read()
+ *	0x50	10	close()
  *	0x58	11	lseek()
  *	0x68	13	putchar()
  *	0x88	17	printf()
@@ -153,6 +154,13 @@ int dec_jumptable_func(struct cpu *cpu, int vector)
 
 			free(tmp_buf);
 		}
+		break;
+	case 0x50:	/*  close(handle)  */
+		/*  (Ultrix 3.1D's ultrixboot closes the boot device, and
+		    opens it again.)  */
+		file_opened = 0;
+		current_file_offset = 0;
+		cpu->cd.mips.gpr[MIPS_GPR_V0] = 0;
 		break;
 	case 0x58:	/*  lseek(handle, offset[, whence])  */
 		/*  TODO  */

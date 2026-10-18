@@ -141,6 +141,21 @@ X(reserved)
 
 
 /*
+ *  cop0_reserved:  A coprocessor 0 instruction which the CPU doesn't have.
+ *  As on a real CPU, it gives a CoProcessor Unusable exception where
+ *  coprocessor 0 isn't usable (in user mode, without CU0), and a Reserved
+ *  Instruction exception otherwise.  (Ultrix 3.1D runs one in user mode.)
+ */
+X(cop0_reserved)
+{
+	if (!cop0_availability_check(cpu, ic))
+		return;
+
+	instr(reserved)(cpu, ic);
+}
+
+
+/*
  *  cpu:  Cause a CoProcessor Unusable exception.
  *
  *  arg[0] = the number of the coprocessor
@@ -4248,10 +4263,7 @@ X(to_be_translated)
 				} else
 					goto bad;
 				break;
-			default:if (!cpu->translation_readahead)
-					fatal("UNIMPLEMENTED cop0 (func "
-					    "0x%02x)\n", iword & 0xff);
-				goto bad;
+			default:ic->f = instr(cop0_reserved);
 			}
 			break;
 		}

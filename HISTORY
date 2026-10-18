@@ -5384,3 +5384,14 @@ Changelog for GXemul:
 		any drive (e.g. 512 or 2048 for a CD-ROM), not only of a tape,
 		without "unknown MODE_SELECT" (which OSF/1 1.0 and Ultrix 4.2
 		print on every boot, setting 512).
+20261018	Ultrix 3.1D runs on the 5000/200 (with the real PROM and the
+		PMAZ-AA option ROM): 53C94 (asc): a DMA selection with ATN
+		takes the message bytes from the DMA buffer, before the
+		command bytes, unless they are in the FIFO (it read them
+		from the empty FIFO, and the selection failed). MIPS: a
+		coprocessor 0 instruction the CPU doesn't have gives a
+		Coprocessor Unusable (in user mode) or Reserved Instruction
+		exception, instead of stopping the emulator. PROM emulation:
+		systype is in the environment (as getsysid() returns it, in
+		hex, which Ultrix 3.1D's kernel and ultrixboot read), and
+		the old jump table's close() is implemented.

@@ -933,6 +933,16 @@ abort();
 		add_environment_string(cpu, tmps, &addr);
 	}
 
+	/*  The system type, as getsysid() returns it.  (Old kernels, such
+	    as Ultrix 3.1D's, read it from the environment, in hex.)  */
+	{
+		char tmps[40];
+		snprintf(tmps, sizeof(tmps), "systype=0x%08" PRIx32,
+		    ((uint32_t) 0x82 << 24) + (machine->machine_subtype << 16)
+		    + (0x3 << 8));
+		add_environment_string(cpu, tmps, &addr);
+	}
+
 	add_environment_string(cpu, "scsiid0=7", &addr);
 	add_environment_string(cpu, "bootmode=a", &addr);
 	add_environment_string(cpu, "testaction=q", &addr);
