@@ -5380,3 +5380,7 @@ Changelog for GXemul:
 		add the kernel to the files to load, instead of gxemul
 		stopping at startup with "Weird load address 0x00000000".
 		The editor's boot file name hint says that it isn't loaded.
+20261018	MODE SELECT with a block descriptor sets the block length of
+		any drive (e.g. 512 or 2048 for a CD-ROM), not only of a tape,
+		without "unknown MODE_SELECT" (which OSF/1 1.0 and Ultrix 4.2
+		print on every boot, setting 512).

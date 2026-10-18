@@ -1555,15 +1555,16 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 		/*  TODO:  Care about cmd?  */
 
-		/*  A tape's block descriptor: a block length for fixed block
-		    mode, or 0 for variable (which keeps the fixed length):  */
-		if (d->is_a_tape && xferp->data_out_len >= 12 &&
+		/*  A block descriptor: the block length (e.g. 512 or 2048 for
+		    a CD-ROM, or for a tape's fixed block mode), or 0 (a tape's
+		    variable mode, which keeps the fixed length):  */
+		if (xferp->data_out_len >= 12 &&
 		    xferp->data_out[3] == 0x08) {
 			int len = (xferp->data_out[9] << 16) +
 			    (xferp->data_out[10] << 8) + xferp->data_out[11];
 			if (len > 0)
 				d->logical_block_size = len;
-			debug("[ tape block length %i ]\n", len);
+			debug("[ block length %i ]\n", len);
 		} else
 		/*  Set sector size to 2048:  */
 		/*  00 05 00 08 00 03 ca 40 00 00 08 00  */
