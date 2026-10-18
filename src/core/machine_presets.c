@@ -41,7 +41,9 @@ static const struct machine_preset presets[] = {
 	{
 		"decstation", "3max",
 		"Runs the real KN02 system ROM: choose its image under "
-		"Firmware. With PROM emulation instead (a checkbox there), "
+		"Firmware, with the option ROM images of the SCSI (slot 5) "
+		"and Ethernet (slot 6) interfaces, which it needs to boot "
+		"from them. With PROM emulation instead (a checkbox there), "
 		"no ROM image is needed, and NetBSD, OpenBSD, Ultrix, or "
 		"Sprite boot from a disk or CD-ROM image.",
 		"{ \"gxemul\": 1, \"name\": \"DECstation 5000/200\","
@@ -56,8 +58,8 @@ static const struct machine_preset presets[] = {
 	{
 		"decstation", "3min",
 		"Runs the real KN02-BA system ROM: choose its image under "
-		"Firmware, and for a graphics console, add the PMAG-BA option "
-		"ROM image in slot 0 under Expansion. With PROM emulation "
+		"Firmware, and for a graphics console, the PMAG-BA option ROM "
+		"image for slot 0 there too. With PROM emulation "
 		"instead (a checkbox under Firmware), no ROM image is needed.",
 		"{ \"gxemul\": 1, \"name\": \"DECstation 5000/1xx\","
 		"  \"machine\": { \"type\": \"decstation\", \"model\": \"3min\","

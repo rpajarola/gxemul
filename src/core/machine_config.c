@@ -949,19 +949,6 @@ bool machine_config_uses_rom(const struct machine_config *c)
 }
 
 
-/*
- *  machine_config_n_slots():
- *
- *  Returns the number of expansion slots (for option ROM images) of a
- *  machine, or 0.  For DECstations, these are TURBOchannel slots 0..2.
- */
-int machine_config_n_slots(const char *type, const char *model)
-{
-	(void) model;
-	return machine_config_rom_address(type) != 0 ? 3 : 0;
-}
-
-
 /*  Finds a machine type and model, without exiting on errors:  */
 static bool lookup_machine(const char *type, const char *model,
 	int *tp, int *stp, char **errp)
@@ -994,6 +981,61 @@ static bool lookup_machine(const char *type, const char *model,
 	*errp = type[0] ? xprintf("unknown machine type \"%s\"", type) :
 	    xstrdup("no machine type");
 	return false;
+}
+
+
+/*
+ *  machine_config_slots():
+ *
+ *  Lists the TURBOchannel slots that have a card in them, which can be
+ *  given an option ROM image (for a real system ROM to use the card), as
+ *  machine_pmax.c sets them up: graphics cards (one, or "cards", with the
+ *  framebuffer on), and on the 5000/200, the SCSI and Ethernet interfaces.
+ *  Returns how many there are (at most MC_MAX_SLOTS), or -1 if the machine
+ *  has no TURBOchannel.
+ */
+int machine_config_slots(const struct machine_config *c,
+	struct mc_slot *slots)
+{
+	int type, subtype, cards, n = 0, i;
+	char *err = NULL;
+
+	if (!lookup_machine(c->type, c->model, &type, &subtype, &err)) {
+		free(err);
+		return -1;
+	}
+	if (type != MACHINE_PMAX)
+		return -1;
+
+	cards = !c->display ? 0 : c->gfx_cards < 0 ? 1 : c->gfx_cards;
+	switch (subtype) {
+	case MACHINE_DEC_3MAX_5000:
+	case MACHINE_DEC_3MIN_5000:
+	case MACHINE_DEC_3MAXPLUS_5000:
+		for (i = 0; i < cards && i < 3; i++) {
+			slots[n].slot = i;
+			slots[n++].device = "PMAG-BA framebuffer";
+		}
+		if (subtype == MACHINE_DEC_3MAX_5000) {
+			slots[n].slot = 5;
+			slots[n++].device = "PMAZ-AA SCSI";
+			slots[n].slot = 6;
+			slots[n++].device = "PMAD-AA Ethernet";
+		}
+		break;
+	case MACHINE_DEC_MAXINE_5000:
+		/*  The first card is the built-in one, in slot 2:  */
+		for (i = 1; i < cards && i < 3; i++) {
+			slots[n].slot = i - 1;
+			slots[n++].device = "PMAG-BA framebuffer";
+		}
+		slots[n].slot = 2;
+		slots[n++].device = "PMAG-DV framebuffer (built in)";
+		break;
+	default:
+		return -1;
+	}
+	return n;
 }
 
 
@@ -1080,16 +1122,18 @@ char *machine_config_check_ex(const struct machine_config *c,
 				    "ID %i", j + 1, i + 1, d->id);
 	}
 
-	for (i = 0; i < MC_MAX_SLOTS; i++)
+	for (i = 0; machine_config_uses_rom(c) && i < MC_MAX_SLOTS; i++)
 		if (c->slot_rom[i] != NULL && c->slot_rom[i][0]) {
-			int cards = !c->display ? 0 : c->gfx_cards < 0 ? 1 :
-			    c->gfx_cards;
-			if (i < machine_config_n_slots(c->type, c->model) &&
-			    i >= cards)
+			struct mc_slot slots[MC_MAX_SLOTS];
+			int n = machine_config_slots(c, slots), k;
+			bool found = false;
+			for (k = 0; k < n; k++)
+				if (slots[k].slot == i)
+					found = true;
+			if (!found)
 				return xprintf("slot %i has an option ROM, but "
-				    "no card (it has one only with the "
-				    "framebuffer on, and %i card%s)", i, i + 1,
-				    i ? "s" : "");
+				    "no card (a framebuffer is there only with "
+				    "the display on, and enough cards)", i);
 			f = machine_config_resolve(c, c->slot_rom[i]);
 			if (!file_exists(f)) {
 				err = xprintf("slot %i: option ROM %s not "
@@ -1269,7 +1313,8 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	if (c->display || c->serial_telnet)
 		console_allow_slaves(1);
 
-	for (i = 0; i < MC_MAX_SLOTS && i < MACHINE_MAX_TC_SLOTS; i++)
+	for (i = 0; machine_config_uses_rom(c) && i < MC_MAX_SLOTS &&
+	    i < MACHINE_MAX_TC_SLOTS; i++)
 		if (c->slot_rom[i] != NULL && c->slot_rom[i][0])
 			m->tc_rom_filename[i] = machine_config_resolve(c,
 			    c->slot_rom[i]);

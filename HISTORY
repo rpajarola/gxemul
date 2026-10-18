@@ -5311,3 +5311,9 @@ Changelog for GXemul:
 		run a real ROM by default. In machine.json, "rom" is only
 		used without PROM emulation, and "load", "bootname",
 		"bootarg", and "netboot" only with it, on those machines.
+20261017	Configuration window: the Expansion page is gone; the option
+		ROM images are on the Firmware page, with the system ROM
+		image (they are only used without PROM emulation), and only
+		for the TURBOchannel slots that have a card in that machine:
+		the PMAG-BA framebuffers (with the display on, one per card),
+		and on the 5000/200 the PMAZ-AA (slot 5) and PMAD-AA (slot 6).

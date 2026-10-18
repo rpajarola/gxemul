@@ -91,10 +91,10 @@ extern struct machine_entry *first_machine_entry;
 
 enum screen { SCREEN_LIST, SCREEN_EDITOR };
 enum page { PAGE_GENERAL, PAGE_FIRMWARE, PAGE_DRIVES, PAGE_DISPLAY,
-	PAGE_EXPANSION, PAGE_NETWORK, PAGE_ADVANCED, N_PAGES };
+	PAGE_NETWORK, PAGE_ADVANCED, N_PAGES };
 
 static const char *page_names[N_PAGES] = { "General", "Firmware", "Drives",
-	"Display", "Expansion", "Network", "Advanced" };
+	"Display", "Network", "Advanced" };
 
 static const char *kind_labels[] = { "Disk", "CD-ROM", "Tape", "Floppy" };
 static const char *bus_labels[] = { "Default bus", "SCSI", "IDE" };
@@ -1271,6 +1271,50 @@ static void page_general(void)
 }
 
 
+/*
+ *  Option ROM images for the TURBOchannel cards, which a real system ROM
+ *  needs to use them; also those that have no card (any more), to clear.
+ */
+static void option_roms(void)
+{
+	mu_Context *ctx = ui.ctx;
+	struct machine_config *c = ui.cfg;
+	struct mc_slot slots[MC_MAX_SLOTS];
+	int n = machine_config_slots(c, slots), i, k;
+	int full[1] = { -1 };
+
+	row(1, full);
+	mu_label(ctx, "");
+	if (n == 0)
+		mu_label(ctx, "No TURBOchannel cards need option ROM images "
+		    "(a framebuffer needs the display on).");
+	else if (n > 0)
+		mu_label(ctx, "Option ROM images of the TURBOchannel cards "
+		    "(empty = gxemul's built-in one):");
+
+	for (i = 0; i < MC_MAX_SLOTS; i++) {
+		const char *device = NULL;
+		char label[100];
+
+		for (k = 0; k < n; k++)
+			if (slots[k].slot == i)
+				device = slots[k].device;
+		if (device == NULL && (c->slot_rom[i] == NULL ||
+		    c->slot_rom[i][0] == '\0'))
+			continue;
+
+		row(1, full);
+		snprintf(label, sizeof(label), "Slot %i: %s", i, device != NULL ?
+		    device : "no card (clear this)");
+		mu_label(ctx, label);
+		if (c->slot_rom[i] == NULL)
+			machine_config_set(&c->slot_rom[i], "");
+		file_field(&c->slot_rom[i], "Choose an option ROM image",
+		    true);
+	}
+}
+
+
 static void page_firmware(void)
 {
 	mu_Context *ctx = ui.ctx;
@@ -1291,6 +1335,7 @@ static void page_firmware(void)
 		row(1, full);
 		mu_label(ctx, "System ROM image:");
 		file_field(&c->rom, "Choose the system ROM image", true);
+		option_roms();
 		row(1, full);
 		mu_label(ctx, "");
 		check("Start paused, in the debugger", &c->start_paused);
@@ -1480,36 +1525,6 @@ static void page_display(void)
 }
 
 
-static void page_expansion(void)
-{
-	mu_Context *ctx = ui.ctx;
-	struct machine_config *c = ui.cfg;
-	int n = machine_config_n_slots(c->type, c->model), i;
-	int full[1] = { -1 };
-
-	row(1, full);
-	if (n == 0) {
-		mu_text(ctx, "This machine type has no expansion slots that "
-		    "can be configured here.");
-		return;
-	}
-	mu_text(ctx, "Option ROM images for the TURBOchannel slots.  Slots "
-	    "0..2 hold the graphics cards (with the framebuffer on); a real "
-	    "ROM needs the cards' option ROMs to use them.  Empty = gxemul's "
-	    "built-in ROM.");
-	for (i = 0; i < n; i++) {
-		char label[40];
-		row(1, full);
-		snprintf(label, sizeof(label), "Slot %i:", i);
-		mu_label(ctx, label);
-		if (c->slot_rom[i] == NULL)
-			machine_config_set(&c->slot_rom[i], "");
-		file_field(&c->slot_rom[i], "Choose an option ROM image",
-		    true);
-	}
-}
-
-
 static void page_network(void)
 {
 	mu_Context *ctx = ui.ctx;
@@ -1663,7 +1678,6 @@ static void screen_editor(void)
 	case PAGE_FIRMWARE:		page_firmware(); break;
 	case PAGE_DRIVES:	page_drives(); break;
 	case PAGE_DISPLAY:	page_display(); break;
-	case PAGE_EXPANSION:	page_expansion(); break;
 	case PAGE_NETWORK:	page_network(); break;
 	case PAGE_ADVANCED:	page_advanced(); break;
 	default:		break;

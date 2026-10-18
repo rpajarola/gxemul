@@ -103,7 +103,7 @@ struct machine_config {
 	int		gfx_cards;	/*  -1 = default  */
 	bool		serial_telnet;	/*  serial ports on telnet ports  */
 
-	/*  Expansion slots (e.g. TURBOchannel option ROM images):  */
+	/*  TURBOchannel option ROM images (with a system ROM only):  */
 	char		*slot_rom[MC_MAX_SLOTS];	/*  NULL = built-in  */
 
 	/*  Network:  */
@@ -155,7 +155,11 @@ struct emul *machine_config_create_emul(struct machine_config *);
 /*  Machine descriptions (what the configuration window offers):  */
 uint64_t machine_config_rom_address(const char *type);
 bool machine_config_uses_rom(const struct machine_config *);
-int machine_config_n_slots(const char *type, const char *model);
+struct mc_slot {
+	int		slot;		/*  TURBOchannel slot number  */
+	const char	*device;	/*  e.g. "PMAZ-AA SCSI"  */
+};
+int machine_config_slots(const struct machine_config *, struct mc_slot *);
 
 /*  machine_presets.c:  */
 struct machine_preset {
