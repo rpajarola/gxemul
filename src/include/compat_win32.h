@@ -102,7 +102,7 @@ bool win32_choose_file_done(char **path);
 bool win32_replace_file(const char *from, const char *to);
 
 /*  Starts another gxemul (this executable), without waiting for it:  */
-bool win32_spawn_self(const char *const *args);
+bool win32_spawn_self(const char *const *args, bool detached);
 
 #endif	/*  _WIN32  */
 

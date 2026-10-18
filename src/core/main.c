@@ -41,6 +41,7 @@
 #include "cpu.h"
 #include "debugger.h"
 #include "device.h"
+#include "devices.h"
 #include "diskimage.h"
 #include "emul.h"
 #include "machine.h"
@@ -79,6 +80,10 @@ static char *config_file = NULL;
 static bool want_ui = false;
 static char *edit_path = NULL;
 static bool edit_no_start = false;
+
+/*  Set by the Reset menu item: start the machine again when it stops.  */
+bool restart_machine = false;
+static char **saved_argv;
 
 
 /*
@@ -611,6 +616,38 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
  *  Emulations are set up either from command line arguments, or from a
  *  machine configuration file (see machine_config.c).
  */
+/*
+ *  Starts gxemul again, for the Reset menu item: with the configuration
+ *  file given, or else with the same arguments.  (The NVRAM is saved
+ *  first, as atexit() handlers don't run on exec.)  Returns only if that
+ *  failed.
+ */
+static int restart(const char *config)
+{
+	char *args[3];
+	char **argv = saved_argv;
+
+	dev_mc146818_save_nvram();
+	if (config != NULL) {
+		args[0] = progname;
+		args[1] = (char *) config;
+		args[2] = NULL;
+		argv = args;
+	}
+	printf("[ Reset: starting the machine again ]\n");
+	fflush(stdout);
+
+#ifdef _WIN32
+	if (win32_spawn_self((const char *const *) argv + 1, false))
+		exit(0);
+#else
+	execvp(progname, argv);
+#endif
+	perror(progname);
+	return 1;
+}
+
+
 int main(int argc, char *argv[])
 {
 	/*  Setting constants:  */
@@ -627,6 +664,12 @@ int main(int argc, char *argv[])
 
 
 	progname = argv[0];
+
+	/*  (For a reset; getopt() may reorder argv.)  */
+	CHECK_ALLOCATION(saved_argv = (char **) calloc(argc + 1,
+	    sizeof(char *)));
+	for (i = 0; i < argc; i++)
+		CHECK_ALLOCATION(saved_argv[i] = strdup(argv[i]));
 
 
 	enable_colorized_output = getenv("CLICOLOR") != NULL;
@@ -845,10 +888,21 @@ int main(int argc, char *argv[])
 
 	console_deinit();
 
+	/*  A machine started from a configuration chosen in the window is
+	    started again by that configuration's name:  */
+	char *restart_config = NULL;
+	if (restart_machine && want_ui &&
+	    emul->machines[0]->config_path != NULL)
+		CHECK_ALLOCATION(restart_config =
+		    strdup(emul->machines[0]->config_path));
+
 	emul_destroy(emul);
 
 	settings_remove_all(global_settings);
 	settings_destroy(global_settings);
+
+	if (restart_machine)
+		return restart(restart_config);
 
 	return 0;
 }

@@ -379,9 +379,9 @@ bool win32_replace_file(const char *from, const char *to)
  *
  *  Starts another gxemul (this executable) with the arguments given (a
  *  NULL-terminated list, without the program name), without waiting for
- *  it, and without a console (it shares none with this one).
+ *  it.  With detached, it has no console; otherwise it uses this one.
  */
-bool win32_spawn_self(const char *const *args)
+bool win32_spawn_self(const char *const *args, bool detached)
 {
 	char exe[MAX_PATH], cmd[8192];
 	STARTUPINFOA si;
@@ -398,8 +398,8 @@ bool win32_spawn_self(const char *const *args)
 
 	memset(&si, 0, sizeof(si));
 	si.cb = sizeof(si);
-	if (!CreateProcessA(exe, cmd, NULL, NULL, FALSE, DETACHED_PROCESS,
-	    NULL, NULL, &si, &pi))
+	if (!CreateProcessA(exe, cmd, NULL, NULL, FALSE, detached ?
+	    DETACHED_PROCESS : 0, NULL, NULL, &si, &pi))
 		return false;
 	CloseHandle(pi.hThread);
 	CloseHandle(pi.hProcess);

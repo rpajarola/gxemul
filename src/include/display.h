@@ -148,6 +148,7 @@ struct display_menus {
 	unsigned long		media_generation;	/*  shown  */
 	struct menu_item	*record;
 	struct menu_item	*debugger;
+	struct menu_item	*zoom[4];	/*  the View menu's sizes  */
 
 	char			*message;
 	uint32_t		message_expires;	/*  ms ticks  */
@@ -212,6 +213,7 @@ uint32_t display_ticks(void);
 bool display_backend_available(void);
 bool display_backend_open(struct fb_window *win);
 void display_backend_resize(struct fb_window *win);
+void display_backend_zoom(struct fb_window *win);
 void display_backend_set_title(struct fb_window *win);
 void display_backend_update(struct fb_window *win, int x, int y,
 	int w, int h);

@@ -853,6 +853,23 @@ are other things to work on in the emulator as well. Also, making the
 PROM accept the graphics card and keyboard so that it boots with console
 on framebuffer would be nice.)</font>
 
+<p>Some of the tests fail only because GXemul doesn't emulate what they
+check: on the KN02-BA V5.7j, <tt>3/cache/seg</tt> and
+<tt>3/cache/isol</tt> (a real R3000 data cache) and <tt>3/rtc/time</tt>
+(real-time I/O timing), and on the PMAG-BA V5.3a,
+<tt>0/curs</tt> and <tt>0/ptrn</tt> (the Bt459's signature registers).
+With <tt>"skip_failing_tests": true</tt> in the
+<a href="configfiles.html#config">machine.json</a> ("Skip the self-tests
+that fail only in gxemul" on the Firmware page of the configuration
+window), GXemul loads a copy of these ROM images in which those tests
+pass at once; the ROM images themselves aren't changed.
+(<tt>experiments/patch_rom_tests.py</tt> makes such copies by hand.)
+
+<p>The PROM keeps its settings (<tt>setenv</tt>: e.g. <tt>boot</tt> and
+<tt>console</tt>) in the NVRAM of the real-time clock.  With
+<tt>"nvram": "nvram.bin"</tt>, they are kept in that file, from one run
+of the machine to the next.
+
 <p>The command line options used are: <tt>-e 3min</tt> for
 "DECstation 3min" (5000/1xx), <tt>-Q</tt> to supress the emulator's own PROM
 call emulation, <tt>-M128</tt> for 128MB RAM (because GXemul doesn't correctly

@@ -322,6 +322,7 @@ int dev_mc146818_access(struct cpu *cpu, struct memory *mem,
 	int writeflag, void *);
 void dev_mc146818_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, char *irq_path, int access_style, int addrdiv);
+void dev_mc146818_save_nvram(void);
 
 /*  dev_pckbc.c:  */
 #define	DEV_PCKBC_LENGTH		0x10

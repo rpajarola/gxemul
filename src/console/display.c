@@ -54,6 +54,7 @@
 bool display_backend_available(void) { return false; }
 bool display_backend_open(struct fb_window *win) { return false; }
 void display_backend_resize(struct fb_window *win) { }
+void display_backend_zoom(struct fb_window *win) { }
 void display_backend_set_title(struct fb_window *win) { }
 void display_backend_update(struct fb_window *win, int x, int y,
 	int w, int h) { }

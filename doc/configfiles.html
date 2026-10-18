@@ -109,7 +109,8 @@ summary of it, and:
 <p>The editor has a page for each part of the configuration: General
 (name, architecture, machine type and model, memory, CPU), Firmware (a
 system ROM image and the option ROM images of the TURBOchannel cards, or
-PROM emulation with files to load and the boot file name and argument),
+PROM emulation with files to load and the boot file name and argument,
+and the NVRAM file, with a button to reset it),
 Drives
 (disks, CD-ROMs, tapes, and floppies; on a DECstation, a drive can be
 one of DEC's, e.g. an RZ26 disk, which a new disk image gets the size of,
@@ -137,6 +138,17 @@ drives, firmware, and display).  A new DECstation runs a real system ROM
 image, chosen on the Firmware page; with PROM emulation (a checkbox
 there), no ROM image is needed, and gxemul boots a kernel itself, from a
 drive or from files to load.
+
+<p>A running machine's window has these menus:
+<ul>
+  <li><b>Machine:</b>  Save Screenshot, Record Video, Enter Debugger,
+	<b>Reset</b> (starts the machine again, as if it was switched off
+	and on), Edit Configuration... (for a machine started from a
+	configuration file), and Quit.
+  <li><b>View:</b>  the window's size: Fit the Screen, Actual Size, Half
+	Size, or Double Size.
+  <li><b>Media:</b>  Load... and Eject, for each CD-ROM and tape drive.
+</ul>
 
 <p>A running machine started from a configuration file has <b>Edit
 Configuration...</b> in its window's Machine menu.  This opens its
@@ -211,7 +223,9 @@ shown here, except for the machine type:
     "bootname": "",             <font color="#2020cf">as -j</font>
     "bootarg": null,            <font color="#2020cf">as -o; null = the default</font>
     "netboot": false,           <font color="#2020cf">as -O</font>
-    "start_paused": false
+    "start_paused": false,
+    "nvram": "",                <font color="#2020cf">a file for the RTC's NVRAM (the firmware's settings), "" = not kept</font>
+    "skip_failing_tests": false <font color="#2020cf">load copies of known ROMs whose tests that fail in gxemul pass</font>
   },
   "drives": [
     { "file": "disk.img",       <font color="#2020cf">"" for a CD-ROM or tape drive without a medium</font>

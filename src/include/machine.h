@@ -172,6 +172,7 @@ struct machine {
 	int	force_netboot;
 	uint64_t file_loaded_end_addr;
 	char	*config_path;	/*  machine.json it was set up from  */
+	char	*nvram_filename;	/*  the RTC NVRAM is kept here  */
 	char	*boot_kernel_filename;
 	char	*boot_string_argument;
 	int	n_gfx_cards;

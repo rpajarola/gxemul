@@ -39,7 +39,8 @@
  *	               "random_bootstrap_cpu": false, "serial_nr": 0 },
  *	  "boot": { "prom_emulation": true, "rom": "", "load": [],
  *	            "bootname": "", "bootarg": null, "netboot": false,
- *	            "start_paused": false },
+ *	            "start_paused": false, "nvram": "",
+ *	            "skip_failing_tests": false },
  *	  "drives": [ { "file": "disk.img", "kind": "disk", "bus": "default",
  *	                "id": -1, "readonly": false, "overlay": false,
  *	                "vendor": "", "product": "", "revision": "",
@@ -187,6 +188,7 @@ struct machine_config *machine_config_new(void)
 	c->prom_emulation = true;
 	c->rom = xstrdup("");
 	c->bootname = xstrdup("");
+	c->nvram = xstrdup("");
 	c->scale = 0;
 	c->gfx_cards = -1;
 	c->net = true;
@@ -210,7 +212,7 @@ void machine_config_free(struct machine_config *c)
 
 	free(c->path); free(c->dir); free(c->name);
 	free(c->type); free(c->model); free(c->cpu); free(c->byte_order);
-	free(c->rom); free(c->bootname); free(c->bootarg);
+	free(c->rom); free(c->bootname); free(c->bootarg); free(c->nvram);
 	for (i = 0; i < c->n_load; i++)
 		free(c->load[i]);
 	free(c->load);
@@ -249,6 +251,7 @@ struct machine_config *machine_config_copy(const struct machine_config *src)
 	c->rom = xstrdup(src->rom);
 	c->bootname = xstrdup(src->bootname);
 	c->bootarg = src->bootarg ? xstrdup(src->bootarg) : NULL;
+	c->nvram = xstrdup(src->nvram);
 
 	c->n_load = 0; c->load = NULL;
 	for (i = 0; i < src->n_load; i++)
@@ -606,6 +609,7 @@ static void rebase_paths(struct machine_config *c, const char *newdir)
 		rebase_one(c, newdir, &c->drives[i].file, false, false);
 	for (i = 0; i < MC_MAX_SLOTS; i++)
 		rebase_one(c, newdir, &c->slot_rom[i], false, true);
+	rebase_one(c, newdir, &c->nvram, false, false);
 
 	machine_config_set(&c->dir, newdir);
 }
@@ -873,6 +877,9 @@ struct machine_config *machine_config_parse(const char *text,
 			get_str(o, "bootarg", &c->bootarg, &err);
 		get_bool(o, "netboot", &c->force_netboot, &err);
 		get_bool(o, "start_paused", &c->start_paused, &err);
+		get_str(o, "nvram", &c->nvram, &err);
+		get_bool(o, "skip_failing_tests", &c->skip_failing_tests,
+		    &err);
 	}
 
 	v = cJSON_GetObjectItemCaseSensitive(root, "drives");
@@ -1043,6 +1050,8 @@ bool machine_config_save(struct machine_config *c, const char *path,
 		cJSON_AddNullToObject(o, "bootarg");
 	cJSON_AddBoolToObject(o, "netboot", c->force_netboot);
 	cJSON_AddBoolToObject(o, "start_paused", c->start_paused);
+	cJSON_AddStringToObject(o, "nvram", c->nvram);
+	cJSON_AddBoolToObject(o, "skip_failing_tests", c->skip_failing_tests);
 
 	a = cJSON_AddArrayToObject(root, "drives");
 	for (i = 0; i < c->n_drives; i++) {
@@ -1512,6 +1521,157 @@ bool machine_config_create_disk(const char *path, int64_t size, char **errp)
  */
 
 /*
+ *  ROM self-tests that fail in gxemul, only because it doesn't emulate what
+ *  they check (see experiments/patch_rom_tests.py, which makes patched
+ *  copies by hand):
+ *
+ *	KN02-BA V5.7j (5000/1xx system ROM):  3/cache/seg and 3/cache/isol
+ *	    need a real R3000 data cache, and 3/rtc/time real-time I/O timing.
+ *	PMAG-BA V5.3a (color frame buffer option ROM):  0/curs and 0/ptrn
+ *	    read the Bt459's signature registers, which aren't computed.
+ *
+ *  With "skip_failing_tests", a copy of such a ROM image is loaded instead,
+ *  in which the first two instructions of these tests' functions are
+ *  "jr ra; move v0,zero", so that they pass at once.  A ROM is recognized
+ *  by its name and version strings, and the tests' first instructions
+ *  (other versions are left alone).
+ */
+struct rom_test {
+	uint32_t	addr;		/*  where the ROM runs the function  */
+	uint32_t	first;		/*  its first instruction  */
+};
+static const struct {
+	const char	*name, *version;
+	uint32_t	base;		/*  ROM offset of the code at 0xa0020000  */
+	struct rom_test	tests[4];
+} failing_tests[] = {
+	{ "KN02-BA", "V5.7j", 0x194a4, { { 0xa00212a0, 0x27bdffb8 },
+	    { 0xa0021650, 0x27bdffd8 }, { 0xa0021ef0, 0x27bdffc8 } } },
+	{ "PMAG-BA", "V5.3a", 0x1594, { { 0xa00204c0, 0x3c0ea002 },
+	    { 0xa0021b80, 0x3c02a002 } } },
+};
+
+#define	JR_RA		0x03e00008
+#define	MOVE_V0_ZERO	0x00001021
+
+static bool contains(const unsigned char *buf, size_t len, const char *s)
+{
+	size_t n = strlen(s), i;
+
+	for (i = 0; i + n <= len; i++)
+		if (memcmp(buf + i, s, n) == 0)
+			return true;
+	return false;
+}
+
+static uint32_t get_le32(const unsigned char *p)
+{
+	return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t) p[3] << 24);
+}
+
+static void put_le32(unsigned char *p, uint32_t v)
+{
+	p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24;
+}
+
+/*
+ *  Returns the name of a copy of a ROM image with its failing tests
+ *  patched, or NULL if it isn't a ROM with such tests (or they are
+ *  patched already).  The caller frees it.
+ */
+static char *rom_without_failing_tests(const char *path)
+{
+	unsigned char *buf;
+	char *copy = NULL, *err = NULL;
+	const char *base;
+	size_t len, r, t, i;
+	int patched = 0;
+	FILE *f;
+
+	f = fopen(path, "rb");
+	if (f == NULL)
+		return NULL;
+	fseek(f, 0, SEEK_END);
+	len = (size_t) ftell(f);
+	fseek(f, 0, SEEK_SET);
+	if (len == 0 || len > 4 * 1048576) {
+		fclose(f);
+		return NULL;
+	}
+	CHECK_ALLOCATION(buf = (unsigned char *) malloc(len));
+	if (fread(buf, 1, len, f) != len) {
+		fclose(f);
+		free(buf);
+		return NULL;
+	}
+	fclose(f);
+
+	for (r = 0; r < sizeof(failing_tests) / sizeof(failing_tests[0]); r++) {
+		if (!contains(buf, len, failing_tests[r].name) ||
+		    !contains(buf, len, failing_tests[r].version))
+			continue;
+		for (t = 0; t < 4 && failing_tests[r].tests[t].addr; t++) {
+			size_t off = failing_tests[r].base +
+			    failing_tests[r].tests[t].addr - 0xa0020000;
+			uint32_t w;
+			if (off + 8 > len)
+				break;
+			w = get_le32(buf + off);
+			if (w == failing_tests[r].tests[t].first) {
+				put_le32(buf + off, JR_RA);
+				put_le32(buf + off + 4, MOVE_V0_ZERO);
+				patched ++;
+			} else if (w != JR_RA)
+				break;		/*  another version  */
+		}
+		if (t < 4 && failing_tests[r].tests[t].addr) {
+			/*  (Undo a partial patch of another version.)  */
+			patched = 0;
+		}
+		break;
+	}
+
+	if (patched > 0) {
+		base = path;
+		for (i = 0; path[i]; i++)
+			if (path[i] == '/' || path[i] == '\\')
+				base = path + i + 1;
+		copy = xprintf("%s/patched-%s", appdirs_state_dir(), base);
+		f = fopen(copy, "wb");
+		if (f == NULL || fwrite(buf, 1, len, f) != len) {
+			err = copy;
+			copy = NULL;
+		}
+		if (f != NULL)
+			fclose(f);
+		if (err != NULL) {
+			fprintf(stderr, "Could not write %s; using the ROM "
+			    "image as it is\n", err);
+			free(err);
+		} else
+			debug("[ %s: %i failing self-test%s skipped ]\n",
+			    path, patched, patched == 1 ? "" : "s");
+	}
+	free(buf);
+	return copy;
+}
+
+
+/*  The file to load for a ROM image: the patched copy, if asked for:  */
+static char *rom_to_load(const struct machine_config *c, const char *name)
+{
+	char *f = machine_config_resolve_rom(c, name), *p;
+
+	if (c->skip_failing_tests &&
+	    (p = rom_without_failing_tests(f)) != NULL) {
+		free(f);
+		return p;
+	}
+	return f;
+}
+
+
+/*
  *  machine_config_apply():
  *
  *  Sets up machine m (already added to emul) as the configuration says,
@@ -1570,6 +1730,9 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	if (c->bootarg != NULL && !machine_config_uses_rom(c))
 		m->boot_string_argument = xstrdup(c->bootarg);
 
+	if (c->nvram[0])
+		m->nvram_filename = machine_config_resolve(c, c->nvram);
+
 	m->display_md.in_use = c->display;
 	m->display_md.zoom = c->scale;
 	if (c->gfx_cards >= 0)
@@ -1582,7 +1745,7 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	for (i = 0; machine_config_uses_rom(c) && i < MC_MAX_SLOTS &&
 	    i < MACHINE_MAX_TC_SLOTS; i++)
 		if (c->slot_rom[i] != NULL && c->slot_rom[i][0])
-			m->tc_rom_filename[i] = machine_config_resolve_rom(c,
+			m->tc_rom_filename[i] = rom_to_load(c,
 			    c->slot_rom[i]);
 
 	for (i = 0; i < c->n_drives; i++) {
@@ -1647,7 +1810,7 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	/*  Files to load: the system ROM, or the others (with PROM
 	    emulation):  */
 	if (machine_config_uses_rom(c)) {
-		char *f = machine_config_resolve_rom(c, c->rom);
+		char *f = rom_to_load(c, c->rom);
 		s = xprintf("0x%llx:%s", (unsigned long long)
 		    machine_config_rom_address(c->type), f);
 		machine_config_add_string(&n_loads, &loads, s);

@@ -5353,3 +5353,15 @@ Changelog for GXemul:
 		name there. On Windows, saving over an existing machine.json
 		works (rename() doesn't replace files there), and folders
 		can be chosen (SHBrowseForFolder).
+20261018	The RTC's NVRAM (registers 14..63, where e.g. the DECstation
+		PROM keeps its setenv variables) can be kept in a file:
+		"nvram" in machine.json, read at start, and written after
+		changes (at most once a second), at exit, and before a reset;
+		the Firmware page has a Reset NVRAM button. With
+		"skip_failing_tests", GXemul loads copies of the KN02-BA
+		V5.7j and PMAG-BA V5.3a ROM images in which the self-tests
+		that fail only in gxemul pass (as patch_rom_tests.py does).
+		The DECstation presets use both. A machine's window has
+		Reset (the machine is started again, by exec, with the same
+		configuration; the telnet ports are close-on-exec, so it gets
+		the same ones), and a View menu for the window's size.

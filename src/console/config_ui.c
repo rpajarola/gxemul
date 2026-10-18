@@ -1597,6 +1597,44 @@ static void option_roms(void)
 }
 
 
+/*
+ *  The file that keeps the RTC's NVRAM (the firmware's settings), and a
+ *  way to reset it: without the file, the machine starts with gxemul's
+ *  defaults, and the file is made when the firmware changes them.
+ */
+static void nvram_field(void)
+{
+	mu_Context *ctx = ui.ctx;
+	struct machine_config *c = ui.cfg;
+	struct stat st;
+	char *f;
+	int full[1] = { -1 };
+	int w[3] = { CH(16), -CH(18), CH(17) };
+
+	row(1, full);
+	mu_label(ctx, "");
+	row(3, w);
+	mu_label(ctx, "NVRAM file");
+	text_field(&c->nvram);
+	f = c->nvram[0] ? machine_config_resolve(c, c->nvram) : NULL;
+	if (f != NULL && c->dir != NULL && stat(f, &st) == 0) {
+		if (mu_button(ctx, "Reset NVRAM")) {
+			if (remove(f) == 0)
+				set_message(false, "The NVRAM is reset: the "
+				    "machine starts with the defaults%s",
+				    ui.running ? " when it is restarted" : "");
+			else
+				set_message(true, "Could not remove %s", f);
+		}
+	} else
+		mu_label(ctx, c->nvram[0] ? "(not made yet)" : "(not kept)");
+	free(f);
+	row(1, full);
+	mu_label(ctx, "The firmware's settings (e.g. the PROM's boot and "
+	    "console variables) are kept in this file; empty = not kept.");
+}
+
+
 static void page_firmware(void)
 {
 	mu_Context *ctx = ui.ctx;
@@ -1618,7 +1656,12 @@ static void page_firmware(void)
 		mu_label(ctx, "System ROM image:");
 		file_field(&c->rom, "Choose the system ROM image", true, true);
 		rom_found(c->rom);
+		row(1, full);
+		check("Skip the self-tests that fail only in gxemul (KN02-BA "
+		    "V5.7j: cache, rtc/time; PMAG-BA V5.3a: curs, ptrn)",
+		    &c->skip_failing_tests);
 		option_roms();
+		nvram_field();
 		row(1, full);
 		mu_label(ctx, "");
 		check("Start paused, in the debugger", &c->start_paused);
@@ -1676,6 +1719,9 @@ static void page_firmware(void)
 	row(1, full);
 	check("Boot from the network (DECstation, SGI, ARC)",
 	    &c->force_netboot);
+	nvram_field();
+	row(1, full);
+	mu_label(ctx, "");
 	check("Start paused, in the debugger", &c->start_paused);
 }
 

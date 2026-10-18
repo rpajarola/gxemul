@@ -64,6 +64,9 @@
  */
 
 #include <errno.h>
+#ifndef _WIN32
+#include <fcntl.h>
+#endif
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -228,6 +231,10 @@ static void telnet_listen(int handle)
 
 	setsockopt(chp->listen_fd, SOL_SOCKET, SO_REUSEADDR,
 	    (void *) &one, sizeof(one));
+#ifdef FD_CLOEXEC
+	/*  (So that a reset, which execs gxemul again, gets the same port.)  */
+	fcntl(chp->listen_fd, F_SETFD, FD_CLOEXEC);
+#endif
 
 	for (;;) {
 		memset(&sin, 0, sizeof(sin));
@@ -369,6 +376,9 @@ static void telnet_accept(int handle)
 	fd = accept(chp->listen_fd, NULL, NULL);
 	if (fd < 0)
 		return;
+#ifdef FD_CLOEXEC
+	fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
 
 #ifdef SO_NOSIGPIPE
 	setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, (void *) &one, sizeof(one));

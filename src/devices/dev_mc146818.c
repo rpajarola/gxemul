@@ -88,6 +88,11 @@ struct mc_data {
 
 	int		dec_year_done;	/*  register 63 has been set  */
 
+	/*  The NVRAM (registers 14..63) is kept in this file, if any:  */
+	char		*nvram_file;
+	bool		nvram_dirty;
+	time_t		nvram_written;
+
 	/*
 	 *  A time set by the guest (by clearing the SET bit), which then
 	 *  runs on from there with the host's clock.  The day of the week
@@ -159,11 +164,81 @@ static void mc146818_set_guest_time(struct mc_data *d)
 }
 
 
+/*
+ *  NVRAM file:  the 50 bytes of registers 14..63, which the machine's
+ *  firmware keeps its settings in (e.g. the DECstation PROM's boot and
+ *  console variables).  It is read when the machine starts (if it
+ *  exists), and written after changes, at most once a second, and when
+ *  gxemul exits or resets the machine.
+ */
+
+#define	MAX_NVRAMS	4
+static struct mc_data *nvrams[MAX_NVRAMS];
+static int n_nvrams;
+
+static void nvram_write(struct mc_data *d)
+{
+	unsigned char buf[MC_NVRAM_SIZE];
+	FILE *f;
+	int i;
+
+	for (i = 0; i < MC_NVRAM_SIZE; i++)
+		buf[i] = d->reg[4 * (MC_NVRAM_START + i)];
+	f = fopen(d->nvram_file, "wb");
+	if (f == NULL || fwrite(buf, 1, sizeof(buf), f) != sizeof(buf)) {
+		fprintf(stderr, "[ mc146818: could not write the NVRAM to "
+		    "%s ]\n", d->nvram_file);
+		d->nvram_file = NULL;
+	}
+	if (f != NULL)
+		fclose(f);
+	d->nvram_dirty = false;
+	d->nvram_written = time(NULL);
+}
+
+static void nvram_read(struct mc_data *d)
+{
+	unsigned char buf[MC_NVRAM_SIZE];
+	FILE *f = fopen(d->nvram_file, "rb");
+	int i;
+
+	if (f == NULL)
+		return;		/*  (A new NVRAM: it is written when set.)  */
+	if (fread(buf, 1, sizeof(buf), f) == sizeof(buf)) {
+		for (i = 0; i < MC_NVRAM_SIZE; i++)
+			d->reg[4 * (MC_NVRAM_START + i)] = buf[i];
+		d->dec_year_done = 1;
+	} else
+		fprintf(stderr, "[ mc146818: %s is too short to be an NVRAM; "
+		    "ignored ]\n", d->nvram_file);
+	fclose(f);
+}
+
+
+/*
+ *  dev_mc146818_save_nvram():
+ *
+ *  Writes the NVRAMs that have changed to their files.
+ */
+void dev_mc146818_save_nvram(void)
+{
+	int i;
+
+	for (i = 0; i < n_nvrams; i++)
+		if (nvrams[i]->nvram_file != NULL && nvrams[i]->nvram_dirty)
+			nvram_write(nvrams[i]);
+}
+
+
 DEVICE_TICK(mc146818)
 {
 	struct mc_data *d = (struct mc_data *) extra;
 	int pti = d->pending_timer_interrupts;
 	time_t now = time(NULL);
+
+	if (d->nvram_dirty && d->nvram_file != NULL &&
+	    now != d->nvram_written)
+		nvram_write(d);
 
 	/*
 	 *  Once a second (unless SET stops the updates), the time is
@@ -485,6 +560,12 @@ DEVICE_ACCESS(mc146818)
 
 	if (writeflag == MEM_WRITE) {
 		/*  WRITE:  */
+		if (relative_addr % 4 == 0 &&
+		    relative_addr >= MC_NVRAM_START * 4 && relative_addr <
+		    (MC_NVRAM_START + MC_NVRAM_SIZE) * 4 &&
+		    d->reg[relative_addr] != data[0])
+			d->nvram_dirty = true;
+
 		switch (relative_addr) {
 		case MC_REGA*4:
 			if ((data[0] & MC_REGA_DVMASK) == MC_BASE_32_KHz)
@@ -776,6 +857,14 @@ void dev_mc146818_init(struct machine *machine, struct memory *mem,
 	memory_device_register(mem, "mc146818", baseaddr,
 	    dev_len * addrdiv, dev_mc146818_access,
 	    d, DM_DEFAULT, NULL);
+
+	if (machine->nvram_filename != NULL && n_nvrams < MAX_NVRAMS) {
+		d->nvram_file = machine->nvram_filename;
+		nvram_read(d);
+		if (n_nvrams == 0)
+			atexit(dev_mc146818_save_nvram);
+		nvrams[n_nvrams++] = d;
+	}
 
 	mc146818_update_time(d);
 

@@ -1093,6 +1093,18 @@ void display_backend_resize(struct fb_window *win)
 
 
 /*
+ *  display_backend_zoom():
+ *
+ *  Sizes a window for the machine's (new) zoom.
+ */
+void display_backend_zoom(struct fb_window *win)
+{
+	set_window_size(win);
+	SWIN(win)->present_pending = true;
+}
+
+
+/*
  *  display_backend_set_title():
  *
  *  Sets the title of a window, from its name and whether the mouse is

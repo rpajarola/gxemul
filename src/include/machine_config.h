@@ -97,6 +97,8 @@ struct machine_config {
 	char		*bootarg;	/*  NULL = default  */
 	bool		force_netboot;
 	bool		start_paused;
+	char		*nvram;		/*  the RTC's NVRAM file, "" = none  */
+	bool		skip_failing_tests;	/*  patch the ROMs' tests  */
 
 	/*  Drives:  */
 	int		n_drives;

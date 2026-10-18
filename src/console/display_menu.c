@@ -38,6 +38,7 @@
  */
 
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -183,7 +184,7 @@ static bool spawn_editor(const char *path)
 {
 #ifdef _WIN32
 	const char *args[] = { "--edit", path, "--no-start", NULL };
-	return win32_spawn_self(args);
+	return win32_spawn_self(args, true);
 #else
 	pid_t pid = fork();
 	int status;
@@ -216,6 +217,36 @@ static void menu_edit_config(struct machine *m, struct menu_item *item)
 		    "restarted");
 	else
 		display_message(m, "Could not open the configuration window");
+}
+
+
+extern bool emul_shutdown;
+extern bool restart_machine;
+
+/*  View menu:  sizes the machine's windows (zoom in percent, 0 = fit):  */
+
+static const char *zoom_labels[4] = { "Fit the Screen", "Actual Size",
+	"Half Size", "Double Size" };
+static const int zoom_values[4] = { 0, 100, 50, 200 };
+
+static void menu_zoom(struct machine *m, struct menu_item *item)
+{
+	int i;
+
+	m->display_md.zoom = (int) (intptr_t) item->data;
+	for (i = 0; i < m->display_md.n_fb_windows; i++)
+		display_backend_zoom(m->display_md.fb_windows[i]);
+	display_menus_update(m);
+}
+
+
+/*  Stops the machine, and starts it again (see restart() in main.c):  */
+static void menu_reset(struct machine *m, struct menu_item *item)
+{
+	(void) item;
+	display_message(m, "Resetting...");
+	restart_machine = true;
+	emul_shutdown = true;
 }
 
 
@@ -379,10 +410,17 @@ struct display_menus *display_menus(struct machine *m)
 	menus->debugger = menu_append(machine, MENU_ITEM_ACTION,
 	    "Enter Debugger", menu_debugger, NULL);
 	menu_append(machine, MENU_ITEM_SEPARATOR, NULL, NULL, NULL);
+	menu_append(machine, MENU_ITEM_ACTION, "Reset", menu_reset, NULL);
 	if (m->config_path != NULL)
 		menu_append(machine, MENU_ITEM_ACTION,
 		    "Edit Configuration...", menu_edit_config, NULL);
 	menu_append(machine, MENU_ITEM_ACTION, "Quit", menu_quit, NULL);
+
+	item = menu_append(menus->bar, MENU_ITEM_SUBMENU, "View", NULL, NULL);
+	for (int i = 0; i < 4; i++)
+		menus->zoom[i] = menu_append(item->submenu, MENU_ITEM_CHECK,
+		    zoom_labels[i], menu_zoom, (void *) (intptr_t)
+		    zoom_values[i]);
 
 	item = menu_append(menus->bar, MENU_ITEM_SUBMENU, "Media", NULL, NULL);
 	menus->media = item->submenu;
@@ -408,6 +446,12 @@ void display_menus_update(struct machine *m)
 		menus->record->checked = display_video_recording();
 		menus_changed(menus);
 	}
+	for (int i = 0; i < 4; i++)
+		if (menus->zoom[i]->checked !=
+		    (m->display_md.zoom == zoom_values[i])) {
+			menus->zoom[i]->checked = !menus->zoom[i]->checked;
+			menus_changed(menus);
+		}
 	if (menus->debugger->enabled == single_step) {
 		menus->debugger->enabled = !single_step;
 		menus_changed(menus);
