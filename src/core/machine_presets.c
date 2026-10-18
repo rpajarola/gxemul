@@ -25,9 +25,11 @@
  *  SUCH DAMAGE.
  *
  *
- *  The presets offered for a new machine, as machine.json text (see
- *  machine_config.c).  Files that the user has to supply are left empty;
- *  "disk.img" is created in the machine's directory when it is saved.
+ *  The defaults for a new machine of a model that is known to work, as
+ *  machine.json text (see machine_config.c).  The configuration window
+ *  offers only the models listed here, unless asked to show all of them.
+ *  Files that the user has to supply are left empty; "disk.img" is created
+ *  in the machine's directory when it is saved.
  */
 
 #include <stddef.h>
@@ -37,10 +39,11 @@
 
 static const struct machine_preset presets[] = {
 	{
-		"DECstation 5000/200, PROM emulation",
+		"decstation", "3max",
 		"Boots NetBSD, OpenBSD, Ultrix, or Sprite from a disk or "
-		"CD-ROM image, without a ROM image (gxemul emulates the PROM). "
-		"A PMAG-BA framebuffer in slot 0.",
+		"CD-ROM image. With PROM emulation, no ROM image is needed; "
+		"for the real KN02 system ROM, turn PROM emulation off and "
+		"choose its image under Boot.",
 		"{ \"gxemul\": 1, \"name\": \"DECstation 5000/200\","
 		"  \"machine\": { \"type\": \"decstation\", \"model\": \"3max\","
 		"                 \"memory_mb\": 64 },"
@@ -51,36 +54,22 @@ static const struct machine_preset presets[] = {
 		"  \"display\": { \"enabled\": true } }"
 	},
 	{
-		"DECstation 5000/1xx (5000/133), real ROM",
-		"Runs the real KN02-BA system ROM (choose its image under Boot). "
-		"For a graphics console, add the PMAG-BA option ROM image in "
-		"slot 0 (under Expansion).",
-		"{ \"gxemul\": 1, \"name\": \"DECstation 5000/133\","
+		"decstation", "3min",
+		"With PROM emulation, no ROM image is needed. For the real "
+		"KN02-BA system ROM, turn PROM emulation off and choose its "
+		"image under Boot; for a graphics console, add the PMAG-BA "
+		"option ROM image in slot 0 under Expansion.",
+		"{ \"gxemul\": 1, \"name\": \"DECstation 5000/1xx\","
 		"  \"machine\": { \"type\": \"decstation\", \"model\": \"3min\","
 		"                 \"memory_mb\": 32 },"
-		"  \"boot\": { \"prom_emulation\": false, \"rom\": \"\" },"
+		"  \"boot\": { \"prom_emulation\": true, \"bootarg\": \"-a\" },"
 		"  \"drives\": [ { \"file\": \"disk.img\", \"kind\": \"disk\","
 		"                  \"id\": 0 },"
 		"                { \"file\": \"\", \"kind\": \"cdrom\", \"id\": 4 } ],"
 		"  \"display\": { \"enabled\": true } }"
 	},
 	{
-		"DECstation 5000/200, real ROM",
-		"Runs the real KN02 system ROM (choose its image under Boot). "
-		"To boot from a disk, add the PMAZ-AA (SCSI) option ROM image "
-		"in slot 5, and for Ethernet the PMAD-AA one in slot 6 (under "
-		"Expansion).",
-		"{ \"gxemul\": 1, \"name\": \"DECstation 5000/200 (ROM)\","
-		"  \"machine\": { \"type\": \"decstation\", \"model\": \"3max\","
-		"                 \"memory_mb\": 64 },"
-		"  \"boot\": { \"prom_emulation\": false, \"rom\": \"\" },"
-		"  \"drives\": [ { \"file\": \"disk.img\", \"kind\": \"disk\","
-		"                  \"id\": 0 },"
-		"                { \"file\": \"\", \"kind\": \"cdrom\", \"id\": 4 } ],"
-		"  \"display\": { \"enabled\": true } }"
-	},
-	{
-		"DECstation 3100, PROM emulation",
+		"decstation", "pmax",
 		"The first MIPS DECstation, with PROM emulation, a serial "
 		"console, and a disk and CD-ROM.",
 		"{ \"gxemul\": 1, \"name\": \"DECstation 3100\","
@@ -92,7 +81,7 @@ static const struct machine_preset presets[] = {
 		"                { \"file\": \"\", \"kind\": \"cdrom\", \"id\": 4 } ] }"
 	},
 	{
-		"SGI O2 (IP32), PROM emulation",
+		"sgi", "o2",
 		"An SGI O2, for NetBSD/sgimips or OpenBSD/sgi.",
 		"{ \"gxemul\": 1, \"name\": \"SGI O2\","
 		"  \"machine\": { \"type\": \"sgi\", \"model\": \"o2\","
@@ -103,16 +92,11 @@ static const struct machine_preset presets[] = {
 		"  \"display\": { \"enabled\": true } }"
 	},
 	{
-		"MIPS test machine",
+		"testmips", "",
 		"gxemul's simple MIPS machine, for running a program of your "
 		"own (add it under Boot, Files to load).",
 		"{ \"gxemul\": 1, \"name\": \"MIPS test machine\","
 		"  \"machine\": { \"type\": \"testmips\" } }"
-	},
-	{
-		"Empty configuration",
-		"Choose everything yourself.",
-		"{ \"gxemul\": 1, \"name\": \"New machine\" }"
 	},
 };
 

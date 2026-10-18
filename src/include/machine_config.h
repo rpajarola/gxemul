@@ -136,6 +136,7 @@ bool machine_config_save(struct machine_config *, const char *path,
 	char **errp);
 bool machine_config_is_config_file(const char *path);
 char *machine_config_resolve(const struct machine_config *, const char *);
+char *machine_config_absolute(const char *path);
 char *machine_config_check(const struct machine_config *);
 char *machine_config_check_ex(const struct machine_config *,
 	bool missing_disks_ok);
@@ -157,7 +158,8 @@ int machine_config_n_slots(const char *type, const char *model);
 
 /*  machine_presets.c:  */
 struct machine_preset {
-	const char	*title;
+	const char	*type;		/*  as in machine.json  */
+	const char	*model;		/*  "" for a type without models  */
 	const char	*description;
 	const char	*json;
 };

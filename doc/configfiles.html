@@ -63,7 +63,7 @@ SUCH DAMAGE.
 
 <p><ol>
   <li>Started without arguments, GXemul shows a window with your machines,
-	where you can create machines from presets, change them, and
+	where you can create machines, change them, and
 	start them.  (This needs a build with SDL, i.e. framebuffer
 	windows.)
   <li>A machine configuration file, <tt>machine.json</tt>, describes one
@@ -95,9 +95,7 @@ no longer supported.)
 <p>The window lists the machines used recently.  Select one to see a
 summary of it, and:
 <ul>
-  <li><b>New...</b> creates a machine from a preset (a DECstation with
-	PROM emulation or with a real ROM, an SGI O2, the MIPS test
-	machine, or an empty configuration), and opens it in the editor.
+  <li><b>New...</b> opens a new machine in the editor.
   <li><b>Open...</b> adds an existing <tt>machine.json</tt> to the list.
   <li><b>Edit</b> opens the selected machine in the editor.
   <li><b>Duplicate</b> makes a copy of it, as a new machine (in a
@@ -108,7 +106,7 @@ summary of it, and:
 </ul>
 
 <p>The editor has a page for each part of the configuration: General
-(name, machine type and model, memory, CPU), Boot (PROM emulation, a
+(name, architecture, machine type and model, memory, CPU), Boot (PROM emulation, a
 system ROM image, files to load, the boot file name and argument), Drives
 (disks, CD-ROMs, tapes, and floppies; missing disk images can be created
 with a given size), Display (the framebuffer window, and serial ports on
@@ -118,6 +116,18 @@ missing before the machine can be started.  <b>Save</b> writes the file
 (a new machine gets a directory of its own, and its missing disk images
 are created), and <b>Save and Start</b> also starts it.  Escape or
 <b>Cancel</b> leaves the editor without saving.
+
+<p>The machine is chosen on the General page, with an architecture (MIPS,
+PowerPC, ...), a machine type of that architecture (e.g.
+DECstation/DECsystem), and a model, if the type has models (e.g.
+DECstation 5000/200).  Only the models known to work are offered:  the
+DECstations 3100, 5000/200, and 5000/1xx, the SGI O2, and the MIPS test
+machine.  <b>Show all machines</b> also offers the others, which may not
+work.  A new machine starts as a DECstation 5000/200, and until it is
+saved, choosing another model gives it that model's defaults (memory,
+drives, PROM emulation, and display).  On a DECstation, PROM emulation
+is on by default; to run a real ROM, turn it off on the Boot page and
+choose the ROM image there.
 
 <p>A running machine started from a configuration file has <b>Edit
 Configuration...</b> in its window's Machine menu.  This stops the

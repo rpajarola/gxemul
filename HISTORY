@@ -5291,3 +5291,15 @@ Changelog for GXemul:
 		the 5000/200's own PROM with dumps of the PMAZ-AA (SCSI) and
 		PMAD-AA (Ethernet) option ROMs in slots 5 and 6, in
 		machine_decstation.html#PROM200.
+20261017	Configuration window: New... opens the editor directly (no
+		preset chooser). The machine is chosen with three drop-down
+		lists, architecture, machine type, and model; only models
+		known to work (those with a preset: DECstation 3100,
+		5000/200, and 5000/1xx, SGI O2, testmips) are offered unless
+		"Show all machines" is checked, and until a new machine is
+		saved, choosing another model gives it that model's
+		defaults. The choices on other pages are drop-down lists
+		too. Fixed: rows were shorter than microui draws them (the
+		bottom buttons were cut off), and --edit with a relative
+		name of a new file saved its disk image under the wrong
+		name.

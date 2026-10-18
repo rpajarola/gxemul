@@ -26,12 +26,16 @@
  *
  *
  *  The window for choosing, creating, and editing machine configurations
- *  (see config_ui.h and machine_config.h).  It has three screens:
+ *  (see config_ui.h and machine_config.h).  It has two screens:
  *
  *	the list of machines (recently used configuration files), with
  *	    New, Open, Edit, Duplicate, Forget, and Start;
- *	the presets, for a new machine;
  *	the editor, with a page for each part of the configuration.
+ *
+ *  A new machine starts with the defaults of a model that is known to work
+ *  (its preset, see machine_presets.c), and choosing another model gives it
+ *  that model's defaults, until it is saved.  Only models with a preset are
+ *  offered, unless "Show all machines" is checked.
  *
  *  The widgets are microui's (src/console/microui.c), drawn with SDL and the
  *  same font as the framebuffer windows' menus.  Coordinates are in output
@@ -85,7 +89,7 @@ extern struct machine_entry *first_machine_entry;
 #define	MAX_EDITS		400
 #define	DEFAULT_DISK_MB		2048
 
-enum screen { SCREEN_LIST, SCREEN_PRESETS, SCREEN_EDITOR };
+enum screen { SCREEN_LIST, SCREEN_EDITOR };
 enum page { PAGE_GENERAL, PAGE_BOOT, PAGE_DRIVES, PAGE_DISPLAY,
 	PAGE_EXPANSION, PAGE_NETWORK, PAGE_ADVANCED, N_PAGES };
 
@@ -127,14 +131,13 @@ static struct {
 	char		**recent_err;
 	int		selected;
 
-	/*  The presets:  */
-	int		preset;
-
 	/*  The editor:  */
 	struct machine_config *cfg;
 	bool		is_new;
+	bool		fresh;		/*  new, and gets a model's defaults  */
+	char		*auto_name;	/*  the name it got from them  */
+	bool		show_all;	/*  also models without a preset  */
 	bool		planned_dir;	/*  cfg->dir is where it will be saved  */
-	bool		scroll_types;	/*  show the machine type selected  */
 	char		*planned_name;
 	bool		start_after_save;
 	enum page	page;
@@ -149,6 +152,9 @@ static struct {
 	/*  The open file chooser's target:  */
 	char		**pick_field;
 	bool		pick_open;
+
+	/*  The open drop-down list, if any:  */
+	mu_Container	*open_list;
 } ui;
 
 
@@ -349,6 +355,14 @@ static void draw_icon(int id, mu_Rect r, mu_Color color)
 	const char *c = id == MU_ICON_CLOSE ? "x" : id == MU_ICON_COLLAPSED ?
 	    "+" : id == MU_ICON_EXPANDED ? "-" : NULL;
 
+	if (id == MU_ICON_MAX) {
+		/*  The arrow of a drop-down list:  */
+		int i, w = r.w / 2, x = r.x + (r.w - w) / 2;
+		int y = r.y + (r.h - w / 2) / 2;
+		for (i = 0; i < w / 2; i++)
+			draw_rect(mu_rect(x + i, y + i, w - 2 * i, 1), color);
+		return;
+	}
 	if (id == MU_ICON_CHECK) {
 		int m = r.w / 4;
 		draw_rect(mu_rect(r.x + m, r.y + m, r.w - 2 * m, r.h - 2 * m),
@@ -437,7 +451,8 @@ static void set_style(void)
 /*  The height of a row of widgets, with the space after it:  */
 static int row_height(void)
 {
-	return ui.ctx->style->size.y + ui.ctx->style->spacing;
+	mu_Style *st = ui.ctx->style;
+	return st->size.y + 2 * st->padding + st->spacing;
 }
 
 
@@ -502,36 +517,73 @@ static void check(const char *label, bool *field)
 
 
 /*
- *  A button that shows one of a few choices, and opens a menu of them.
- *  Returns true if a choice was made.
+ *  A drop-down list: a button that shows the choice made, and opens the
+ *  list of choices under it (scrolling, if there are many).  Returns true if
+ *  a choice was made.  If *sel isn't one of them, "Choose..." is shown.
  */
-static bool choice(const char *name, const char **labels, int n, int *sel)
-{
-	char popup[100];
-	bool changed = false;
-	int i, w;
+static bool list_item(const void *id_data, int id_len, const char *label,
+	bool selected);
 
-	snprintf(popup, sizeof(popup), "choice:%s", name);
-	mu_push_id(ui.ctx, name, (int) strlen(name));
-	if (mu_button_ex(ui.ctx, labels[*sel >= 0 && *sel < n ? *sel : 0], 0,
-	    MU_OPT_ALIGNCENTER))
-		mu_open_popup(ui.ctx, popup);
-	if (mu_begin_popup(ui.ctx, popup)) {
-		w = 0;
+#define	DROPDOWN_ROWS	14
+static bool dropdown(const char *name, const char **labels, int n, int *sel)
+{
+	mu_Context *ctx = ui.ctx;
+	mu_Container *cnt;
+	mu_Rect r, tr;
+	mu_Id id;
+	bool changed = false;
+	int i, step = row_height();
+
+	mu_push_id(ctx, name, (int) strlen(name));
+	id = mu_get_id(ctx, "!button", 7);
+	r = mu_layout_next(ctx);
+	mu_update_control(ctx, id, r, 0);
+	cnt = mu_get_container(ctx, "!list");
+
+	/*  (A container is created open; only the list opened here is.)  */
+	if (cnt != ui.open_list)
+		cnt->open = 0;
+
+	if (ctx->mouse_pressed == MU_MOUSE_LEFT && ctx->focus == id) {
+		if (cnt->open && ui.open_list == cnt)
+			cnt->open = 0;
+		else if (n > 0) {
+			int h = (n < DROPDOWN_ROWS ? n : DROPDOWN_ROWS) * step +
+			    ctx->style->padding * 2 - ctx->style->spacing;
+			mu_open_popup(ctx, "!list");
+			cnt->rect = mu_rect(r.x, r.y + r.h, r.w, h);
+			if (cnt->rect.y + h > ui.out_h && r.y - h >= 0)
+				cnt->rect.y = r.y - h;
+			cnt->scroll = mu_vec2(0, *sel > 2 && *sel < n ?
+			    (*sel - 2) * step : 0);
+			ui.open_list = cnt;
+		}
+	}
+
+	mu_draw_control_frame(ctx, id, r, MU_COLOR_BUTTON, 0);
+	tr = r;
+	tr.w -= r.h;
+	mu_push_clip_rect(ctx, tr);
+	mu_draw_control_text(ctx, *sel >= 0 && *sel < n ? labels[*sel] :
+	    "Choose...", tr, MU_COLOR_TEXT, 0);
+	mu_pop_clip_rect(ctx);
+	mu_draw_icon(ctx, MU_ICON_MAX, mu_rect(r.x + r.w - r.h, r.y, r.h, r.h),
+	    ctx->style->colors[MU_COLOR_TEXT]);
+
+	if (mu_begin_window_ex(ctx, "!list", mu_rect(0, 0, 0, 0),
+	    MU_OPT_POPUP | MU_OPT_NORESIZE | MU_OPT_NOTITLE | MU_OPT_CLOSED)) {
+		int full[1] = { -1 };
+		row(1, full);
 		for (i = 0; i < n; i++)
-			if ((int) strlen(labels[i]) + 4 > w)
-				w = (int) strlen(labels[i]) + 4;
-		int widths[1] = { CH(w) };
-		row(1, widths);
-		for (i = 0; i < n; i++)
-			if (mu_button_ex(ui.ctx, labels[i], 0, 0)) {
+			if (list_item(&labels[i], sizeof(labels[i]), labels[i],
+			    i == *sel)) {
 				*sel = i;
 				changed = true;
-				mu_get_current_container(ui.ctx)->open = 0;
+				cnt->open = 0;
 			}
-		mu_end_popup(ui.ctx);
+		mu_end_window(ctx);
 	}
-	mu_pop_id(ui.ctx);
+	mu_pop_id(ctx);
 	return changed;
 }
 
@@ -676,6 +728,8 @@ static void open_editor(struct machine_config *c, bool is_new)
 	machine_config_free(ui.cfg);
 	ui.cfg = c;
 	ui.is_new = is_new;
+	ui.fresh = false;
+	ui.open_list = NULL;
 
 	/*  A new machine from a preset has its files in the directory it
 	    will be saved in (named after the machine):  */
@@ -683,7 +737,6 @@ static void open_editor(struct machine_config *c, bool is_new)
 	free(ui.planned_name);
 	ui.planned_name = NULL;
 	ui.page = PAGE_GENERAL;
-	ui.scroll_types = true;
 	ui.start_after_save = false;
 	for (i = 0; i < 64; i++)
 		ui.disk_mb[i] = DEFAULT_DISK_MB;
@@ -731,6 +784,8 @@ static void start(struct machine_config *c)
 	ui.result = machine_config_copy(c);
 }
 
+
+static void new_machine(const char *path);
 
 static void screen_list(void)
 {
@@ -782,10 +837,8 @@ static void screen_list(void)
 	/*  The buttons:  */
 	int bw[7] = { CH(10), CH(10), CH(8), CH(12), CH(9), -CH(12), -1 };
 	row(7, bw);
-	if (mu_button(ctx, "New...")) {
-		ui.screen = SCREEN_PRESETS;
-		ui.preset = 0;
-	}
+	if (mu_button(ctx, "New..."))
+		new_machine(NULL);
 	if (mu_button(ctx, "Open...")) {
 		ui.pick_open = true;
 		display_choose_file(NULL, "Open a machine configuration "
@@ -812,54 +865,6 @@ static void screen_list(void)
 	mu_label(ctx, "");
 	if (mu_button(ctx, "Start") && sel != NULL)
 		start(sel);
-}
-
-
-/****************************************************************************/
-
-/*
- *  The presets
- */
-
-static void screen_presets(void)
-{
-	mu_Context *ctx = ui.ctx;
-	const struct machine_preset *presets;
-	int n = machine_presets(&presets), i;
-
-	int cols[2] = { CH(44), -1 };
-	mu_layout_row(ctx, 2, cols, -row_height() * 2 - ctx->style->padding);
-
-	mu_begin_panel(ctx, "presets");
-	int full[1] = { -1 };
-	row(1, full);
-	for (i = 0; i < n; i++)
-		if (list_item(&presets[i], sizeof(presets[i]),
-		    presets[i].title, i == ui.preset))
-			ui.preset = i;
-	mu_end_panel(ctx);
-
-	mu_begin_panel(ctx, "preset");
-	row(1, full);
-	mu_label(ctx, presets[ui.preset].title);
-	mu_text(ctx, presets[ui.preset].description);
-	mu_end_panel(ctx);
-
-	int bw[3] = { CH(10), -CH(12), -1 };
-	row(3, bw);
-	if (mu_button(ctx, "Back"))
-		ui.screen = SCREEN_LIST;
-	mu_label(ctx, "");
-	if (mu_button(ctx, "Create")) {
-		char *err;
-		struct machine_config *c = machine_config_parse(
-		    presets[ui.preset].json, NULL, &err);
-		if (c == NULL) {
-			set_message(true, "%s", err);
-			free(err);
-		} else
-			open_editor(c, true);
-	}
 }
 
 
@@ -987,9 +992,156 @@ static bool save(void)
 		return false;
 	appdirs_add_recent(c->path);
 	ui.is_new = false;
+	ui.fresh = false;
 	ui.planned_dir = false;
 	set_message(false, "Saved %s", c->path);
 	return true;
+}
+
+
+/*
+ *  The machine types, by architecture, and their presets:
+ */
+
+#define	N_ARCHS		10
+static const char *arch_names[N_ARCHS] = { "Other", "MIPS", "PowerPC", NULL,
+	"Alpha", "ARM", "SuperH", "Motorola 88K", "i960", "RISC-V" };
+
+static int entry_arch(const struct machine_entry *me)
+{
+	int a = me->machine_type / 1000;
+	return a > 0 && a < N_ARCHS && arch_names[a] != NULL ? a : 0;
+}
+
+static bool has_alias(char **aliases, int n, const char *name)
+{
+	int i;
+	for (i = 0; i < n; i++)
+		if (strcasecmp(aliases[i], name) == 0)
+			return true;
+	return false;
+}
+
+/*  The preset of a machine type and model (sub is NULL if it has none):  */
+static const struct machine_preset *preset_for(const struct machine_entry *me,
+	const struct machine_entry_subtype *sub)
+{
+	const struct machine_preset *presets;
+	int n = machine_presets(&presets), i;
+
+	for (i = 0; i < n; i++)
+		if (has_alias(me->aliases, me->n_aliases, presets[i].type) &&
+		    (sub == NULL ? presets[i].model[0] == '\0' :
+		    has_alias(sub->aliases, sub->n_aliases, presets[i].model)))
+			return &presets[i];
+	return NULL;
+}
+
+static bool sub_shown(const struct machine_entry *me,
+	const struct machine_entry_subtype *sub,
+	const struct machine_entry_subtype *cur_sub)
+{
+	return ui.show_all || sub == cur_sub || preset_for(me, sub) != NULL;
+}
+
+static bool entry_shown(const struct machine_entry *me,
+	const struct machine_entry *cur)
+{
+	int i;
+
+	if (ui.show_all || me == cur || preset_for(me, NULL) != NULL)
+		return true;
+	for (i = 0; i < me->n_subtypes; i++)
+		if (preset_for(me, me->subtype[i]) != NULL)
+			return true;
+	return false;
+}
+
+/*  The model chosen with a machine type: the first one with a preset:  */
+static struct machine_entry_subtype *default_sub(struct machine_entry *me)
+{
+	int i;
+
+	for (i = 0; i < me->n_subtypes; i++)
+		if (preset_for(me, me->subtype[i]) != NULL)
+			return me->subtype[i];
+	return me->n_subtypes > 0 ? me->subtype[0] : NULL;
+}
+
+/*  The first machine type of an architecture, preferably with a preset:  */
+static struct machine_entry *default_entry(int arch)
+{
+	struct machine_entry *me, *any = NULL;
+
+	for (me = first_machine_entry; me != NULL; me = me->next) {
+		if (entry_arch(me) != arch || !entry_shown(me, NULL))
+			continue;
+		if (preset_for(me, default_sub(me)) != NULL)
+			return me;
+		if (any == NULL)
+			any = me;
+	}
+	return any;
+}
+
+/*
+ *  Chooses a machine type and model.  A new machine also gets its defaults
+ *  (from the preset, or none), keeping a name that the user typed.
+ */
+static void select_machine(struct machine_entry *me,
+	struct machine_entry_subtype *sub)
+{
+	struct machine_config *c = ui.cfg;
+
+	if (ui.fresh) {
+		const struct machine_preset *p = preset_for(me, sub);
+		struct machine_config *n;
+		char *err = NULL;
+
+		n = machine_config_parse(p != NULL ? p->json :
+		    "{ \"gxemul\": 1 }", NULL, &err);
+		free(err);
+		if (n != NULL) {
+			if (ui.auto_name != NULL &&
+			    strcmp(c->name, ui.auto_name) != 0)
+				machine_config_set(&n->name, c->name);
+			else if (p == NULL)
+				machine_config_set(&n->name, sub != NULL ?
+				    sub->name : me->name);
+			machine_config_set(&ui.auto_name, n->name);
+			machine_config_set(&n->path, c->path);
+			machine_config_set(&n->dir, c->dir);
+			machine_config_free(c);
+			ui.cfg = c = n;
+		}
+	}
+	machine_config_set(&c->type, me->aliases[0]);
+	machine_config_set(&c->model, sub != NULL ? sub->aliases[0] : "");
+	edits_clear();
+}
+
+/*  Starts a new machine (to be saved at path, or in a directory of its
+    own if path is NULL), with the defaults of the first preset:  */
+static void new_machine(const char *path)
+{
+	const struct machine_preset *presets;
+	struct machine_config *c;
+	char *err = NULL, *abs;
+
+	/*  (With an absolute path, file names are relative to its
+	    directory.)  */
+	machine_presets(&presets);
+	abs = path != NULL ? machine_config_absolute(path) : NULL;
+	c = machine_config_parse(presets[0].json, abs, &err);
+	free(abs);
+	if (c == NULL) {
+		set_message(true, "%s", err);
+		free(err);
+		return;
+	}
+	open_editor(c, path == NULL);
+	ui.fresh = true;
+	machine_config_set(&ui.auto_name, c->name);
 }
 
 
@@ -998,64 +1150,102 @@ static void page_general(void)
 	mu_Context *ctx = ui.ctx;
 	struct machine_config *c = ui.cfg;
 	struct machine_entry *me, *cur = NULL;
-	int i, j;
+	struct machine_entry_subtype *cur_sub = NULL;
+	const struct machine_preset *preset = NULL;
+	const char *labels[200];
+	void *items[200];
+	int i, n, sel, show_all;
 
-	int lw[2] = { CH(16), -1 };
+	/*  The machine type and model chosen:  */
+	for (me = first_machine_entry; me != NULL; me = me->next)
+		if (has_alias(me->aliases, me->n_aliases, c->type))
+			cur = me;
+	for (i = 0; cur != NULL && i < cur->n_subtypes; i++)
+		if (has_alias(cur->subtype[i]->aliases,
+		    cur->subtype[i]->n_aliases, c->model))
+			cur_sub = cur->subtype[i];
+	if (cur != NULL)
+		preset = preset_for(cur, cur_sub);
+
+	int lw[2] = { CH(16), CH(48) };
 	row(2, lw);
 	mu_label(ctx, "Name");
 	text_field(&c->name);
 
-	/*  Machine type and model, as two lists:  */
-	for (me = first_machine_entry; me != NULL; me = me->next)
-		for (i = 0; i < me->n_aliases; i++)
-			if (strcasecmp(me->aliases[i], c->type) == 0)
-				cur = me;
-
-	int cols[2] = { CH(42), -1 };
-	mu_layout_row(ctx, 2, cols, row_height() * 9);
-	mu_begin_panel(ctx, "types");
-	int full[1] = { -1 };
-	row(1, full);
-	if (ui.scroll_types) {
-		/*  Scroll the type selected into view, once:  */
-		int index = 0;
-		for (me = first_machine_entry; me != NULL && me != cur;
-		    me = me->next)
-			index ++;
-		if (cur != NULL)
-			mu_get_current_container(ctx)->scroll.y = (index - 2) *
-			    (ctx->style->size.y + ctx->style->spacing);
-		ui.scroll_types = false;
+	/*  Architecture:  */
+	mu_label(ctx, "Architecture");
+	n = 0;
+	sel = -1;
+	for (i = 1; i <= N_ARCHS; i++) {
+		int a = i % N_ARCHS;	/*  "Other" last  */
+		bool any = false;
+		if (arch_names[a] == NULL)
+			continue;
+		for (me = first_machine_entry; me != NULL; me = me->next)
+			if (entry_arch(me) == a && entry_shown(me, cur))
+				any = true;
+		if (!any)
+			continue;
+		if (cur != NULL && entry_arch(cur) == a)
+			sel = n;
+		items[n] = (void *) (size_t) a;
+		labels[n++] = arch_names[a];
 	}
-	for (me = first_machine_entry; me != NULL; me = me->next)
-		if (list_item(&me, sizeof(me), me->name, me == cur) &&
-		    me != cur) {
-			machine_config_set(&c->type, me->aliases[0]);
-			machine_config_set(&c->model, me->n_subtypes > 0 ?
-			    me->subtype[0]->aliases[0] : "");
-			edits_clear();
+	if (dropdown("arch", labels, n, &sel)) {
+		me = default_entry((int) (size_t) items[sel]);
+		if (me != NULL && me != cur) {
+			select_machine(me, default_sub(me));
+			return;
 		}
-	mu_end_panel(ctx);
-
-	mu_begin_panel(ctx, "models");
-	row(1, full);
-	if (cur == NULL || cur->n_subtypes == 0)
-		mu_label(ctx, cur == NULL ? "Choose a machine type" :
-		    "(no models)");
-	for (i = 0; cur != NULL && i < cur->n_subtypes; i++) {
-		bool is_cur = false;
-		for (j = 0; j < cur->subtype[i]->n_aliases; j++)
-			if (strcasecmp(cur->subtype[i]->aliases[j],
-			    c->model) == 0)
-				is_cur = true;
-		if (list_item(&cur->subtype[i], sizeof(cur->subtype[i]),
-		    cur->subtype[i]->name, is_cur))
-			machine_config_set(&c->model,
-			    cur->subtype[i]->aliases[0]);
 	}
-	mu_end_panel(ctx);
 
-	row(2, lw);
+	/*  Machine type, of that architecture:  */
+	mu_label(ctx, "Machine");
+	n = 0;
+	sel = -1;
+	for (me = first_machine_entry; me != NULL && n < 200; me = me->next) {
+		if (cur == NULL || entry_arch(me) != entry_arch(cur) ||
+		    !entry_shown(me, cur))
+			continue;
+		if (me == cur)
+			sel = n;
+		items[n] = me;
+		labels[n++] = me->name;
+	}
+	if (dropdown("type", labels, n, &sel) && items[sel] != cur) {
+		me = (struct machine_entry *) items[sel];
+		select_machine(me, default_sub(me));
+		return;
+	}
+
+	/*  Model, if the machine type has models:  */
+	mu_label(ctx, "Model");
+	n = 0;
+	sel = -1;
+	for (i = 0; cur != NULL && i < cur->n_subtypes && n < 200; i++) {
+		if (!sub_shown(cur, cur->subtype[i], cur_sub))
+			continue;
+		if (cur->subtype[i] == cur_sub)
+			sel = n;
+		items[n] = cur->subtype[i];
+		labels[n++] = cur->subtype[i]->name;
+	}
+	if (n == 0)
+		mu_label(ctx, cur == NULL ? "" : "(this machine has no models)");
+	else if (dropdown("model", labels, n, &sel) && items[sel] != cur_sub) {
+		select_machine(cur, (struct machine_entry_subtype *)
+		    items[sel]);
+		return;
+	}
+
+	mu_label(ctx, "");
+	show_all = ui.show_all;
+	if (mu_checkbox(ctx, "Show all machines, also untested ones",
+	    &show_all))
+		ui.show_all = show_all != 0;
+
+	int lw2[2] = { CH(16), -1 };
+	row(2, lw2);
 	mu_label(ctx, "Memory (MB)");
 	int_field(&c->memory_mb);
 	mu_label(ctx, "");
@@ -1066,6 +1256,18 @@ static void page_general(void)
 	mu_label(ctx, "empty = the machine's default (see gxemul -H)");
 	mu_label(ctx, "CPUs");
 	int_field(&c->ncpus);
+
+	int full[1] = { -1 };
+	row(1, full);
+	mu_label(ctx, "");
+	if (preset != NULL)
+		mu_text(ctx, preset->description);
+	else if (cur != NULL)
+		mu_text(ctx, "This machine has no preset: it is untested here, "
+		    "and may not work.");
+	if (ui.fresh)
+		mu_text(ctx, "Choosing another machine or model gives this "
+		    "configuration its defaults (until it is saved).");
 }
 
 
@@ -1160,7 +1362,7 @@ static void page_drives(void)
 		int w1[6] = { CH(10), CH(3), CH(5), -CH(22), CH(11), CH(9) };
 		row(6, w1);
 		snprintf(name, sizeof(name), "kind%i", i);
-		choice(name, kind_labels, 4, &d->kind);
+		dropdown(name, kind_labels, 4, &d->kind);
 		mu_label(ctx, "ID");
 		{
 			char idtext[12];
@@ -1191,7 +1393,7 @@ static void page_drives(void)
 		row(missing ? 7 : 5, w2);
 		mu_label(ctx, "");
 		snprintf(name, sizeof(name), "bus%i", i);
-		choice(name, bus_labels, 3, &d->bus);
+		dropdown(name, bus_labels, 3, &d->bus);
 		check("Read-only", &d->readonly);
 		check("Overlay", &d->overlay);
 		check("Boot", &d->boot);
@@ -1383,7 +1585,7 @@ static void page_advanced(void)
 	for (i = 0; i < 3; i++)
 		if (strcasecmp(c->byte_order, order_values[i]) == 0)
 			sel = i;
-	if (choice("byteorder", order_labels, 3, &sel))
+	if (dropdown("byteorder", order_labels, 3, &sel))
 		machine_config_set(&c->byte_order, order_values[sel]);
 	mu_label(ctx, "Serial number");
 	int_field(&c->serial_nr);
@@ -1461,6 +1663,9 @@ static void screen_editor(void)
 	}
 	mu_end_panel(ctx);
 
+	/*  (Choosing another model for a new machine replaces it.)  */
+	c = ui.cfg;
+
 	/*  What's wrong, if anything:  */
 	/*  A message, or what's wrong, if anything:  */
 	row(1, full);
@@ -1508,7 +1713,6 @@ static void frame(void)
 {
 	mu_Context *ctx = ui.ctx;
 	const char *title = ui.screen == SCREEN_LIST ? "GXemul: Machines" :
-	    ui.screen == SCREEN_PRESETS ? "New machine: choose a preset" :
 	    "Machine configuration";
 	mu_Container *cnt;
 
@@ -1538,7 +1742,6 @@ static void frame(void)
 
 		switch (ui.screen) {
 		case SCREEN_LIST:	screen_list(); break;
-		case SCREEN_PRESETS:	screen_presets(); break;
 		case SCREEN_EDITOR:	screen_editor(); break;
 		}
 
@@ -1634,8 +1837,11 @@ static void handle_event(const SDL_Event *ev)
 			}
 		}
 
-		/*  Escape leaves the editor and the presets:  */
+		/*  Escape closes a drop-down list, or leaves the editor:  */
 		if (ev->type == SDL_KEYDOWN && k == SDLK_ESCAPE &&
+		    ui.open_list != NULL && ui.open_list->open)
+			ui.open_list->open = 0;
+		else if (ev->type == SDL_KEYDOWN && k == SDLK_ESCAPE &&
 		    ui.screen != SCREEN_LIST && !ui.pick_open)
 			ui.screen = SCREEN_LIST;
 		break;
@@ -1704,10 +1910,7 @@ struct machine_config *config_ui_run(const char *edit_path)
 				open_editor(c, false);
 		} else {
 			/*  A new machine, to be saved at edit_path:  */
-			c = machine_config_parse("{ \"gxemul\": 1 }", NULL,
-			    &err);
-			machine_config_set(&c->path, edit_path);
-			open_editor(c, false);
+			new_machine(edit_path);
 		}
 	}
 

@@ -302,7 +302,13 @@ static char *dirname_of(const char *path)
 }
 
 
-static char *absolute_path(const char *p)
+/*
+ *  machine_config_absolute():
+ *
+ *  Returns a file name as an absolute one (relative to the current
+ *  directory).  The caller frees it.
+ */
+char *machine_config_absolute(const char *p)
 {
 	char cwd[4096];
 
@@ -586,7 +592,7 @@ struct machine_config *machine_config_load(const char *path, char **errp)
 	if (text == NULL)
 		return NULL;
 
-	abs = absolute_path(path);
+	abs = machine_config_absolute(path);
 	c = machine_config_parse(text, abs, errp);
 	free(text);
 	free(abs);
@@ -790,7 +796,8 @@ static void add_list(cJSON *o, const char *key, int n, char **list)
 bool machine_config_save(struct machine_config *c, const char *path,
 	char **errp)
 {
-	char *abs = absolute_path(path), *dir = dirname_of(abs), *text, *tmp;
+	char *abs = machine_config_absolute(path), *dir = dirname_of(abs);
+	char *text, *tmp;
 	cJSON *root, *o, *a, *d, *l2;
 	FILE *f;
 	int i;
