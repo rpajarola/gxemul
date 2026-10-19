@@ -5406,3 +5406,8 @@ Changelog for GXemul:
 		names of the files (with the home folder's name). Disk images
 		stay sparse; the window copies them a little at a time, with
 		progress, and Cancel removes what was copied.
+20261018	An icon: a chip, with GX and an emu (packaging/icon/), in the
+		windows (on macOS also in the Dock and the application
+		switcher), built into gxemul.exe, and for Linux, in the icon
+		theme with gxemul.desktop, which matches the app ID that
+		gxemul gives itself (for Wayland's task switchers).

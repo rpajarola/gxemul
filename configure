@@ -345,6 +345,21 @@ if $CC $CFLAGS -c _testwin.c -o _testwin.o 2> /dev/null; then
 	WINDOWS=YES
 	OTHERLIBS="$OTHERLIBS -lws2_32 -liphlpapi -lcomdlg32 -lole32 -lshell32"
 	printf "yes\n"
+
+	#  The executable's icon is a resource, compiled by windres:
+	if [ z"$WINDRES" = z ]; then
+		case "$CC" in
+		*gcc)	WINDRES="${CC%gcc}windres" ;;
+		*)	WINDRES=windres ;;
+		esac
+	fi
+	printf "checking for $WINDRES... "
+	if command -v "$WINDRES" > /dev/null 2>&1; then
+		WINRES_OBJS=gxemul_res.o
+		printf "yes\n"
+	else
+		printf "no (gxemul.exe will have no icon of its own)\n"
+	fi
 else
 	printf "no\n"
 fi
@@ -1029,6 +1044,8 @@ if [ "z$CC_FOR_BUILD" = z ]; then
 fi
 echo "CC_FOR_BUILD=$CC_FOR_BUILD" >> _Makefile.header
 echo "OTHERLIBS=$OTHERLIBS" >> _Makefile.header
+echo "WINDRES=$WINDRES" >> _Makefile.header
+echo "WINRES_OBJS=$WINRES_OBJS" >> _Makefile.header
 echo "CPU_ARCHS=$CPU_ARCHS" >> _Makefile.header
 echo "CPU_TOOLS=$CPU_TOOLS" >> _Makefile.header
 echo "PREFIX=$PREFIX" >> _Makefile.header

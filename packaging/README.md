@@ -49,6 +49,8 @@ Debian and Ubuntu:
 /usr/bin/gxemul
 /usr/share/man/man1/gxemul.1.gz
 /usr/share/doc/gxemul/              # the HTML documentation
+/usr/share/applications/gxemul.desktop
+/usr/share/icons/hicolor/*/apps/gxemul.{png,svg}
 ```
 
 Its dependencies are worked out by `dpkg-shlibdeps` when it is built.
@@ -73,6 +75,18 @@ Windows (`.zip`): `gxemul.exe` and `SDL2.dll` (the official SDL2 build),
 the HTML documentation in `doc\`, and `README.txt`, `LICENSE.txt`,
 `HISTORY.txt` and `SDL2-LICENSE.txt`. Nothing else is needed, as
 `gxemul.exe` only uses Windows' own DLLs besides SDL2.
+
+## The icon
+
+gxemul's icon (a chip, with GX and an emu) is drawn in
+`icon/gxemul-icon.svg`, and for 24 pixels and less, in
+`icon/gxemul-icon-small.svg`. `icon/make-icons.sh` (which needs
+rsvg-convert and ImageMagick) makes the rest from them, which is in git:
+the PNGs of the icon theme, `gxemul.ico` (built into `gxemul.exe` by
+windres), and `src/console/display_icon.h`, which gxemul gives its
+windows (and on macOS, the Dock). `icon/gxemul.desktop` gives it to
+Wayland's task switchers, which go by the app ID (`gxemul`), not by the
+windows' icons.
 
 ## Build
 

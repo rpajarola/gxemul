@@ -8,15 +8,19 @@
 CFLAGS=$(CWARNINGS) $(COPTIM) $(DISPLAYINCLUDE) $(DINCLUDE)
 
 OBJS=config_ui.o console.o display.o display_files.o display_menu.o \
-	display_sdl.o microui.o
+	display_sdl.o microui.o $(WINRES_OBJS)
 
 all: $(OBJS)
 
 $(OBJS): Makefile
 
+#  On Windows, the executable's icon:
+gxemul_res.o: gxemul.rc ../../packaging/icon/gxemul.ico
+	$(WINDRES) -O coff -i gxemul.rc -o gxemul_res.o
+
 
 clean:
-	rm -f $(OBJS) *core
+	rm -f $(OBJS) gxemul_res.o *core
 
 clean_all: clean
 	rm -f Makefile

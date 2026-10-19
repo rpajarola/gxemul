@@ -56,6 +56,7 @@
 #include <SDL.h>
 
 #include "display_font.h"
+#include "display_icon.h"
 
 /*
  *  CTRL+ALT ungrabs the mouse.  On macOS, Option is Alt, and Command
@@ -126,12 +127,58 @@ static bool sdl_initialized = false;
 static struct fb_window *grabbed = NULL;
 
 
+/*
+ *  display_sdl_app_hints():
+ *
+ *  Before SDL is started: gxemul's name on the desktop, the app ID on
+ *  Wayland and the window class on X11, which gxemul.desktop (see
+ *  packaging/) matches, for its icon in task switchers.
+ */
+void display_sdl_app_hints(void)
+{
+	SDL_SetHint("SDL_APP_ID", "gxemul");			/*  SDL 3  */
+	SDL_SetHint("SDL_VIDEO_WAYLAND_WMCLASS", "gxemul");
+	SDL_SetHint("SDL_VIDEO_X11_WMCLASS", "gxemul");
+}
+
+
+/*
+ *  display_sdl_set_icon():
+ *
+ *  Gives a window gxemul's icon (display_icon.h, made from
+ *  packaging/icon/gxemul-icon.svg).  On macOS, this is also the
+ *  application's icon, in the Dock and the application switcher.
+ */
+void display_sdl_set_icon(SDL_Window *window)
+{
+	static SDL_Surface *icon = NULL;
+	size_t r, i = 0, k;
+
+	if (icon == NULL) {
+		icon = SDL_CreateRGBSurfaceWithFormat(0, DISPLAY_ICON_SIZE,
+		    DISPLAY_ICON_SIZE, 32, SDL_PIXELFORMAT_ARGB8888);
+		if (icon == NULL)
+			return;
+		for (r = 0; r < DISPLAY_ICON_RUNS; r++)
+			for (k = 0; k < display_icon[r].n; k++, i++) {
+				uint32_t *row = (uint32_t *) ((uint8_t *)
+				    icon->pixels + (i / DISPLAY_ICON_SIZE) *
+				    icon->pitch);
+				row[i % DISPLAY_ICON_SIZE] =
+				    display_icon[r].argb;
+			}
+	}
+	SDL_SetWindowIcon(window, icon);
+}
+
+
 static bool init_sdl(void)
 {
 	if (sdl_initialized)
 		return true;
 
 	SDL_SetMainReady();
+	display_sdl_app_hints();
 
 	/*  SIGINT is for gxemul's debugger, not for quitting:  */
 	SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
@@ -1046,6 +1093,7 @@ bool display_backend_open(struct fb_window *win)
 		return false;
 	}
 	SDL_SetWindowData(sw->window, "fb_window", win);
+	display_sdl_set_icon(sw->window);
 
 	/*  (Without vsync, which would make the emulator wait for it.)  */
 	sw->renderer = SDL_CreateRenderer(sw->window, -1, 0);

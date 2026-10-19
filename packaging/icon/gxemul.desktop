@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=GXemul
+GenericName=Machine Emulator
+Comment=Emulate DECstations, SGI machines, and other computers
+Exec=gxemul
+Icon=gxemul
+Terminal=true
+Categories=System;Emulator;
+StartupWMClass=gxemul

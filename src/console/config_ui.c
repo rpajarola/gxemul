@@ -86,6 +86,10 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 #include "display_font.h"
 #include "thirdparty/microui.h"
 
+/*  display_sdl.c:  */
+void display_sdl_app_hints(void);
+void display_sdl_set_icon(SDL_Window *window);
+
 
 extern struct machine_entry *first_machine_entry;
 
@@ -2714,6 +2718,7 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 	ui.n_tap_devs = -2;
 
 	SDL_SetMainReady();
+	display_sdl_app_hints();
 	SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
 	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 	if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -2736,6 +2741,7 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 		return NULL;
 	}
 	SDL_SetWindowMinimumSize(ui.window, 640, 420);
+	display_sdl_set_icon(ui.window);
 	SDL_StartTextInput();
 
 	CHECK_ALLOCATION(ui.ctx = (mu_Context *) malloc(sizeof(mu_Context)));

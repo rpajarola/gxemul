@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a4150"/><stop offset="1" stop-color="#1f232b"/>
+    </linearGradient>
+  </defs>
+  <g fill="#d4a93a" stroke="#8a6a1c" stroke-width="1.5">
+    <!-- pins: 6 per side -->
+    <g id="pinsTop">
+      <rect x="61" y="14" width="14" height="34" rx="3"/><rect x="87" y="14" width="14" height="34" rx="3"/>
+      <rect x="113" y="14" width="14" height="34" rx="3"/><rect x="139" y="14" width="14" height="34" rx="3"/>
+      <rect x="165" y="14" width="14" height="34" rx="3"/><rect x="191" y="14" width="14" height="34" rx="3"/>
+    </g>
+    <use href="#pinsTop" transform="translate(0,194)"/>
+    <use href="#pinsTop" transform="rotate(90 128 128)"/>
+    <use href="#pinsTop" transform="rotate(90 128 128) translate(0,194)"/>
+  </g>
+  <rect x="38" y="38" width="180" height="180" rx="18" fill="url(#body)" stroke="#111318" stroke-width="3"/>
+  <rect x="50" y="50" width="156" height="156" rx="10" fill="none" stroke="#4b5466" stroke-width="2"/>
+  <circle cx="192" cy="192" r="5" fill="#4b5466"/>
+  <!-- the emu, facing left -->
+  <g transform="translate(-26,6) scale(1.12)">
+    <path fill="#e2b877" d="M 62 74 L 72 69 C 73 62 83 60 86 66 C 88 72 85 78 86 86 C 87 98 90 106 98 108 C 112 92 150 88 168 104 C 178 112 182 126 178 136 L 172 141 L 169 134 L 163 143 L 159 136 L 153 145 L 148 137 L 142 146 L 137 138 L 131 145 L 126 137 L 119 141 C 106 134 98 124 95 112 C 93 102 92 92 92 84 C 90 80 84 78 74 76 Z"/>
+    <circle cx="78" cy="69" r="2.2" fill="#1f232b"/>
+    <g fill="none" stroke="#e2b877" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M 134 140 L 140 160 L 132 182 L 122 184"/>
+      <path d="M 150 141 L 156 160 L 150 182 L 140 184"/>
+    </g>
+  </g>
+  <text x="202" y="104" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-weight="bold" font-size="52" fill="#f0c94a" letter-spacing="1">GX</text>
+</svg>

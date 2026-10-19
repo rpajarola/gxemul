@@ -1,0 +1,2 @@
+/*  The icon of gxemul.exe (see packaging/icon/make-icons.sh):  */
+1 ICON "../../packaging/icon/gxemul.ico"

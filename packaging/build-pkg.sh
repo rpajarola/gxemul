@@ -22,6 +22,9 @@ make clean
 # Room in the load commands for the bundled libraries' paths:
 make -j"$(sysctl -n hw.ncpu)" OTHERLIBS="-Wl,-headerpad_max_install_names"
 make install DESTDIR="$root"
+# (The desktop file and the icon theme's icons are for Linux; on macOS,
+# gxemul sets its icon in the Dock itself.)
+rm -rf "$root/usr/local/share/applications" "$root/usr/local/share/icons"
 libdir="$root/usr/local/lib/gxemul"
 packaging/bundle-dylibs.sh "$libdir" "$root/usr/local/bin/gxemul"
 # Homebrew's SDL2 is sdl2-compat, which loads SDL3 when it starts, from

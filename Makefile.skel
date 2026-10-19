@@ -21,12 +21,25 @@ install:
 	cp -f man/gxemul.1 $(DESTDIR)$(MANDIR)/man1/
 	mkdir -p $(DESTDIR)$(PREFIX)/share/doc/gxemul
 	cp -R doc/* $(DESTDIR)$(PREFIX)/share/doc/gxemul/
+	mkdir -p $(DESTDIR)$(PREFIX)/share/applications
+	cp -f packaging/icon/gxemul.desktop $(DESTDIR)$(PREFIX)/share/applications/
+	for n in 16 24 32 48 64 128 256; do \
+		mkdir -p $(DESTDIR)$(PREFIX)/share/icons/hicolor/$${n}x$${n}/apps; \
+		cp -f packaging/icon/png/gxemul-$$n.png \
+		    $(DESTDIR)$(PREFIX)/share/icons/hicolor/$${n}x$${n}/apps/gxemul.png; \
+	done
+	mkdir -p $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps
+	cp -f packaging/icon/gxemul-icon.svg \
+	    $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/gxemul.svg
 
 uninstall:
 	@echo Removing binaries, man pages, and documentation...
 	rm -f $(DESTDIR)$(PREFIX)/bin/gxemul
 	rm -f $(DESTDIR)$(MANDIR)/man1/gxemul.1
 	rm -rf $(DESTDIR)$(PREFIX)/share/doc/gxemul
+	rm -f $(DESTDIR)$(PREFIX)/share/applications/gxemul.desktop
+	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/*/apps/gxemul.png
+	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/gxemul.svg
 
 clean:
 	rm -f $(BIN) *core core.* *.gmon _* *.exe ktrace.out tmp_*.out* callgrind.out* cachegrind.out*
