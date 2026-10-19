@@ -133,7 +133,11 @@ NVRAM file), choose:
 	load.
 </ul>
 The new machine is added to the list.  Cancel stops the copying, and
-removes what was copied.  <tt>gxemul --export machine.json folder</tt>
+removes what was copied.  <b>Export...</b> in the editor does the same
+for what is in the editor (also unsaved changes, once the machine has been
+saved), e.g. from a running machine's Edit Configuration... menu item:
+then its disk images and NVRAM may change while they are copied, so for a
+consistent copy, shut the guest down first (or at least sync its disks).  <tt>gxemul --export machine.json folder</tt>
 does the same from the command line, copying every file.
 
 <p>The editor has a page for each part of the configuration: General

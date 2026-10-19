@@ -5411,3 +5411,7 @@ Changelog for GXemul:
 		switcher), built into gxemul.exe, and for Linux, in the icon
 		theme with gxemul.desktop, which matches the app ID that
 		gxemul gives itself (for Wayland's task switchers).
+20261019	Export... is also in the machine editor (so a running machine,
+		with Edit Configuration..., can be exported too), for what is
+		in the editor; it warns that a running machine's disk images
+		and NVRAM may change while they are copied.

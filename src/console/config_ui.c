@@ -183,6 +183,7 @@ static struct {
 	struct mc_file	*files;
 	char		*export_dir;
 	struct mc_export *exporting;	/*  while it copies  */
+	enum screen	export_from;	/*  the screen to go back to  */
 } ui;
 
 
@@ -1139,7 +1140,8 @@ static void export_close(void)
 	ui.export_cfg = NULL;
 	free(ui.export_dir);
 	ui.export_dir = NULL;
-	ui.screen = SCREEN_LIST;
+	if (ui.screen == SCREEN_EXPORT)
+		ui.screen = ui.export_from;
 }
 
 
@@ -1149,6 +1151,7 @@ static void open_export(const struct machine_config *c)
 	int k;
 
 	export_close();
+	ui.export_from = ui.screen;
 	ui.export_cfg = machine_config_copy(c);
 	ui.n_files = machine_config_files(c, &ui.files);
 
@@ -1262,6 +1265,11 @@ static void screen_export(void)
 	    "files are copied into the folder (keeping disk images sparse), "
 	    "left where they are (by their name, for a ROM image in a ROM "
 	    "folder, or else by their full name), or left out.");
+	if (ui.running)
+		mu_text(ctx, "The machine is running, so its disk images and "
+		    "NVRAM may change while they are copied.  For a "
+		    "consistent copy, shut the guest down first (or at least "
+		    "sync its disks).");
 	mu_label(ctx, "");
 	if (ui.n_files == 0)
 		mu_label(ctx, "(The machine has no files.)");
@@ -2515,8 +2523,12 @@ static void screen_editor(void)
 	}
 	free(problem);
 
-	int bw[5] = { CH(10), -CH(30), CH(10), -1 };
-	row(4, bw);
+	int bw[5] = { CH(10), -CH(41), CH(11), CH(10), -1 };
+	int rw[4] = { CH(10), -CH(22), CH(11), -1 };
+	if (ui.running)
+		row(4, rw);
+	else
+		row(5, bw);
 	if (mu_button(ctx, ui.running ? "Close" : "Cancel")) {
 		ui.screen = SCREEN_LIST;
 		free(ui.message);
@@ -2525,9 +2537,17 @@ static void screen_editor(void)
 			ui.quit = true;
 	}
 	mu_label(ctx, c->path != NULL ? c->path : "(not saved yet)");
+
+	/*  (What is in the editor; relative names need its folder.)  */
+	if (c->path == NULL)
+		mu_label(ctx, "");
+	else if (mu_button(ctx, "Export...")) {
+		open_export(c);
+		return;
+	}
+
 	if (ui.running) {
 		/*  (Starting it again would use the same disk images.)  */
-		mu_label(ctx, "");
 		if (mu_button(ctx, "Save") && save(false))
 			set_message(false, "Saved; the changes take effect "
 			    "when the machine is restarted");
