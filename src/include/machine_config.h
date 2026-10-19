@@ -163,6 +163,32 @@ void machine_config_set(char **field, const char *value);
 bool machine_config_apply(struct machine_config *, struct emul *,
 	struct machine *);
 struct emul *machine_config_create_emul(struct machine_config *);
+bool machine_config_make_dir(const char *path);
+
+/*  Exporting a machine to a folder of its own, with its files:  */
+#define	MC_EXPORT_COPY		0	/*  copy it into the folder  */
+#define	MC_EXPORT_KEEP		1	/*  refer to it where it is  */
+#define	MC_EXPORT_OMIT		2	/*  leave it out  */
+
+struct mc_file {
+	char		*label;		/*  e.g. "Drive 1 (disk)"  */
+	char		*path;		/*  where it is (a clean path)  */
+	bool		exists;
+	int64_t		size;
+	int		action;		/*  MC_EXPORT_*  */
+	int		field, index;	/*  (which one it is)  */
+};
+struct mc_export;
+int machine_config_files(const struct machine_config *,
+	struct mc_file **listp);
+void machine_config_free_files(int n, struct mc_file *list);
+struct mc_export *machine_config_export_start(const struct machine_config *,
+	const char *dir, int n, const struct mc_file *files, char **errp);
+int machine_config_export_step(struct mc_export *, char **errp);
+void machine_config_export_progress(const struct mc_export *,
+	int64_t *done, int64_t *total, const char **current);
+const char *machine_config_export_path(const struct mc_export *);
+void machine_config_export_free(struct mc_export *);
 
 /*  Machine descriptions (what the configuration window offers):  */
 int machine_config_machine_type(const char *type);

@@ -5397,3 +5397,12 @@ Changelog for GXemul:
 		the old jump table's close() is implemented.
 
 ==============  RELEASE 1.0.4  ==============
+20261018	Machines can be exported to a folder of their own, with their
+		files (Export... in the machines window, or gxemul --export
+		machine.json folder): each file (ROM images, files to load,
+		drive images, the NVRAM file) is copied into the folder, left
+		in place, or left out. The copies are referred to by relative
+		names, so the exported machine.json doesn't have the full
+		names of the files (with the home folder's name). Disk images
+		stay sparse; the window copies them a little at a time, with
+		progress, and Cancel removes what was copied.

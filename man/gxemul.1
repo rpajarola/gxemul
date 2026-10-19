@@ -46,6 +46,8 @@
 .Op general options
 .Op Fl -edit Op Ar machine.json
 .Nm
+.Fl -export Ar machine.json Ar folder
+.Nm
 .Fl H
 .Sh DESCRIPTION
 .Nm
@@ -470,6 +472,15 @@ With
 .Fl -no-start ,
 the editor only saves the file (as for a machine which is running: this is
 what the Edit Configuration... menu item of a running machine opens).
+.It Fl -export Ar machine.json Ar folder
+Make a copy of the machine in
+.Ar folder
+(created if it doesn't exist), with copies of its files (ROM images, files
+to load, drive images, and the NVRAM file), which the new
+.Pa machine.json
+refers to by relative names.
+Disk images stay sparse.
+(The window's Export... can also leave files in place, or leave them out.)
 .El
 .Sh EXAMPLES
 The following command will start NetBSD/pmax on an emulated DECstation 

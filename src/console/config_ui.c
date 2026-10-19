@@ -29,8 +29,11 @@
  *  (see config_ui.h and machine_config.h).  It has two screens:
  *
  *	the list of machines (recently used configuration files), with
- *	    New, Open, Edit, Duplicate, Forget, and Start;
+ *	    New, Open, Edit, Duplicate, Export, Forget, and Start;
  *	the editor, with a page for each part of the configuration.
+ *
+ *  (And the settings, and the export of a machine to a folder of its own,
+ *  with its files.)
  *
  *  A new machine starts with the defaults of a model that is known to work
  *  (its preset, see machine_presets.c), and choosing another model gives it
@@ -92,7 +95,7 @@ extern struct machine_entry *first_machine_entry;
 #define	MAX_EDITS		400
 #define	DEFAULT_DISK_MB		2048
 
-enum screen { SCREEN_LIST, SCREEN_EDITOR, SCREEN_SETTINGS };
+enum screen { SCREEN_LIST, SCREEN_EDITOR, SCREEN_SETTINGS, SCREEN_EXPORT };
 enum page { PAGE_GENERAL, PAGE_FIRMWARE, PAGE_DRIVES, PAGE_DISPLAY,
 	PAGE_NETWORK, PAGE_ADVANCED, N_PAGES };
 
@@ -169,6 +172,13 @@ static struct {
 
 	/*  Editing the configuration of a running machine (only that):  */
 	bool		running;
+
+	/*  Exporting a machine:  */
+	struct machine_config *export_cfg;
+	int		n_files;
+	struct mc_file	*files;
+	char		*export_dir;
+	struct mc_export *exporting;	/*  while it copies  */
 } ui;
 
 
@@ -832,6 +842,7 @@ static void start(struct machine_config *c)
 
 static void new_machine(const char *path);
 static void open_settings(void);
+static void open_export(const struct machine_config *c);
 
 static void screen_list(void)
 {
@@ -881,9 +892,9 @@ static void screen_list(void)
 	mu_end_panel(ctx);
 
 	/*  The buttons:  */
-	int bw[8] = { CH(10), CH(10), CH(8), CH(12), CH(9), CH(13), -CH(12),
-	    -1 };
-	row(8, bw);
+	int bw[9] = { CH(10), CH(10), CH(8), CH(12), CH(11), CH(9), CH(13),
+	    -CH(12), -1 };
+	row(9, bw);
 	if (mu_button(ctx, "New..."))
 		new_machine(NULL);
 	if (mu_button(ctx, "Open...")) {
@@ -904,6 +915,8 @@ static void screen_list(void)
 		machine_config_set(&c->path, NULL);
 		open_editor(c, true);
 	}
+	if (mu_button(ctx, "Export...") && sel != NULL)
+		open_export(sel);
 	if (mu_button(ctx, "Forget") && ui.selected < ui.n_recent) {
 		appdirs_remove_recent(ui.recent[ui.selected]);
 		list_load(NULL);
@@ -1061,32 +1074,298 @@ static void screen_settings(void)
 /****************************************************************************/
 
 /*
- *  The editor
+ *  Exporting a machine to a folder of its own, with its files (each one
+ *  copied, referred to where it is, or left out)
  */
 
-static void make_dir(const char *path)
-{
-	char *s, *p;
+static const char *action_labels[] = { "Copy", "Leave in place", "Omit" };
 
-	CHECK_ALLOCATION(s = strdup(path));
-	for (p = s + 1; *p; p++)
-		if (*p == '/') {
-			*p = '\0';
-#ifdef _WIN32
-			mkdir(s);
-#else
-			mkdir(s, 0755);
-#endif
-			*p = '/';
-		}
-#ifdef _WIN32
-	mkdir(s);
-#else
-	mkdir(s, 0755);
-#endif
-	free(s);
+
+/*  A machine's name as a file name:  */
+static void file_name_for(const char *name, char *buf, size_t len)
+{
+	size_t i;
+
+	snprintf(buf, len, "%s", name[0] ? name : "machine");
+	for (i = 0; buf[i] != '\0'; i++)
+		if (buf[i] == '/' || buf[i] == '\\' || buf[i] == ':')
+			buf[i] = '-';
 }
 
+
+static void size_text(int64_t bytes, char *buf, size_t len)
+{
+	if (bytes >= (int64_t) 1 << 30)
+		snprintf(buf, len, "%.1f GB", bytes / 1073741824.0);
+	else if (bytes >= 1 << 20)
+		snprintf(buf, len, "%.1f MB", bytes / 1048576.0);
+	else
+		snprintf(buf, len, "%i KB", (int) ((bytes + 1023) / 1024));
+}
+
+
+/*  A label that, if it is too long, shows the end of the text:  */
+static void label_end(const char *text)
+{
+	mu_Context *ctx = ui.ctx;
+	mu_Rect r = mu_layout_next(ctx);
+	int room = r.w - 2 * ctx->style->padding;
+	const char *p = text;
+	char buf[1200];
+
+	snprintf(buf, sizeof(buf), "%s", text);
+	while (*p != '\0' && text_width(NULL, buf, -1) > room) {
+		p ++;
+		while ((*p & 0xc0) == 0x80)
+			p ++;
+		snprintf(buf, sizeof(buf), "...%s", p);
+	}
+	mu_draw_control_text(ctx, buf, r, MU_COLOR_TEXT, 0);
+}
+
+
+static void export_close(void)
+{
+	machine_config_export_free(ui.exporting);
+	ui.exporting = NULL;
+	machine_config_free_files(ui.n_files, ui.files);
+	ui.files = NULL;
+	ui.n_files = 0;
+	machine_config_free(ui.export_cfg);
+	ui.export_cfg = NULL;
+	free(ui.export_dir);
+	ui.export_dir = NULL;
+	ui.screen = SCREEN_LIST;
+}
+
+
+static void open_export(const struct machine_config *c)
+{
+	char name[200], *dir, *p;
+	int k;
+
+	export_close();
+	ui.export_cfg = machine_config_copy(c);
+	ui.n_files = machine_config_files(c, &ui.files);
+
+	/*  Next to the machine's own folder, at first:  */
+	file_name_for(c->name, name, sizeof(name));
+	dir = c->dir != NULL ? machine_config_clean_path(c->dir) : NULL;
+	p = dir != NULL ? strrchr(dir, '/') : NULL;
+	if (p != NULL && p > dir)
+		*p = '\0';
+	for (k = 1; ; k++) {
+		char *json;
+		struct stat st;
+		CHECK_ALLOCATION(ui.export_dir = (char *) malloc(strlen(dir !=
+		    NULL ? dir : appdirs_machines_dir()) + strlen(name) + 40));
+		sprintf(ui.export_dir, k == 1 ? "%s/%s (export)" :
+		    "%s/%s (export %i)", dir != NULL ? dir :
+		    appdirs_machines_dir(), name, k);
+		CHECK_ALLOCATION(json = (char *) malloc(strlen(ui.export_dir) +
+		    20));
+		sprintf(json, "%s/machine.json", ui.export_dir);
+		if (k >= 100 || stat(json, &st) != 0) {
+			free(json);
+			break;
+		}
+		free(json);
+		free(ui.export_dir);
+	}
+	free(dir);
+
+	edits_clear();
+	ui.open_list = NULL;
+	free(ui.message);
+	ui.message = NULL;
+	ui.screen = SCREEN_EXPORT;
+}
+
+
+static void export_dir_picked(struct machine *m, const char *path,
+	void *data)
+{
+	(void) m; (void) data;
+	ui.pick_open = false;
+	if (path == NULL)
+		return;
+	machine_config_set(&ui.export_dir, path);
+	edits_clear();
+}
+
+
+static void export_go(void)
+{
+	char *err;
+
+	ui.exporting = machine_config_export_start(ui.export_cfg,
+	    ui.export_dir, ui.n_files, ui.files, &err);
+	if (ui.exporting == NULL) {
+		set_message(true, "%s", err);
+		free(err);
+		return;
+	}
+	free(ui.message);
+	ui.message = NULL;
+}
+
+
+/*  Copies some more, while exporting (once a frame):  */
+static void export_step(void)
+{
+	char *err, *path;
+	int r = machine_config_export_step(ui.exporting, &err);
+
+	if (r == 0)
+		return;
+	if (r < 0) {
+		/*  (What was copied is removed again.)  */
+		machine_config_export_free(ui.exporting);
+		ui.exporting = NULL;
+		set_message(true, "Export failed: %s", err);
+		free(err);
+		return;
+	}
+
+	CHECK_ALLOCATION(path = strdup(machine_config_export_path(
+	    ui.exporting)));
+	export_close();
+	appdirs_add_recent(path);
+	list_load(path);
+	set_message(false, "Exported to %s", path);
+	free(path);
+}
+
+
+static void screen_export(void)
+{
+	mu_Context *ctx = ui.ctx;
+	int full[1] = { -1 };
+	int64_t copy_total = 0;
+	char buf[1200], size[40];
+	bool any_keep = false;
+	int i;
+
+	if (ui.exporting != NULL)
+		export_step();
+	if (ui.screen != SCREEN_EXPORT)
+		return;
+
+	mu_layout_row(ctx, 1, full, -row_height() * 3 - ctx->style->padding);
+	mu_begin_panel(ctx, "export");
+	row(1, full);
+	mu_text(ctx, "A copy of the machine, in a folder of its own.  Its "
+	    "files are copied into the folder (keeping disk images sparse), "
+	    "left where they are (by their name, for a ROM image in a ROM "
+	    "folder, or else by their full name), or left out.");
+	mu_label(ctx, "");
+	if (ui.n_files == 0)
+		mu_label(ctx, "(The machine has no files.)");
+
+	for (i = 0; i < ui.n_files; i++) {
+		struct mc_file *f = &ui.files[i];
+		int w[3] = { CH(22), -CH(20), -1 };
+
+		mu_push_id(ctx, &f, sizeof(f));
+		row(3, w);
+		mu_label(ctx, f->label);
+		if (f->exists)
+			size_text(f->size, size, sizeof(size));
+		snprintf(buf, sizeof(buf), "%s  (%s)", f->path, f->exists ?
+		    size : "doesn't exist yet");
+		label_end(buf);
+		if (ui.exporting == NULL)
+			dropdown("action", action_labels, 3, &f->action);
+		else
+			mu_label(ctx, action_labels[f->action]);
+		mu_pop_id(ctx);
+
+		if (f->action == MC_EXPORT_COPY)
+			copy_total += f->size;
+		if (f->action == MC_EXPORT_KEEP)
+			any_keep = true;
+	}
+
+	if (ui.exporting == NULL && ui.n_files > 1) {
+		int aw[3] = { CH(22), CH(12), CH(19) };
+		row(3, aw);
+		mu_label(ctx, "");
+		if (mu_button(ctx, "Copy all"))
+			for (i = 0; i < ui.n_files; i++)
+				ui.files[i].action = MC_EXPORT_COPY;
+		if (mu_button(ctx, "Leave all in place"))
+			for (i = 0; i < ui.n_files; i++)
+				ui.files[i].action = MC_EXPORT_KEEP;
+	}
+	mu_end_panel(ctx);
+
+	/*  Where to:  */
+	int fw[3] = { CH(10), -CH(10), -1 };
+	row(3, fw);
+	mu_label(ctx, "Folder:");
+	if (ui.exporting == NULL) {
+		text_field(&ui.export_dir);
+		if (mu_button(ctx, "Browse...")) {
+			char name[200];
+			file_name_for(ui.export_cfg->name, name, sizeof(name));
+			ui.pick_open = true;
+			display_choose_new_file(NULL, "Export the machine to "
+			    "(a new folder)", start_dir(), name,
+			    export_dir_picked, NULL);
+			if (!display_chooser_open())
+				ui.pick_open = false;
+		}
+	} else {
+		label_end(ui.export_dir);
+		mu_label(ctx, "");
+	}
+
+	/*  How it goes:  */
+	row(1, full);
+	if (ui.exporting != NULL) {
+		int64_t done, total;
+		const char *cur;
+		char d[40], t[40];
+		machine_config_export_progress(ui.exporting, &done, &total,
+		    &cur);
+		size_text(done, d, sizeof(d));
+		size_text(total, t, sizeof(t));
+		snprintf(buf, sizeof(buf), "Copying %s (%s of %s)...",
+		    cur != NULL ? cur : "", d, t);
+		mu_label(ctx, buf);
+	} else if (ui.pick_open)
+		mu_label(ctx, "Waiting for the file chooser...");
+	else if (ui.message != NULL)
+		mu_label(ctx, ui.message);
+	else {
+		size_text(copy_total, size, sizeof(size));
+		snprintf(buf, sizeof(buf), "%s to copy%s", size, any_keep ?
+		    "; the files left in place are referred to by their "
+		    "full name, unless they are in a ROM folder" : "");
+		mu_label(ctx, buf);
+	}
+
+	int bw[3] = { CH(10), -CH(12), -1 };
+	row(3, bw);
+	if (mu_button(ctx, "Cancel")) {
+		export_close();
+		if (ui.screen == SCREEN_LIST) {
+			free(ui.message);
+			ui.message = NULL;
+		}
+		return;
+	}
+	mu_label(ctx, "");
+	if (ui.exporting == NULL && mu_button(ctx, "Export"))
+		export_go();
+}
+
+
+/****************************************************************************/
+
+/*
+ *  The editor
+ */
 
 /*  The real drive that a drive says it is, if any:  */
 static const struct mc_drive_model *drive_model(const struct mc_drive *d)
@@ -1237,7 +1516,7 @@ static void saved_as(struct machine *m, const char *path, void *data)
 			    "folder for the machine, or a .json file", path);
 			return;
 		}
-		make_dir(path);
+		machine_config_make_dir(path);
 		CHECK_ALLOCATION(file = (char *) malloc(n + 20));
 		sprintf(file, "%s/machine.json", path);
 		if (stat(file, &st) == 0) {
@@ -1264,19 +1543,14 @@ static bool save(bool then_start)
 	struct machine_config *c = ui.cfg;
 	char name[200];
 	const char *dir = appdirs_last_dir();
-	size_t i;
 
 	if (c->path != NULL)
 		return save_to(c->path);
 
-	/*  The machine's name, as a file name:  */
-	snprintf(name, sizeof(name), "%s", c->name[0] ? c->name : "machine");
-	for (i = 0; name[i] != '\0'; i++)
-		if (name[i] == '/' || name[i] == '\\' || name[i] == ':')
-			name[i] = '-';
+	file_name_for(c->name, name, sizeof(name));
 
 	if (dir == NULL) {
-		make_dir(appdirs_machines_dir());
+		machine_config_make_dir(appdirs_machines_dir());
 		dir = appdirs_machines_dir();
 	}
 	ui.start_after_save = then_start;
@@ -1897,7 +2171,7 @@ static void page_drives(void)
 				mu_label(ctx, "(created when saved)");
 			else if (mu_button(ctx, "Create now")) {
 				char *err;
-				make_dir(c->dir);
+				machine_config_make_dir(c->dir);
 				f = machine_config_resolve(c, d->file);
 				if (machine_config_create_disk(f,
 				    disk_size(i), &err))
@@ -2273,6 +2547,7 @@ static void frame(void)
 	mu_Context *ctx = ui.ctx;
 	const char *title = ui.screen == SCREEN_LIST ? "GXemul: Machines" :
 	    ui.screen == SCREEN_SETTINGS ? "Settings" :
+	    ui.screen == SCREEN_EXPORT ? "Export a machine" :
 	    "Machine configuration";
 	mu_Container *cnt;
 
@@ -2297,16 +2572,23 @@ static void frame(void)
 	    MU_OPT_NOSCROLL)) {
 		int full[1] = { -1 };
 		row(1, full);
-		mu_label(ctx, ui.screen == SCREEN_EDITOR && ui.cfg != NULL &&
-		    ui.cfg->name[0] ? ui.cfg->name : title);
+		if (ui.screen == SCREEN_EXPORT && ui.export_cfg->name[0]) {
+			char t[300];
+			snprintf(t, sizeof(t), "Export %s", ui.export_cfg->name);
+			mu_label(ctx, t);
+		} else
+			mu_label(ctx, ui.screen == SCREEN_EDITOR && ui.cfg !=
+			    NULL && ui.cfg->name[0] ? ui.cfg->name : title);
 
 		switch (ui.screen) {
 		case SCREEN_LIST:	screen_list(); break;
 		case SCREEN_EDITOR:	screen_editor(); break;
 		case SCREEN_SETTINGS:	screen_settings(); break;
+		case SCREEN_EXPORT:	screen_export(); break;
 		}
 
-		if (ui.screen != SCREEN_EDITOR) {
+		/*  (The editor and the export show their own messages.)  */
+		if (ui.screen != SCREEN_EDITOR && ui.screen != SCREEN_EXPORT) {
 			row(1, full);
 			if (ui.pick_open)
 				mu_label(ctx, "Waiting for the file chooser...");
@@ -2403,6 +2685,10 @@ static void handle_event(const SDL_Event *ev)
 		    ui.open_list != NULL && ui.open_list->open)
 			ui.open_list->open = 0;
 		else if (ev->type == SDL_KEYDOWN && k == SDLK_ESCAPE &&
+		    ui.screen == SCREEN_EXPORT && !ui.pick_open) {
+			if (ui.exporting == NULL)
+				export_close();
+		} else if (ev->type == SDL_KEYDOWN && k == SDLK_ESCAPE &&
 		    ui.screen != SCREEN_LIST && !ui.pick_open) {
 			ui.screen = SCREEN_LIST;
 			if (ui.running)
@@ -2487,7 +2773,7 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 	}
 
 	while (!ui.quit && ui.result == NULL) {
-		if (SDL_WaitEventTimeout(&ev, 50)) {
+		if (SDL_WaitEventTimeout(&ev, ui.exporting != NULL ? 1 : 50)) {
 			handle_event(&ev);
 			while (SDL_PollEvent(&ev))
 				handle_event(&ev);
@@ -2497,6 +2783,7 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 		render();
 	}
 
+	export_close();
 	list_free();
 	rom_dirs_free();
 	tap_devs_free();

@@ -1556,6 +1556,561 @@ bool machine_config_create_disk(const char *path, int64_t size, char **errp)
 
 /*****************************************************************************
  *
+ *  Folders, and exporting a machine to a folder of its own
+ */
+
+static bool is_dir(const char *path)
+{
+	struct stat st;
+	return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+
+/*
+ *  Creates a folder, and the folders it is in, if they don't exist yet.
+ *  With np and listp, the ones created are added to that list (in the
+ *  order they were created).  Returns false if it couldn't.
+ */
+static bool make_dirs(const char *path, int *np, char ***listp)
+{
+	char *s = xstrdup(path), *p;
+	bool ok = true;
+
+	for (p = s + 1; ok; p++) {
+		bool last = *p == '\0';
+		if (!last && *p != '/' && *p != '\\')
+			continue;
+		*p = '\0';
+		if (s[0] != '\0' && !is_dir(s)) {
+#ifdef _WIN32
+			if (!(isalpha((unsigned char) s[0]) && s[1] == ':' &&
+			    s[2] == '\0'))
+				ok = mkdir(s) == 0;
+#else
+			ok = mkdir(s, 0755) == 0;
+#endif
+			if (ok && np != NULL)
+				machine_config_add_string(np, listp, s);
+		}
+		if (last)
+			break;
+		*p = '/';
+	}
+	free(s);
+	return ok;
+}
+
+
+/*
+ *  machine_config_make_dir():
+ *
+ *  Creates a folder, and the folders it is in.  Returns false if it
+ *  couldn't (errno says why).
+ */
+bool machine_config_make_dir(const char *path)
+{
+	return make_dirs(path, NULL, NULL);
+}
+
+
+/*  The size of a file, or -1 if it can't be opened (as stat() may not tell
+    the size of a large file on Windows):  */
+static int64_t file_size(const char *path)
+{
+	FILE *f = fopen(path, "rb");
+	int64_t size = -1;
+
+	if (f == NULL)
+		return -1;
+#ifdef _WIN32
+	if (_fseeki64(f, 0, SEEK_END) == 0)
+		size = _ftelli64(f);
+#else
+	if (fseeko(f, 0, SEEK_END) == 0)
+		size = ftello(f);
+#endif
+	fclose(f);
+	return size;
+}
+
+
+enum { FIELD_ROM, FIELD_LOAD, FIELD_DRIVE, FIELD_SLOT, FIELD_NVRAM };
+
+static void add_file(int *np, struct mc_file **listp,
+	const struct machine_config *c, int field, int index, const char *name,
+	const char *label)
+{
+	bool rom = field == FIELD_ROM || field == FIELD_SLOT;
+	struct mc_file *f;
+	char *r;
+
+	if (name == NULL || name[0] == '\0')
+		return;
+	if (field == FIELD_LOAD)
+		name += load_prefix_len(name);
+
+	CHECK_ALLOCATION(*listp = (struct mc_file *) realloc(*listp,
+	    (*np + 1) * sizeof(struct mc_file)));
+	f = &(*listp)[(*np)++];
+	memset(f, 0, sizeof(*f));
+	r = rom ? machine_config_resolve_rom(c, name) :
+	    machine_config_resolve(c, name);
+	f->path = machine_config_clean_path(r);
+	free(r);
+	f->label = xstrdup(label);
+	/*  (One that can't be read exists, and fails to be copied.)  */
+	f->exists = file_exists(f->path) && !is_dir(f->path);
+	f->size = f->exists ? file_size(f->path) : 0;
+	if (f->size < 0)
+		f->size = 0;
+	f->action = MC_EXPORT_COPY;
+	f->field = field;
+	f->index = index;
+}
+
+
+/*
+ *  machine_config_files():
+ *
+ *  The files a configuration refers to (ROM images, files to load, drive
+ *  images, and the NVRAM file), each to be copied when it is exported.
+ *  Returns how many there are; free them with machine_config_free_files().
+ */
+int machine_config_files(const struct machine_config *c,
+	struct mc_file **listp)
+{
+	char label[100];
+	int n = 0, i;
+
+	*listp = NULL;
+	add_file(&n, listp, c, FIELD_ROM, 0, c->rom, "System ROM");
+	for (i = 0; i < MC_MAX_SLOTS; i++) {
+		snprintf(label, sizeof(label), "Slot %i option ROM", i);
+		add_file(&n, listp, c, FIELD_SLOT, i, c->slot_rom[i], label);
+	}
+	for (i = 0; i < c->n_load; i++) {
+		snprintf(label, sizeof(label), "File to load %i", i + 1);
+		add_file(&n, listp, c, FIELD_LOAD, i, c->load[i], label);
+	}
+	for (i = 0; i < c->n_drives; i++) {
+		static const char *kinds[] = { "disk", "CD-ROM", "tape",
+		    "floppy" };
+		snprintf(label, sizeof(label), "Drive %i (%s)", i + 1,
+		    kinds[c->drives[i].kind]);
+		add_file(&n, listp, c, FIELD_DRIVE, i, c->drives[i].file,
+		    label);
+	}
+	add_file(&n, listp, c, FIELD_NVRAM, 0, c->nvram, "NVRAM");
+	return n;
+}
+
+
+void machine_config_free_files(int n, struct mc_file *list)
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		free(list[i].label);
+		free(list[i].path);
+	}
+	free(list);
+}
+
+
+/*  A configuration's field for a file:  */
+static char **file_field(struct machine_config *c, const struct mc_file *f)
+{
+	switch (f->field) {
+	case FIELD_ROM:		return &c->rom;
+	case FIELD_SLOT:	return &c->slot_rom[f->index];
+	case FIELD_LOAD:	return &c->load[f->index];
+	case FIELD_DRIVE:	return &c->drives[f->index].file;
+	default:		return &c->nvram;
+	}
+}
+
+
+#define	EXPORT_CHUNK		(1024 * 1024)
+#define	EXPORT_STEP		(32 * 1024 * 1024)
+
+struct mc_copy {
+	char		*from, *to;
+	const char	*name;		/*  to, in the folder  */
+};
+
+struct mc_export {
+	struct machine_config *c;	/*  the exported configuration  */
+	char		*json;		/*  where it is written  */
+	int		n_copies;
+	struct mc_copy	*copies;
+	int		cur;		/*  the copy being made  */
+	FILE		*in, *out;
+	bool		hole;		/*  the last chunk was skipped  */
+	int64_t		done, total;
+	unsigned char	*buf;
+	bool		finished;
+
+	/*  What was created, removed again if it doesn't finish:  */
+	int		n_made_files, n_made_dirs;
+	char		**made_files, **made_dirs;
+};
+
+
+/*  A free name in the export folder, for a copy of a file:  */
+static char *free_name(struct mc_export *e, const char *dir, const char *name)
+{
+	const char *dot = strrchr(name, '.'), *slash = strrchr(name, '/');
+	char *full = NULL, *n;
+	int k, i;
+
+	if (dot == NULL || dot == name || (slash != NULL && dot < slash) ||
+	    (slash != NULL && dot == slash + 1))
+		dot = name + strlen(name);
+
+	for (k = 1; ; k++) {
+		bool taken;
+		n = k == 1 ? xstrdup(name) : xprintf("%.*s-%i%s",
+		    (int) (dot - name), name, k, dot);
+		full = xprintf("%s/%s", dir, n);
+		taken = file_exists(full) || strcasecmp(n, "machine.json") == 0;
+		for (i = 0; !taken && i < e->n_copies; i++)
+#ifdef _WIN32
+			taken = strcasecmp(e->copies[i].to, full) == 0;
+#else
+			taken = strcmp(e->copies[i].to, full) == 0;
+#endif
+		free(n);
+		if (!taken)
+			return full;
+		free(full);
+	}
+}
+
+
+/*
+ *  machine_config_export_start():
+ *
+ *  Starts exporting a configuration to a folder of its own (which is
+ *  created, if it doesn't exist; it mustn't have a machine.json already),
+ *  with its files as the list says (see machine_config_files()):
+ *
+ *	MC_EXPORT_COPY	copied into the folder (a file that doesn't
+ *			exist, e.g. an NVRAM file that is created when the
+ *			machine runs, is just named as a file there);
+ *	MC_EXPORT_KEEP	referred to where it is (by its name, if it is
+ *			in a ROM folder, or else by its absolute name);
+ *	MC_EXPORT_OMIT	left out: no ROM image, no medium in a CD-ROM or
+ *			tape drive, or no such drive or file to load.
+ *
+ *  A copied file is named as it is in the machine's folder, or else by its
+ *  name (another one, e.g. disk-2.img, if that is taken).  Then call
+ *  machine_config_export_step() until it is done.  Returns NULL, with an
+ *  error message in *errp, if it can't be started.
+ */
+struct mc_export *machine_config_export_start(const struct machine_config *c,
+	const char *dir, int n, const struct mc_file *files, char **errp)
+{
+	struct mc_export *e;
+	char *d, *src_dir;
+	int i;
+
+	*errp = NULL;
+	if (dir == NULL || dir[0] == '\0') {
+		*errp = xstrdup("choose a folder to export the machine to");
+		return NULL;
+	}
+	d = machine_config_clean_path(dir);
+	src_dir = c->dir != NULL ? machine_config_clean_path(c->dir) : NULL;
+	if (src_dir != NULL &&
+#ifdef _WIN32
+	    strcasecmp(src_dir, d) == 0) {
+#else
+	    strcmp(src_dir, d) == 0) {
+#endif
+		*errp = xstrdup("that is the machine's own folder; choose "
+		    "another one");
+		free(d); free(src_dir);
+		return NULL;
+	}
+	if (file_exists(d) && !is_dir(d)) {
+		*errp = xprintf("%s is a file; choose a folder", d);
+		free(d); free(src_dir);
+		return NULL;
+	}
+
+	CHECK_ALLOCATION(e = (struct mc_export *) calloc(1, sizeof(*e)));
+	e->json = xprintf("%s/machine.json", d);
+	if (file_exists(e->json)) {
+		*errp = xprintf("%s already has a machine.json; choose "
+		    "another folder", d);
+		goto fail;
+	}
+	if (!make_dirs(d, &e->n_made_dirs, &e->made_dirs)) {
+		*errp = xprintf("%s: %s", d, strerror(errno));
+		goto fail;
+	}
+
+	/*  Where each file goes:  */
+	e->c = machine_config_copy(c);
+	for (i = 0; i < n; i++) {
+		const struct mc_file *f = &files[i];
+		char **field = file_field(e->c, f), *to, *v;
+		const char *rest = src_dir != NULL ? inside(src_dir, f->path) :
+		    NULL;
+		size_t prefix = f->field == FIELD_LOAD ?
+		    load_prefix_len(*field) : 0;
+
+		switch (f->action) {
+		case MC_EXPORT_COPY:
+			if (rest == NULL) {
+				rest = strrchr(f->path, '/');
+				rest = rest != NULL ? rest + 1 : f->path;
+			}
+			to = free_name(e, d, rest);
+			if (f->exists) {
+				CHECK_ALLOCATION(e->copies = (struct mc_copy *)
+				    realloc(e->copies, (e->n_copies + 1) *
+				    sizeof(struct mc_copy)));
+				e->copies[e->n_copies].from = xstrdup(f->path);
+				e->copies[e->n_copies].to = xstrdup(to);
+				e->copies[e->n_copies].name =
+				    e->copies[e->n_copies].to + strlen(d) + 1;
+				e->n_copies ++;
+				e->total += f->size;
+			}
+			break;
+		case MC_EXPORT_KEEP:
+			/*  (machine_config_save() shortens it.)  */
+			to = xstrdup(f->path);
+			break;
+		default:
+			continue;
+		}
+		v = xprintf("%.*s%s", (int) prefix, *field, to);
+		free(to);
+		free(*field);
+		*field = v;
+	}
+
+	/*  What is left out (from the last, so that the indexes hold):  */
+	for (i = n - 1; i >= 0; i--) {
+		const struct mc_file *f = &files[i];
+		if (f->action != MC_EXPORT_OMIT)
+			continue;
+		if (f->field == FIELD_LOAD)
+			machine_config_remove_string(&e->c->n_load,
+			    &e->c->load, f->index);
+		else if (f->field == FIELD_DRIVE &&
+		    e->c->drives[f->index].kind != MC_DRIVE_CDROM &&
+		    e->c->drives[f->index].kind != MC_DRIVE_TAPE)
+			machine_config_remove_drive(e->c, f->index);
+		else if (f->field == FIELD_SLOT) {
+			free(e->c->slot_rom[f->index]);
+			e->c->slot_rom[f->index] = NULL;
+		} else
+			machine_config_set(file_field(e->c, f), "");
+	}
+
+	CHECK_ALLOCATION(e->buf = (unsigned char *) malloc(EXPORT_CHUNK));
+	free(d);
+	free(src_dir);
+	return e;
+
+fail:
+	free(d);
+	free(src_dir);
+	machine_config_export_free(e);
+	return NULL;
+}
+
+
+static bool all_zero(const unsigned char *p, size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++)
+		if (p[i] != 0)
+			return false;
+	return true;
+}
+
+
+static bool seek_forward(FILE *f, int64_t n)
+{
+#ifdef _WIN32
+	return _fseeki64(f, n, SEEK_CUR) == 0;
+#else
+	return fseeko(f, (off_t) n, SEEK_CUR) == 0;
+#endif
+}
+
+
+/*  Closes the files of the copy being made; false on a write error:  */
+static bool close_copy(struct mc_export *e)
+{
+	bool ok = true;
+
+	if (e->in != NULL)
+		fclose(e->in);
+	if (e->out != NULL && fclose(e->out) != 0)
+		ok = false;
+	e->in = e->out = NULL;
+	return ok;
+}
+
+
+/*
+ *  machine_config_export_step():
+ *
+ *  Copies some more (a few tens of megabytes), and in the end writes the
+ *  machine.json.  Returns 0 if there is more to do, 1 when it is done, or
+ *  -1 on error, with an error message in *errp.  Runs of zeros in a copy
+ *  are left as holes (so that sparse disk images stay sparse).
+ */
+int machine_config_export_step(struct mc_export *e, char **errp)
+{
+	int64_t budget = EXPORT_STEP;
+
+	*errp = NULL;
+	if (e->finished)
+		return 1;
+
+	while (e->cur < e->n_copies) {
+		struct mc_copy *k = &e->copies[e->cur];
+		size_t got;
+
+		if (e->in == NULL) {
+			char *dir = dirname_of(k->to);
+			bool ok = make_dirs(dir, &e->n_made_dirs,
+			    &e->made_dirs);
+			free(dir);
+			if (ok && (e->in = fopen(k->from, "rb")) == NULL) {
+				*errp = xprintf("%s: %s", k->from,
+				    strerror(errno));
+				return -1;
+			}
+			if (!ok || (e->out = fopen(k->to, "wb")) == NULL) {
+				*errp = xprintf("%s: %s", k->to,
+				    strerror(errno));
+				close_copy(e);
+				return -1;
+			}
+			machine_config_add_string(&e->n_made_files,
+			    &e->made_files, k->to);
+			e->hole = false;
+		}
+
+		got = fread(e->buf, 1, EXPORT_CHUNK, e->in);
+		if (got > 0) {
+			bool ok;
+			if (all_zero(e->buf, got)) {
+				ok = seek_forward(e->out, got);
+				e->hole = true;
+			} else {
+				ok = fwrite(e->buf, 1, got, e->out) == got;
+				e->hole = false;
+			}
+			if (!ok) {
+				*errp = xprintf("%s: %s", k->to,
+				    strerror(errno));
+				close_copy(e);
+				return -1;
+			}
+			e->done += got;
+			budget -= got;
+		}
+
+		if (got < EXPORT_CHUNK) {
+			bool ok = !ferror(e->in);
+			if (!ok)
+				*errp = xprintf("%s: %s", k->from,
+				    strerror(errno));
+			/*  (A hole at the end: the file's last byte.)  */
+			else if (e->hole && (!seek_forward(e->out, -1) ||
+			    fputc(0, e->out) == EOF))
+				ok = false;
+			if (!close_copy(e))
+				ok = false;
+			if (!ok) {
+				if (*errp == NULL)
+					*errp = xprintf("%s: %s", k->to,
+					    strerror(errno));
+				return -1;
+			}
+			e->cur ++;
+		}
+		if (budget <= 0)
+			return 0;
+	}
+
+	if (!machine_config_save(e->c, e->json, errp))
+		return -1;
+	e->finished = true;
+	return 1;
+}
+
+
+/*
+ *  machine_config_export_progress():
+ *
+ *  How much has been copied, of how much, and the file being copied now
+ *  (its name in the folder, or NULL if none).
+ */
+void machine_config_export_progress(const struct mc_export *e,
+	int64_t *done, int64_t *total, const char **current)
+{
+	*done = e->done;
+	*total = e->total;
+	*current = e->cur < e->n_copies ? e->copies[e->cur].name : NULL;
+}
+
+
+/*  The machine.json that it writes:  */
+const char *machine_config_export_path(const struct mc_export *e)
+{
+	return e->json;
+}
+
+
+/*
+ *  machine_config_export_free():
+ *
+ *  Frees an export; one that isn't done is cancelled, and what it has
+ *  created so far is removed.
+ */
+void machine_config_export_free(struct mc_export *e)
+{
+	int i;
+
+	if (e == NULL)
+		return;
+	close_copy(e);
+	if (!e->finished) {
+		for (i = e->n_made_files - 1; i >= 0; i--)
+			remove(e->made_files[i]);
+		for (i = e->n_made_dirs - 1; i >= 0; i--)
+			rmdir(e->made_dirs[i]);
+	}
+	for (i = 0; i < e->n_made_files; i++)
+		free(e->made_files[i]);
+	for (i = 0; i < e->n_made_dirs; i++)
+		free(e->made_dirs[i]);
+	free(e->made_files);
+	free(e->made_dirs);
+	for (i = 0; i < e->n_copies; i++) {
+		free(e->copies[i].from);
+		free(e->copies[i].to);
+	}
+	free(e->copies);
+	machine_config_free(e->c);
+	free(e->json);
+	free(e->buf);
+	free(e);
+}
+
+
+/*****************************************************************************
+ *
  *  Setting up the emulation
  */
 

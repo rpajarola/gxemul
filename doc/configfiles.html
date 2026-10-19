@@ -73,6 +73,9 @@ SUCH DAMAGE.
 	<tt>-V</tt>, or <tt>-i</tt>) can be given with it; options that
 	describe the machine (such as <tt>-d</tt> or <tt>-M</tt>) cannot,
 	since the file does that.
+	<tt><b>gxemul --export machine.json folder</b></tt> makes a
+	copy of the machine in a folder of its own, with copies of all
+	its files (see <a href="#export">Export</a>).
   <li>Everything on the command line, as before, e.g.
 	<tt><b>gxemul -e 3max -d disk.img</b></tt> (see
 	<tt>gxemul -h</tt>).
@@ -100,11 +103,38 @@ summary of it, and:
   <li><b>Edit</b> opens the selected machine in the editor.
   <li><b>Duplicate</b> makes a copy of it, as a new machine (it uses the
 	same disk images, unless you change them).
+  <li><b>Export...</b> makes a copy of it in a folder of its own, with
+	its files (see <a href="#export">below</a>).
   <li><b>Forget</b> removes it from the list (its files are kept).
   <li><b>Settings...</b> sets the folders where ROM images are looked
 	for (see <a href="#files">below</a>).
   <li><b>Start</b> starts it.
 </ul>
+
+<p><a name="export"></a><b>Export</b> makes a self-contained copy of a
+machine, e.g. to move it to another computer, or to give it to someone:
+a folder with its <tt>machine.json</tt>, and the files it uses.  For each
+file (the system ROM, option ROMs, files to load, drive images, and the
+NVRAM file), choose:
+<ul>
+  <li><b>Copy</b>: it is copied into the folder, and the copy is referred
+	to by its name (disk images stay sparse).  A file that is in the
+	machine's own folder keeps its name there (e.g.
+	<tt>disks/disk.img</tt>); another gets its own name, or another
+	one, e.g. <tt>disk-2.img</tt>, if two files have the same name.
+	A file that doesn't exist yet (e.g. the NVRAM file of a machine
+	that hasn't run) is just named there.
+  <li><b>Leave in place</b>: the copy refers to it where it is: by its
+	name, if it is a ROM image in a ROM folder (see <a
+	href="#files">below</a>), or else by its full name (which may
+	include your home folder's name).
+  <li><b>Omit</b>: it is left out: no ROM image, no medium in a CD-ROM
+	or tape drive, or no such disk drive, floppy drive, or file to
+	load.
+</ul>
+The new machine is added to the list.  Cancel stops the copying, and
+removes what was copied.  <tt>gxemul --export machine.json folder</tt>
+does the same from the command line, copying every file.
 
 <p>The editor has a page for each part of the configuration: General
 (name, architecture, machine type and model, memory, CPU), Firmware (a

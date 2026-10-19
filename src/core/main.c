@@ -129,6 +129,11 @@ static void usage(bool longusage)
 	color_normal();
 	printf("\n");
 #endif
+	printf("   or  ");
+	color_prompt();
+	printf("%s --export machine.json folder", progname);
+	color_normal();
+	printf("    (a copy, with its files)\n");
 	
 	if (!longusage) {
 		printf("\nRun  ");
@@ -648,6 +653,52 @@ static int restart(const char *config)
 }
 
 
+/*
+ *  --export machine.json folder: makes a copy of the machine in a folder of
+ *  its own, with copies of all its files (see machine_config_export_start()).
+ */
+static int export_machine(int argc, char *argv[])
+{
+	struct machine_config *c;
+	struct mc_export *e;
+	struct mc_file *files;
+	char *err;
+	int n, r;
+
+	if (argc != 4) {
+		fprintf(stderr, "Usage: %s --export machine.json folder\n",
+		    progname);
+		return 1;
+	}
+	c = machine_config_load(argv[2], &err);
+	if (c == NULL) {
+		fprintf(stderr, "%s\n", err);
+		free(err);
+		return 1;
+	}
+	n = machine_config_files(c, &files);
+	e = machine_config_export_start(c, argv[3], n, files, &err);
+	machine_config_free_files(n, files);
+	machine_config_free(c);
+	if (e == NULL) {
+		fprintf(stderr, "%s\n", err);
+		free(err);
+		return 1;
+	}
+	while ((r = machine_config_export_step(e, &err)) == 0)
+		;
+	if (r < 0) {
+		fprintf(stderr, "%s\n", err);
+		free(err);
+		machine_config_export_free(e);
+		return 1;
+	}
+	printf("Exported to %s\n", machine_config_export_path(e));
+	machine_config_export_free(e);
+	return 0;
+}
+
+
 int main(int argc, char *argv[])
 {
 	/*  Setting constants:  */
@@ -744,6 +795,10 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "--no-start needs --edit machine.json.\n");
 		return 1;
 	}
+
+	/*  --export machine.json folder:  */
+	if (argc >= 2 && strcmp(argv[1], "--export") == 0)
+		return export_machine(argc, argv);
 
 	get_cmd_args(argc, argv, emul, &diskimages, &n_diskimages, &tap_devname);
 
