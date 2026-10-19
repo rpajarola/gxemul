@@ -55,6 +55,7 @@
 #include "machine.h"
 #include "machine_config.h"
 #include "misc.h"
+#include "net.h"
 
 
 #ifndef	WITH_SDL
@@ -143,6 +144,10 @@ static struct {
 	enum page	page;
 	int		disk_mb[64];	/*  for creating missing disk images  */
 	bool		custom[64];	/*  editing a drive's INQUIRY strings  */
+	bool		custom_tap;	/*  editing tapdev as text on Windows  */
+	int		n_tap_devs;	/*  -2 = not queried, -1 = no Npcap  */
+	char		**tap_names;
+	char		**tap_descs;
 	struct edit	edits[MAX_EDITS];
 	int		n_edits;
 
@@ -775,6 +780,7 @@ static void open_editor(struct machine_config *c, bool is_new)
 
 	ui.page = PAGE_GENERAL;
 	ui.start_after_save = false;
+	ui.custom_tap = false;
 	for (i = 0; i < 64; i++) {
 		ui.disk_mb[i] = DEFAULT_DISK_MB;
 		ui.custom[i] = false;
@@ -1983,6 +1989,76 @@ static void page_display(void)
 }
 
 
+static void tap_devs_free(void)
+{
+	int i;
+
+	for (i = 0; i < ui.n_tap_devs; i++) {
+		free(ui.tap_names[i]);
+		free(ui.tap_descs[i]);
+	}
+	free(ui.tap_names);
+	free(ui.tap_descs);
+	ui.tap_names = NULL;
+	ui.tap_descs = NULL;
+	ui.n_tap_devs = -2;
+}
+
+
+#ifdef _WIN32
+static void tap_field(void)
+{
+	mu_Context *ctx = ui.ctx;
+	struct machine_config *c = ui.cfg;
+	const char *labels[66];
+	int i, nl = 0, sel = 0;
+
+	if (ui.n_tap_devs == -2)
+		ui.n_tap_devs = net_tap_list(&ui.tap_names, &ui.tap_descs);
+
+	labels[nl++] = "None (simulated network)";
+	for (i = 0; i < ui.n_tap_devs && nl < 64; i++)
+		labels[nl++] = ui.tap_descs[i];
+	labels[nl++] = "Other...";
+
+	if (ui.custom_tap)
+		sel = nl - 1;
+	else if (c->net_tapdev[0] != '\0') {
+		sel = nl - 1;
+		for (i = 0; i < ui.n_tap_devs && i + 1 < nl - 1; i++)
+			if (strcasecmp(c->net_tapdev, ui.tap_names[i]) == 0 ||
+			    strcasecmp(c->net_tapdev, ui.tap_descs[i]) == 0) {
+				sel = i + 1;
+				break;
+			}
+	}
+
+	if (dropdown("tapdev", labels, nl, &sel)) {
+		if (sel == 0) {
+			machine_config_set(&c->net_tapdev, "");
+			ui.custom_tap = false;
+			edits_clear();
+		} else if (sel == nl - 1) {
+			ui.custom_tap = true;
+		} else {
+			machine_config_set(&c->net_tapdev,
+			    ui.tap_descs[sel - 1]);
+			ui.custom_tap = false;
+			edits_clear();
+		}
+	}
+	if (sel == nl - 1) {
+		mu_label(ctx, "");
+		text_field(&c->net_tapdev);
+	}
+	if (ui.n_tap_devs < 0) {
+		mu_label(ctx, "");
+		mu_label(ctx, "(Npcap is not installed)");
+	}
+}
+#endif
+
+
 static void page_network(void)
 {
 	mu_Context *ctx = ui.ctx;
@@ -2001,8 +2077,13 @@ static void page_network(void)
 	text_field(&c->net_ipv4);
 	mu_label(ctx, "Prefix length");
 	int_field(&c->net_ipv4len);
+#ifdef _WIN32
+	mu_label(ctx, "Tap / bridge interface");
+	tap_field();
+#else
 	mu_label(ctx, "Tap device");
 	text_field(&c->net_tapdev);
+#endif
 	mu_label(ctx, "Local UDP port");
 	int_field(&c->net_local_port);
 
@@ -2344,6 +2425,7 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 	SDL_Event ev;
 
 	memset(&ui, 0, sizeof(ui));
+	ui.n_tap_devs = -2;
 
 	SDL_SetMainReady();
 	SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
@@ -2417,6 +2499,7 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 
 	list_free();
 	rom_dirs_free();
+	tap_devs_free();
 	machine_config_free(ui.cfg);
 	free(ui.message);
 	free(ui.ctx);

@@ -133,7 +133,11 @@ struct net {
 
 	/*  The network's tap device, if we're using tap:  */
 	const char	*tapdev;
+#ifdef _WIN32
+	void		*tap_pcap;
+#else
 	int		tap_fd;
+#endif
 
 	/*  The network's addresses:  */
 	struct in_addr	netmask_ipv4;
@@ -189,6 +193,7 @@ void net_tap_rx_avail(struct net *net);
 void net_tap_tx(struct net *net, struct nic_data *nic, unsigned char *packet,
 	int len);
 bool net_tap_init(struct net *net, const char *tapdev);
+int net_tap_list(char ***names, char ***descriptions);
 
 /*  net_ether.cc  */
 int net_ether_eq(const uint8_t *a1, const uint8_t *a2);
