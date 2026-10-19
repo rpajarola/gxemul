@@ -5415,3 +5415,12 @@ Changelog for GXemul:
 		with Edit Configuration..., can be exported too), for what is
 		in the editor; it warns that a running machine's disk images
 		and NVRAM may change while they are copied.
+20261019	The DECstation 5000/200 PROM keeps its setenv variables in
+		the NVRAM file: the KN02's "preserve NVR" jumper is set when
+		the NVRAM is kept in a file (without it, the PROM cleared the
+		NVRAM at power-up, and kept its variables in RAM only), and
+		the DECstations' RTC repeats its registers through a whole
+		page, as on the boards: the PROM's NVRAM loops go two
+		registers past the last one, which made the rest of the page
+		RAM for dyntrans, after which the PROM's writes to the NVRAM
+		went to that RAM instead of the RTC.

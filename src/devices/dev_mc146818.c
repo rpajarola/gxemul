@@ -489,6 +489,13 @@ DEVICE_ACCESS(mc146818)
 		relative_addr = d->last_addr * 4;
 		break;
 	case MC146818_DEC:
+		/*
+		 *  The registers repeat through the RTC's address range, as
+		 *  on the DECstations' boards (whose PROMs copy their NVRAM
+		 *  with loops that go two registers past the last one).
+		 */
+		relative_addr &= DEV_MC146818_LENGTH - 1;
+		break;
 	case MC146818_SGI:
 		/*
 		 *  This device was originally written for DECstation
@@ -852,6 +859,16 @@ void dev_mc146818_init(struct machine *machine, struct memory *mem,
 		break;
 	case MC146818_SGI:
 		dev_len = 0x400;
+		break;
+	case MC146818_DEC:
+		/*
+		 *  A whole page, where the registers repeat:  otherwise, an
+		 *  access beyond them would make the rest of the page RAM, for
+		 *  dyntrans, and later accesses to the registers on that page
+		 *  would reach that RAM instead of the device.
+		 */
+		dev_len = 0x1000;
+		break;
 	}
 
 	memory_device_register(mem, "mc146818", baseaddr,

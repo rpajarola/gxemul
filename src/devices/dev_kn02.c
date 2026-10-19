@@ -176,6 +176,15 @@ DEVINIT(kn02)
 	 *  is not set, the 5000/200 PROM image loops forever.
 	 */
 	csr = KN02_CSR_NRMMOD;
+
+	/*
+	 *  The "preserve NVR" jumper:  without it, the PROM clears the RTC's
+	 *  NVRAM (its setenv variables) at every power-up, and keeps them
+	 *  only in RAM.  It is set when the NVRAM is kept in a file.
+	 */
+	if (devinit->machine->nvram_filename != NULL)
+		csr |= KN02_CSR_PRSVNVR;
+
 	d->csr[0] = csr;
 	d->csr[1] = csr >> 8;
 	d->csr[2] = csr >> 16;
