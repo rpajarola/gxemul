@@ -122,6 +122,7 @@ struct machine_config {
 	char		**net_remotes;
 	char		*net_tapdev;	/*  "" = none  */
 	char		*net_mac;	/*  the first NIC's, "" = automatic  */
+	bool		net_gateway;	/*  the simulated gateway (DHCP, NAT)  */
 	bool		net_l2tp;
 	uint32_t	net_l2tp_session;
 	char		*net_l2tp_cookie;

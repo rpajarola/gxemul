@@ -288,6 +288,8 @@ shown here, except for the machine type:
     "remotes": [],              <font color="#2020cf">e.g. "localhost:12345"</font>
     "tapdev": "",               <font color="#2020cf">as -L: a host interface to bridge to (e.g. "en0"), or a tap device</font>
     "mac": "",                  <font color="#2020cf">the first NIC's Ethernet address, "" = from the serial number</font>
+    "gateway": true,            <font color="#2020cf">the simulated gateway (DHCP, DNS, NAT); false = frames only go</font>
+                                <font color="#2020cf">  to the other NICs and the remote emulators</font>
     "l2tp": { "enabled": false, "session": 1, "cookie": "", "counter": true }
   },
   "devices": []                 <font color="#2020cf">extra devices, as for the debugger's device add</font>

@@ -2315,6 +2315,7 @@ static void tap_field(void)
 		ui.n_tap_devs = net_tap_list(&ui.tap_names, &ui.tap_descs);
 
 	labels[nl++] = "Simulated network";
+	labels[nl++] = "No gateway (only other emulators)";
 	for (i = 0; i < ui.n_tap_devs && nl < 64; i++)
 		labels[nl++] = ui.tap_descs[i];
 	labels[nl++] = "Other...";
@@ -2323,23 +2324,25 @@ static void tap_field(void)
 		sel = nl - 1;
 	else if (c->net_tapdev[0] != '\0') {
 		sel = nl - 1;
-		for (i = 0; i < ui.n_tap_devs && i + 1 < nl - 1; i++)
+		for (i = 0; i < ui.n_tap_devs && i + 2 < nl - 1; i++)
 			if (strcasecmp(c->net_tapdev, ui.tap_names[i]) == 0 ||
 			    strcasecmp(c->net_tapdev, ui.tap_descs[i]) == 0) {
-				sel = i + 1;
+				sel = i + 2;
 				break;
 			}
-	}
+	} else
+		sel = c->net_gateway ? 0 : 1;
 
 	if (dropdown("tapdev", labels, nl, &sel)) {
-		if (sel == 0) {
+		if (sel <= 1) {
 			machine_config_set(&c->net_tapdev, "");
+			c->net_gateway = sel == 0;
 			ui.custom_tap = false;
 		} else if (sel == nl - 1) {
 			ui.custom_tap = true;
 		} else {
 			machine_config_set(&c->net_tapdev,
-			    ui.tap_descs[sel - 1]);
+			    ui.tap_descs[sel - 2]);
 			ui.custom_tap = false;
 		}
 		edits_clear();
@@ -2364,7 +2367,10 @@ static void tap_field(void)
 		machine_config_set(&ui.tap_checked, c->net_tapdev);
 	}
 	mu_label(ctx, "");
-	if (c->net_tapdev[0] == '\0') {
+	if (c->net_tapdev[0] == '\0' && !c->net_gateway && !ui.custom_tap)
+		mu_label(ctx, "(the machine's network interface is only "
+		    "connected to the other emulators below, if any)");
+	else if (c->net_tapdev[0] == '\0') {
 		if (ui.n_tap_devs < 0)
 #ifdef _WIN32
 			mu_label(ctx, "(Npcap is not installed, so the network "
@@ -2409,7 +2415,7 @@ static void page_network(void)
 
 	mu_label(ctx, "Connected to");
 	tap_field();
-	if (c->net_tapdev[0] == '\0') {
+	if (c->net_tapdev[0] == '\0' && c->net_gateway) {
 		mu_label(ctx, "Network address");
 		text_field(&c->net_ipv4);
 		mu_label(ctx, "Prefix length");

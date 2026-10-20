@@ -436,6 +436,10 @@ void net_ethernet_tx(struct net *net, struct nic_data *nic,
 	}
 
 
+	/*  Without the simulated gateway, that's it:  */
+	if (!net->gateway)
+		return;
+
 	/*
 	 *  The code below simulates the behaviour of a "NAT"-style gateway.
 	 *
@@ -691,24 +695,29 @@ void net_dumpinfo(struct net *net)
 
 	debug_indentation(iadd);
 
-	net_debugaddr(&net->netmask_ipv4, NET_ADDR_IPV4);
-	debug("/%i", net->netmask_ipv4_len);
+	if (!net->gateway)
+		debug("no gateway: frames only go to the other NICs, and to "
+		    "the remote emulators, if any\n");
+	else {
+		net_debugaddr(&net->netmask_ipv4, NET_ADDR_IPV4);
+		debug("/%i", net->netmask_ipv4_len);
 
-	debug(" (max outgoing: TCP=%i, UDP=%i)\n",
-	    MAX_TCP_CONNECTIONS, MAX_UDP_CONNECTIONS);
+		debug(" (max outgoing: TCP=%i, UDP=%i)\n",
+		    MAX_TCP_CONNECTIONS, MAX_UDP_CONNECTIONS);
 
-	debug("gateway+nameserver: ");
-	net_debugaddr(&net->gateway_ipv4_addr, NET_ADDR_IPV4);
-	debug(" (");
-	net_debugaddr(&net->gateway_ethernet_addr, NET_ADDR_ETHERNET);
-	debug(")\n");
+		debug("gateway+nameserver: ");
+		net_debugaddr(&net->gateway_ipv4_addr, NET_ADDR_IPV4);
+		debug(" (");
+		net_debugaddr(&net->gateway_ethernet_addr, NET_ADDR_ETHERNET);
+		debug(")\n");
 
-	if (!net->nameserver_known) {
-		debug("(could not determine the host's nameserver)\n");
-	} else {
-		debug("nameserver uses real nameserver ");
-		net_debugaddr(&net->nameserver_ipv4, NET_ADDR_IPV4);
-		debug("\n");
+		if (!net->nameserver_known) {
+			debug("(could not determine the host's nameserver)\n");
+		} else {
+			debug("nameserver uses real nameserver ");
+			net_debugaddr(&net->nameserver_ipv4, NET_ADDR_IPV4);
+			debug("\n");
+		}
 	}
 
 	rnp = net->remote_nets;
@@ -875,7 +884,8 @@ struct net *net_init(struct emul *emul, int init_flags,
 		}
 	}
 
-	if (init_flags & NET_INIT_FLAG_GATEWAY)
+	net->gateway = (init_flags & NET_INIT_FLAG_GATEWAY) != 0;
+	if (net->gateway)
 		net_gateway_init(net);
 
 	net_dumpinfo(net);

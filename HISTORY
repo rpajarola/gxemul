@@ -5440,3 +5440,9 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.5  ==============
 
+20261020	The simulated gateway (DHCP, DNS, NAT) can be turned off
+		("gateway": false under "network", or "No gateway" in the
+		configuration window's "Connected to"): the network then only
+		carries frames between the machine and the other emulators
+		(remotes over UDP), e.g. for a network of machines with a
+		server of their own.

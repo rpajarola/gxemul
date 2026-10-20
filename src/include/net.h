@@ -145,6 +145,7 @@ struct net {
 	struct nic_data	**nic_data;	/* one per NIC */
 
 	/*  The "special machine":  */
+	bool		gateway;	/*  the simulated gateway is on  */
 	unsigned char	gateway_ipv4_addr[4];
 	unsigned char	gateway_ethernet_addr[6];
 

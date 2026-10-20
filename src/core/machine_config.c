@@ -50,6 +50,7 @@
  *	  "slots": { "0": "PMAG-BA.bin" },
  *	  "network": { "enabled": true, "ipv4": "10.0.0.0", "ipv4len": 8,
  *	               "local_port": 0, "remotes": [], "tapdev": "",
+ *	               "mac": "", "gateway": true,
  *	               "l2tp": { "enabled": false, "session": 1,
  *	                         "cookie": "", "counter": true } },
  *	  "devices": []
@@ -196,6 +197,7 @@ struct machine_config *machine_config_new(void)
 	c->net_ipv4len = NET_DEFAULT_IPV4_LEN;
 	c->net_tapdev = xstrdup("");
 	c->net_mac = xstrdup("");
+	c->net_gateway = true;
 	c->net_l2tp_session = 1;
 	c->net_l2tp_cookie = xstrdup("");
 	c->net_l2tp_counter = true;
@@ -999,6 +1001,7 @@ struct machine_config *machine_config_parse(const char *text,
 		    &err);
 		get_str(o, "tapdev", &c->net_tapdev, &err);
 		get_str(o, "mac", &c->net_mac, &err);
+		get_bool(o, "gateway", &c->net_gateway, &err);
 		if ((v = section(o, "l2tp", &err)) != NULL) {
 			get_bool(v, "enabled", &c->net_l2tp, &err);
 			get_int(v, "session", &session, &err);
@@ -1127,6 +1130,7 @@ bool machine_config_save(struct machine_config *c, const char *path,
 	add_list(o, "remotes", c->n_net_remotes, c->net_remotes);
 	cJSON_AddStringToObject(o, "tapdev", c->net_tapdev);
 	cJSON_AddStringToObject(o, "mac", c->net_mac);
+	cJSON_AddBoolToObject(o, "gateway", c->net_gateway);
 	l2 = cJSON_AddObjectToObject(o, "l2tp");
 	cJSON_AddBoolToObject(l2, "enabled", c->net_l2tp);
 	cJSON_AddNumberToObject(l2, "session", c->net_l2tp_session);
@@ -2433,7 +2437,8 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 		m->nic_mac_set = true;
 
 	if (c->net) {
-		emul->net = net_init(emul, NET_INIT_FLAG_GATEWAY,
+		emul->net = net_init(emul, c->net_gateway ?
+		    NET_INIT_FLAG_GATEWAY : 0,
 		    c->net_tapdev[0] ? c->net_tapdev : NULL,
 		    c->net_ipv4, c->net_ipv4len, c->net_remotes,
 		    c->n_net_remotes, c->net_local_port, NULL);
