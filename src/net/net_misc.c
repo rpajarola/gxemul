@@ -78,7 +78,8 @@ void net_debugaddr(void *addr, int type)
  *
  *  Generate a "unique" serial number for a machine. The machine's serial
  *  number is combined with the machine's current number of NICs to form a
- *  more-or-less valid MAC address.
+ *  more-or-less valid MAC address.  (The first NIC's address can be given
+ *  in a machine.json, "mac" under "network".)
  *
  *  The return value (6 bytes) are written to macbuf.
  */
@@ -86,6 +87,13 @@ void net_generate_unique_mac(struct machine *machine, unsigned char *macbuf)
 {
 	if (macbuf == NULL || machine == NULL) {
 		fatal("**\n**  net_generate_unique_mac(): NULL ptr\n**\n");
+		return;
+	}
+
+	/*  The first NIC's address may be given in the configuration:  */
+	if (machine->nic_mac_set && machine->nr_of_nics == 0) {
+		memcpy(macbuf, machine->nic_mac, 6);
+		machine->nr_of_nics ++;
 		return;
 	}
 

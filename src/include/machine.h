@@ -126,6 +126,8 @@ struct machine {
 	    is useful when emulating multiple cards in one machine:  */
 	int	serial_nr;
 	int	nr_of_nics;
+	unsigned char nic_mac[6];	/*  the first NIC's address, if  */
+	bool	nic_mac_set;		/*  given in the configuration  */
 
 	/*  Main memory:  */
 	struct memory *memory;

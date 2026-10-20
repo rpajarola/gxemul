@@ -195,6 +195,7 @@ struct machine_config *machine_config_new(void)
 	c->net_ipv4 = xstrdup(NET_DEFAULT_IPV4_MASK);
 	c->net_ipv4len = NET_DEFAULT_IPV4_LEN;
 	c->net_tapdev = xstrdup("");
+	c->net_mac = xstrdup("");
 	c->net_l2tp_session = 1;
 	c->net_l2tp_cookie = xstrdup("");
 	c->net_l2tp_counter = true;
@@ -225,7 +226,7 @@ void machine_config_free(struct machine_config *c)
 	for (i = 0; i < c->n_net_remotes; i++)
 		free(c->net_remotes[i]);
 	free(c->net_remotes);
-	free(c->net_tapdev); free(c->net_l2tp_cookie);
+	free(c->net_tapdev); free(c->net_l2tp_cookie); free(c->net_mac);
 	for (i = 0; i < c->n_devices; i++)
 		free(c->devices[i]);
 	free(c->devices);
@@ -279,6 +280,7 @@ struct machine_config *machine_config_copy(const struct machine_config *src)
 		machine_config_add_string(&c->n_net_remotes, &c->net_remotes,
 		    src->net_remotes[i]);
 	c->net_tapdev = xstrdup(src->net_tapdev);
+	c->net_mac = xstrdup(src->net_mac);
 	c->net_l2tp_cookie = xstrdup(src->net_l2tp_cookie);
 
 	c->n_devices = 0; c->devices = NULL;
@@ -348,6 +350,36 @@ char *machine_config_absolute(const char *p)
 	if (is_absolute(p) || getcwd(cwd, sizeof(cwd)) == NULL)
 		return xstrdup(p);
 	return xprintf("%s/%s", cwd, p);
+}
+
+
+/*
+ *  machine_config_parse_mac():
+ *
+ *  Reads an Ethernet address, six hex bytes separated by ':' or '-' (e.g.
+ *  08:00:2b:12:34:56).  Returns false if it isn't one.
+ */
+bool machine_config_parse_mac(const char *s, unsigned char *mac)
+{
+	int i;
+
+	for (i = 0; i < 6; i++) {
+		char *end;
+		long v;
+		if (!isxdigit((unsigned char) s[0]))
+			return false;
+		v = strtol(s, &end, 16);
+		if (v < 0 || v > 255 || end - s > 2)
+			return false;
+		mac[i] = (unsigned char) v;
+		s = end;
+		if (i < 5) {
+			if (*s != ':' && *s != '-')
+				return false;
+			s++;
+		}
+	}
+	return *s == '\0';
 }
 
 
@@ -966,6 +998,7 @@ struct machine_config *machine_config_parse(const char *text,
 		get_list(o, "remotes", &c->n_net_remotes, &c->net_remotes,
 		    &err);
 		get_str(o, "tapdev", &c->net_tapdev, &err);
+		get_str(o, "mac", &c->net_mac, &err);
 		if ((v = section(o, "l2tp", &err)) != NULL) {
 			get_bool(v, "enabled", &c->net_l2tp, &err);
 			get_int(v, "session", &session, &err);
@@ -1093,6 +1126,7 @@ bool machine_config_save(struct machine_config *c, const char *path,
 	cJSON_AddNumberToObject(o, "local_port", c->net_local_port);
 	add_list(o, "remotes", c->n_net_remotes, c->net_remotes);
 	cJSON_AddStringToObject(o, "tapdev", c->net_tapdev);
+	cJSON_AddStringToObject(o, "mac", c->net_mac);
 	l2 = cJSON_AddObjectToObject(o, "l2tp");
 	cJSON_AddBoolToObject(l2, "enabled", c->net_l2tp);
 	cJSON_AddNumberToObject(l2, "session", c->net_l2tp_session);
@@ -1334,6 +1368,15 @@ char *machine_config_check_ex(const struct machine_config *c,
 
 	if (c->memory_mb < 0)
 		return xstrdup("the memory size can't be negative");
+	if (c->net_mac[0]) {
+		unsigned char mac[6];
+		if (!machine_config_parse_mac(c->net_mac, mac))
+			return xprintf("the Ethernet address \"%s\" isn't six "
+			    "hex bytes, e.g. 08:00:2b:12:34:56", c->net_mac);
+		if (mac[0] & 1)
+			return xprintf("the Ethernet address %s is a multicast "
+			    "address (its first byte is odd)", c->net_mac);
+	}
 	if (c->scale != 0 && (c->scale < 10 || c->scale > 800))
 		return xstrdup("the window scale must be a percentage from 10 "
 		    "to 800, or 0 (fit the screen)");
@@ -2383,6 +2426,11 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 		if (d->revision[0])
 			di->inq_revision = xstrdup(d->revision);
 	}
+
+	/*  The first NIC's Ethernet address, if given:  */
+	if (c->net_mac[0] && machine_config_parse_mac(c->net_mac,
+	    m->nic_mac))
+		m->nic_mac_set = true;
 
 	if (c->net) {
 		emul->net = net_init(emul, NET_INIT_FLAG_GATEWAY,

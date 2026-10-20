@@ -767,11 +767,8 @@ struct net *net_init(struct emul *emul, int init_flags,
 	net->timestamp = 0;
 	net->first_ethernet_packet = net->last_ethernet_packet = NULL;
 	net->tapdev = NULL;
-#ifdef _WIN32
 	net->tap_pcap = NULL;
-#else
 	net->tap_fd = -1;
-#endif
 
 	/*
 	 *  If we're using a tap device, attempt to initialize it and

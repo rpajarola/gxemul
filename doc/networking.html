@@ -148,6 +148,20 @@ port on the host, allowing the guests to access the host's connected LAN.
 <p>Networking services such as DHCP and DNS must be provided either by
 the host or by the host's connected LAN.
 
+<p><b>Bridging to a host interface:</b> instead of a tap device,
+<tt>-L</tt> (or <tt>"tapdev"</tt> in a <a
+href="configfiles.html#config">machine.json</a>, "Connected to" on the
+Network page of the configuration window) can name one of the host's
+network interfaces, e.g. <tt>en0</tt> or <tt>eth0</tt>. The emulated
+machine is then on that network, through libpcap (Npcap on Windows), which
+is loaded when it is needed. <tt>-L list</tt> lists the interfaces.
+Capturing needs permission: on macOS, gxemul must be able to read
+<tt>/dev/bpf*</tt> (Wireshark's ChmodBPF gives that to the admin group),
+and on Linux, it needs the <tt>CAP_NET_RAW</tt> capability (<tt>sudo
+setcap cap_net_raw,cap_net_admin=eip gxemul</tt>), or else it must run as
+root. (A Wi-Fi interface may not pass frames for the emulated machine's
+own Ethernet address.)
+
 <p>Support for the <i>tap</i> device was developed on NetBSD, but should
 also work on FreeBSD, OpenBSD, and Linux hosts.
 

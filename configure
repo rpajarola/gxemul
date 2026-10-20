@@ -366,6 +366,29 @@ fi
 rm -f _testwin.c _testwin.o
 
 
+#  On macOS, the configuration window activates itself through the
+#  Objective-C runtime:
+if [ z`uname` = zDarwin ]; then
+	OTHERLIBS="$OTHERLIBS -lobjc"
+fi
+
+#  libpcap (for bridging to a host interface) is loaded with dlopen(), which
+#  is in libdl on older Linux systems:
+if [ z"$WINDOWS" != zYES ]; then
+	printf "checking whether dlopen() needs -ldl... "
+	printf "#include <dlfcn.h>\nint main(void) { return dlopen(\"x\", RTLD_NOW) != 0; }\n" > _testdl.c
+	if $CC $CFLAGS _testdl.c -o _testdl > /dev/null 2>&1; then
+		printf "no\n"
+	elif $CC $CFLAGS _testdl.c -o _testdl -ldl > /dev/null 2>&1; then
+		OTHERLIBS="$OTHERLIBS -ldl"
+		printf "yes\n"
+	else
+		printf "dlopen() not found\n"
+	fi
+	rm -f _testdl.c _testdl
+fi
+
+
 if [ z"$DEBUG" != zYES ]; then
 	CFLAGS="-DNDEBUG $CFLAGS"
 fi

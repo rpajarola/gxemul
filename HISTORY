@@ -5424,3 +5424,16 @@ Changelog for GXemul:
 		registers past the last one, which made the rest of the page
 		RAM for dyntrans, after which the PROM's writes to the NVRAM
 		went to that RAM instead of the RTC.
+20261020	The network can be bridged to a host interface on macOS and
+		Linux too, with libpcap (loaded with dlopen() when needed), as
+		on Windows with Npcap: -L en0, or "tapdev" in machine.json; a
+		name starting with / is still a tap device. In the
+		configuration window, the Network page offers the host's
+		interfaces under "Connected to", and says when one can't be
+		used, e.g. without permission to capture (with what to do).
+		The first NIC's Ethernet address can be set ("mac" under
+		"network"; it was always made from the serial number). The
+		page's UDP settings are grouped, with the encapsulation (raw
+		or L2TPv3) as a choice for the link to all the remote hosts.
+		The window that Edit Configuration... opens comes to the
+		front (on macOS, it activates itself).

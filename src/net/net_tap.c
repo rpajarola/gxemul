@@ -43,10 +43,11 @@
 #define	WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <windows.h>
-#include "thirdparty/pcap/pcap.h"
 #else
 #include <sys/ioctl.h>
+#include <dlfcn.h>
 #endif
+#include "thirdparty/pcap/pcap.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -57,62 +58,100 @@
 #include "misc.h"
 #include "net.h"
 
-#ifdef _WIN32
 
 /*
- *  Npcap (wpcap.dll) loaded at runtime on Windows, so that Npcap is only
- *  needed when a tap / bridge interface is used.
+ *  libpcap (Npcap's wpcap.dll on Windows), loaded at runtime, so that it is
+ *  only needed when the network is bridged to a host interface:
  */
 static int (*p_pcap_findalldevs)(pcap_if_t **, char *);
 static void (*p_pcap_freealldevs)(pcap_if_t *);
 static pcap_t *(*p_pcap_open_live)(const char *, int, int, int, char *);
+static void (*p_pcap_close)(pcap_t *);
 static int (*p_pcap_sendpacket)(pcap_t *, const u_char *, int);
 static char *(*p_pcap_geterr)(pcap_t *);
 static int (*p_pcap_setnonblock)(pcap_t *, int, char *);
 static int (*p_pcap_next_ex)(pcap_t *, struct pcap_pkthdr **,
 	const u_char **);
 
-static bool npcap_load(void)
+#ifdef _WIN32
+#define	PCAP_NAME	"Npcap (wpcap.dll)"
+#else
+#define	PCAP_NAME	"libpcap"
+#endif
+
+static void *pcap_sym(void *lib, const char *name)
 {
-	static HMODULE lib;
+#ifdef _WIN32
+	return (void *) GetProcAddress((HMODULE) lib, name);
+#else
+	return dlsym(lib, name);
+#endif
+}
+
+static bool pcap_load(void)
+{
+	static void *lib;
+#ifdef _WIN32
 	char sysdir[MAX_PATH], path[MAX_PATH + 32];
+#else
+	static const char *names[] = {
+#ifdef __APPLE__
+	    "/usr/lib/libpcap.A.dylib", "libpcap.A.dylib", "libpcap.dylib",
+#else
+	    "libpcap.so.1", "libpcap.so.0.8", "libpcap.so",
+#endif
+	    NULL };
+	int i;
+#endif
 
 	if (lib != NULL)
 		return true;
 
+#ifdef _WIN32
 	if (GetSystemDirectoryA(sysdir, sizeof(sysdir)) > 0) {
 		snprintf(path, sizeof(path), "%s\\Npcap\\wpcap.dll", sysdir);
-		lib = LoadLibraryExA(path, NULL,
+		lib = (void *) LoadLibraryExA(path, NULL,
 		    LOAD_WITH_ALTERED_SEARCH_PATH);
 	}
 	if (lib == NULL)
-		lib = LoadLibraryA("wpcap.dll");
+		lib = (void *) LoadLibraryA("wpcap.dll");
+#else
+	for (i = 0; lib == NULL && names[i] != NULL; i++)
+		lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
+#endif
 	if (lib == NULL)
 		return false;
 
 #pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#ifdef _WIN32
 #pragma GCC diagnostic ignored "-Wcast-function-type"
+#endif
 	p_pcap_findalldevs = (int (*)(pcap_if_t **, char *))
-	    GetProcAddress(lib, "pcap_findalldevs");
+	    pcap_sym(lib, "pcap_findalldevs");
 	p_pcap_freealldevs = (void (*)(pcap_if_t *))
-	    GetProcAddress(lib, "pcap_freealldevs");
+	    pcap_sym(lib, "pcap_freealldevs");
 	p_pcap_open_live = (pcap_t *(*)(const char *, int, int, int, char *))
-	    GetProcAddress(lib, "pcap_open_live");
+	    pcap_sym(lib, "pcap_open_live");
+	p_pcap_close = (void (*)(pcap_t *)) pcap_sym(lib, "pcap_close");
 	p_pcap_sendpacket = (int (*)(pcap_t *, const unsigned char *, int))
-	    GetProcAddress(lib, "pcap_sendpacket");
-	p_pcap_geterr = (char *(*)(pcap_t *))
-	    GetProcAddress(lib, "pcap_geterr");
+	    pcap_sym(lib, "pcap_sendpacket");
+	p_pcap_geterr = (char *(*)(pcap_t *)) pcap_sym(lib, "pcap_geterr");
 	p_pcap_setnonblock = (int (*)(pcap_t *, int, char *))
-	    GetProcAddress(lib, "pcap_setnonblock");
+	    pcap_sym(lib, "pcap_setnonblock");
 	p_pcap_next_ex = (int (*)(pcap_t *, struct pcap_pkthdr **,
-	    const unsigned char **)) GetProcAddress(lib, "pcap_next_ex");
+	    const unsigned char **)) pcap_sym(lib, "pcap_next_ex");
 #pragma GCC diagnostic pop
 
 	if (p_pcap_findalldevs == NULL || p_pcap_freealldevs == NULL ||
-	    p_pcap_open_live == NULL || p_pcap_sendpacket == NULL ||
-	    p_pcap_geterr == NULL || p_pcap_setnonblock == NULL ||
-	    p_pcap_next_ex == NULL) {
-		FreeLibrary(lib);
+	    p_pcap_open_live == NULL || p_pcap_close == NULL ||
+	    p_pcap_sendpacket == NULL || p_pcap_geterr == NULL ||
+	    p_pcap_setnonblock == NULL || p_pcap_next_ex == NULL) {
+#ifdef _WIN32
+		FreeLibrary((HMODULE) lib);
+#else
+		dlclose(lib);
+#endif
 		lib = NULL;
 		return false;
 	}
@@ -143,33 +182,100 @@ static bool str_contains_ci(const char *haystack, const char *needle)
 	return false;
 }
 
-#endif	/*  _WIN32  */
+/*
+ *  Interfaces which can be bridged: not loopback, and on Linux and macOS,
+ *  not the pseudo interfaces which libpcap also lists (which aren't
+ *  Ethernet):
+ */
+static bool pcap_usable(const pcap_if_t *d)
+{
+#ifndef _WIN32
+	static const char *skip[] = { "any", "nflog", "nfqueue", "dbus",
+	    "bluetooth", "usbmon", "utun", "gif", "stf", "awdl", "llw",
+	    "anpi", "pktap", "ap1", NULL };
+	int i;
+
+	for (i = 0; skip[i] != NULL; i++)
+		if (strncmp(d->name, skip[i], strlen(skip[i])) == 0)
+			return false;
+#endif
+	return !(d->flags & PCAP_IF_LOOPBACK);
+}
+
+/*  The interface which a tapdev setting names, or NULL:  */
+static pcap_if_t *pcap_find(pcap_if_t *alldevs, const char *tapdev)
+{
+	pcap_if_t *d;
+	char *end;
+	long num = strtol(tapdev, &end, 10);
+	int idx = 0;
+
+	for (d = alldevs; d != NULL; d = d->next) {
+		if (!pcap_usable(d))
+			continue;
+		idx++;
+		if (strcasecmp(d->name, tapdev) == 0 ||
+		    strcasecmp(npcap_short_name(d->name), tapdev) == 0 ||
+		    (d->description != NULL &&
+		    strcasecmp(d->description, tapdev) == 0) ||
+		    (*tapdev != '\0' && *end == '\0' && num == idx))
+			return d;
+	}
+	if (strcasecmp(tapdev, "list") == 0)
+		return NULL;
+	for (d = alldevs; d != NULL; d = d->next)
+		if (pcap_usable(d) && (str_contains_ci(d->name, tapdev) ||
+		    (d->description != NULL &&
+		    str_contains_ci(d->description, tapdev))))
+			return d;
+	return NULL;
+}
+
+/*  How to get permission to capture, if pcap_open_live() failed:  */
+static const char *pcap_permission_hint(const char *errbuf)
+{
+#ifdef _WIN32
+	(void) errbuf;
+	return "";
+#else
+	if (strstr(errbuf, "ermission") == NULL &&
+	    strstr(errbuf, "not permitted") == NULL)
+		return "";
+#ifdef __APPLE__
+	return " (gxemul needs to be able to read /dev/bpf*: install "
+	    "Wireshark's ChmodBPF, or run gxemul with sudo)";
+#else
+	return " (gxemul needs the CAP_NET_RAW capability: sudo setcap "
+	    "cap_net_raw,cap_net_admin=eip gxemul, or run it with sudo)";
+#endif
+#endif
+}
 
 
 /*
  *  net_tap_list():
  *
- *  Lists the available Npcap network interfaces on Windows.  Returns the
- *  number of interfaces (>= 0), or -1 if Npcap is not available (and on
- *  non-Windows hosts).  The caller frees the strings and arrays.
+ *  Lists the host's network interfaces which the network can be bridged
+ *  to (with libpcap, or Npcap on Windows).  Returns the number of
+ *  interfaces (>= 0), or -1 if libpcap is not available.  The caller frees
+ *  the strings and arrays.
  */
 int net_tap_list(char ***names, char ***descriptions)
 {
-	*names = NULL;
-	*descriptions = NULL;
-
-#ifdef _WIN32
 	pcap_if_t *alldevs, *d;
 	char errbuf[PCAP_ERRBUF_SIZE];
 	int n = 0;
 
-	if (!npcap_load())
+	*names = NULL;
+	*descriptions = NULL;
+
+	if (!pcap_load())
 		return -1;
 	if (p_pcap_findalldevs(&alldevs, errbuf) == -1)
 		return -1;
 
 	for (d = alldevs; d != NULL; d = d->next) {
-		if (d->flags & PCAP_IF_LOOPBACK)
+		if (!pcap_usable(d))
 			continue;
 		CHECK_ALLOCATION(*names = (char **) realloc(*names,
 		    sizeof(char *) * (n + 1)));
@@ -184,9 +290,69 @@ int net_tap_list(char ***names, char ***descriptions)
 	}
 	p_pcap_freealldevs(alldevs);
 	return n;
-#else
-	return -1;
+}
+
+
+/*
+ *  net_tap_check():
+ *
+ *  Checks that the network can be bridged to a host interface (or tap
+ *  device): returns NULL if so, or else why not (which the caller frees).
+ */
+char *net_tap_check(const char *tapdev)
+{
+	pcap_if_t *alldevs, *d;
+	pcap_t *pcap;
+	char errbuf[PCAP_ERRBUF_SIZE], msg[PCAP_ERRBUF_SIZE + 300];
+	char *r = NULL;
+
+	if (tapdev == NULL || tapdev[0] == '\0')
+		return NULL;
+#ifndef _WIN32
+	if (tapdev[0] == '/') {
+		int fd = open(tapdev, O_RDWR);
+		if (fd >= 0) {
+			close(fd);
+			return NULL;
+		}
+		snprintf(msg, sizeof(msg), "can't open %s: %s", tapdev,
+		    strerror(errno));
+		CHECK_ALLOCATION(r = strdup(msg));
+		return r;
+	}
 #endif
+	if (!pcap_load()) {
+		snprintf(msg, sizeof(msg), "%s is not installed", PCAP_NAME);
+		CHECK_ALLOCATION(r = strdup(msg));
+		return r;
+	}
+	if (p_pcap_findalldevs(&alldevs, errbuf) == -1) {
+		snprintf(msg, sizeof(msg), "%s", errbuf);
+		CHECK_ALLOCATION(r = strdup(msg));
+		return r;
+	}
+	d = pcap_find(alldevs, tapdev);
+	if (d == NULL)
+		snprintf(msg, sizeof(msg), "no network interface \"%s\"",
+		    tapdev);
+	else if ((pcap = p_pcap_open_live(d->name, 65536, 1, 1, errbuf)) ==
+	    NULL) {
+		/*  (libpcap's messages often start with the name already.)  */
+		const char *e = errbuf;
+		size_t n = strlen(d->name);
+		if (strncmp(e, d->name, n) == 0 && e[n] == ':' && e[n + 1] == ' ')
+			e += n + 2;
+		snprintf(msg, sizeof(msg), "can't capture on %s: %s%s",
+		    npcap_short_name(d->name), e, pcap_permission_hint(errbuf));
+	}
+	else {
+		p_pcap_close(pcap);
+		msg[0] = '\0';
+	}
+	p_pcap_freealldevs(alldevs);
+	if (msg[0] != '\0')
+		CHECK_ALLOCATION(r = strdup(msg));
+	return r;
 }
 
 
@@ -239,42 +405,34 @@ void net_tap_rx_avail(struct net *net)
 	int max_packets_this_tick = 200;
 
 	for (;;) {
-#ifdef _WIN32
-		struct pcap_pkthdr *header;
-		const unsigned char *pkt_data;
-		ssize_t bytes_read;
-		int i;
-
-		if (received_packets_this_tick > max_packets_this_tick)
-			break;
-
-		if (p_pcap_next_ex((pcap_t *) net->tap_pcap, &header,
-		    &pkt_data) != 1)
-			break;
-
-		received_packets_this_tick++;
-		bytes_read = header->caplen;
-		if (bytes_read < 20)
-			continue;
-
-		for (i = 0; i < net->n_nics; i++) {
-			net_tap_rx_for_nic(net, net->nic_data[i],
-			    pkt_data, bytes_read);
-		}
-#else
+#ifndef _WIN32
 		unsigned char buf[1518];
+#endif
+		const unsigned char *pkt;
 		ssize_t bytes_read;
 		int i;
 
 		if (received_packets_this_tick > max_packets_this_tick)
 			break;
 
-		/* Read one packet from the tap device. */
-		bytes_read = read(net->tap_fd, buf, sizeof(buf));
-
-		if (bytes_read < 0) {
-			/* No more packets available on the tap. */
+		if (net->tap_pcap != NULL) {
+			struct pcap_pkthdr *header;
+			if (p_pcap_next_ex((pcap_t *) net->tap_pcap, &header,
+			    &pkt) != 1)
+				break;
+			bytes_read = header->caplen;
+		} else {
+#ifdef _WIN32
 			break;
+#else
+			/* Read one packet from the tap device. */
+			bytes_read = read(net->tap_fd, buf, sizeof(buf));
+			if (bytes_read < 0) {
+				/* No more packets available on the tap. */
+				break;
+			}
+			pkt = buf;
+#endif
 		}
 
 		received_packets_this_tick++;
@@ -289,9 +447,8 @@ void net_tap_rx_avail(struct net *net)
 
 		for (i = 0; i < net->n_nics; i++) {
 			net_tap_rx_for_nic(net, net->nic_data[i],
-			    buf, bytes_read);
+			    pkt, bytes_read);
 		}
-#endif
 	}
 }
 
@@ -320,11 +477,13 @@ void net_tap_tx(struct net *net, struct nic_data *nic,
 	 * kernel will either take the entire packet or none of it, and
 	 * there isn't any useful error recovery for us anyway.
 	 */
-#ifdef _WIN32
-	(void) p_pcap_sendpacket((pcap_t *) net->tap_pcap, packet, len);
-#else
-	int ignored = write(net->tap_fd, packet, len);
-	(void)ignored;
+	if (net->tap_pcap != NULL)
+		(void) p_pcap_sendpacket((pcap_t *) net->tap_pcap, packet, len);
+#ifndef _WIN32
+	else {
+		int ignored = write(net->tap_fd, packet, len);
+		(void)ignored;
+	}
 #endif
 }
 
@@ -335,16 +494,39 @@ void net_tap_tx(struct net *net, struct nic_data *nic,
  */
 bool net_tap_init(struct net *net, const char *tapdev)
 {
-#ifdef _WIN32
-	pcap_if_t *alldevs, *d, *chosen = NULL;
+	pcap_if_t *alldevs, *d, *chosen;
 	pcap_t *pcap;
-	char errbuf[PCAP_ERRBUF_SIZE], *end;
-	long num;
+	char errbuf[PCAP_ERRBUF_SIZE];
 	int idx;
 
-	if (!npcap_load()) {
+#ifndef _WIN32
+	/*  A tap device (e.g. /dev/tap0), rather than a host interface:  */
+	if (tapdev[0] == '/') {
+		int fd, one = 1;
+
+		fd = open(tapdev, O_RDWR);
+		if (fd < 0) {
+			debugmsg(SUBSYS_NET, "tap", VERBOSITY_ERROR,
+			    "unable to open tap device '%s': %s",
+			    tapdev, strerror(errno));
+			return false;
+		}
+		if (ioctl(fd, FIONBIO, &one) < 0) {
+			debugmsg(SUBSYS_NET, "tap", VERBOSITY_ERROR,
+			    "unable to set non-blocking mode on "
+			    "tap device '%s': %s", tapdev, strerror(errno));
+			close(fd);
+			return false;
+		}
+		net->tapdev = strdup(tapdev);
+		net->tap_fd = fd;
+		return true;
+	}
+#endif
+
+	if (!pcap_load()) {
 		debugmsg(SUBSYS_NET, "tap", VERBOSITY_ERROR,
-		    "Npcap (wpcap.dll) is not installed");
+		    "%s is not installed", PCAP_NAME);
 		return false;
 	}
 
@@ -354,40 +536,14 @@ bool net_tap_init(struct net *net, const char *tapdev)
 		return false;
 	}
 
-	num = strtol(tapdev, &end, 10);
-	for (d = alldevs, idx = 0; d != NULL; d = d->next) {
-		if (d->flags & PCAP_IF_LOOPBACK)
-			continue;
-		idx++;
-		if (strcasecmp(d->name, tapdev) == 0 ||
-		    strcasecmp(npcap_short_name(d->name), tapdev) == 0 ||
-		    (d->description != NULL &&
-		    strcasecmp(d->description, tapdev) == 0) ||
-		    (*tapdev != '\0' && *end == '\0' && num == idx)) {
-			chosen = d;
-			break;
-		}
-	}
-	if (chosen == NULL && strcasecmp(tapdev, "list") != 0) {
-		for (d = alldevs; d != NULL; d = d->next) {
-			if (d->flags & PCAP_IF_LOOPBACK)
-				continue;
-			if (str_contains_ci(d->name, tapdev) ||
-			    (d->description != NULL &&
-			    str_contains_ci(d->description, tapdev))) {
-				chosen = d;
-				break;
-			}
-		}
-	}
-
+	chosen = pcap_find(alldevs, tapdev);
 	if (chosen == NULL) {
 		if (strcasecmp(tapdev, "list") != 0)
 			debugmsg(SUBSYS_NET, "tap", VERBOSITY_ERROR,
-			    "unknown Npcap interface '%s'", tapdev);
-		fprintf(stderr, "Available Npcap interfaces:\n");
+			    "unknown network interface '%s'", tapdev);
+		fprintf(stderr, "Available network interfaces:\n");
 		for (d = alldevs, idx = 0; d != NULL; d = d->next) {
-			if (d->flags & PCAP_IF_LOOPBACK)
+			if (!pcap_usable(d))
 				continue;
 			idx++;
 			fprintf(stderr, "  %i. %s (%s)\n", idx,
@@ -404,8 +560,9 @@ bool net_tap_init(struct net *net, const char *tapdev)
 	pcap = p_pcap_open_live(chosen->name, 65536, 1, 1, errbuf);
 	if (pcap == NULL) {
 		debugmsg(SUBSYS_NET, "tap", VERBOSITY_ERROR,
-		    "unable to open Npcap interface '%s': %s",
-		    chosen->name, errbuf);
+		    "unable to capture on '%s': %s%s",
+		    npcap_short_name(chosen->name), errbuf,
+		    pcap_permission_hint(errbuf));
 		p_pcap_freealldevs(alldevs);
 		return false;
 	}
@@ -423,30 +580,4 @@ bool net_tap_init(struct net *net, const char *tapdev)
 	p_pcap_freealldevs(alldevs);
 
 	return true;
-#else
-	int fd;
-	int one = 1;
-
-	fd = open(tapdev, O_RDWR);
-	if (fd < 0) {
-		debugmsg(SUBSYS_NET, "tap", VERBOSITY_ERROR,
-		    "unable to open tap device '%s': %s",
-		    tapdev, strerror(errno));
-		return false;
-	}
-
-	if (ioctl(fd, FIONBIO, &one) < 0) {
-		debugmsg(SUBSYS_NET, "tap", VERBOSITY_ERROR,
-		    "unable to set non-blocking mode on "
-		    "tap device '%s': %s", tapdev, strerror(errno));
-		close(fd);
-		return false;
-	}
-
-	net->tapdev = strdup(tapdev);
-	net->tap_fd = fd;
-
-	return true;
-#endif
 }
-

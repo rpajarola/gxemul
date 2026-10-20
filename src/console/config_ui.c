@@ -86,6 +86,11 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 #include "display_font.h"
 #include "thirdparty/microui.h"
 
+#ifdef __APPLE__
+#include <objc/message.h>
+#include <objc/runtime.h>
+#endif
+
 /*  display_sdl.c:  */
 void display_sdl_app_hints(void);
 void display_sdl_set_icon(SDL_Window *window);
@@ -151,8 +156,10 @@ static struct {
 	enum page	page;
 	int		disk_mb[64];	/*  for creating missing disk images  */
 	bool		custom[64];	/*  editing a drive's INQUIRY strings  */
-	bool		custom_tap;	/*  editing tapdev as text on Windows  */
-	int		n_tap_devs;	/*  -2 = not queried, -1 = no Npcap  */
+	bool		custom_tap;	/*  editing tapdev as text  */
+	int		n_tap_devs;	/*  -2 = not queried, -1 = no libpcap  */
+	char		*tap_checked;	/*  the tapdev net_tap_check()ed,  */
+	char		*tap_problem;	/*  and what's wrong with it  */
 	char		**tap_names;
 	char		**tap_descs;
 	struct edit	edits[MAX_EDITS];
@@ -2291,7 +2298,12 @@ static void tap_devs_free(void)
 }
 
 
-#ifdef _WIN32
+/*
+ *  What the network is connected to:  the simulated network, a host
+ *  interface (bridged with libpcap, or Npcap on Windows), or another one,
+ *  e.g. a tap device.  Whether it can be used is checked when it is
+ *  chosen, e.g. for permission to capture.
+ */
 static void tap_field(void)
 {
 	mu_Context *ctx = ui.ctx;
@@ -2302,7 +2314,7 @@ static void tap_field(void)
 	if (ui.n_tap_devs == -2)
 		ui.n_tap_devs = net_tap_list(&ui.tap_names, &ui.tap_descs);
 
-	labels[nl++] = "None (simulated network)";
+	labels[nl++] = "Simulated network";
 	for (i = 0; i < ui.n_tap_devs && nl < 64; i++)
 		labels[nl++] = ui.tap_descs[i];
 	labels[nl++] = "Other...";
@@ -2323,26 +2335,55 @@ static void tap_field(void)
 		if (sel == 0) {
 			machine_config_set(&c->net_tapdev, "");
 			ui.custom_tap = false;
-			edits_clear();
 		} else if (sel == nl - 1) {
 			ui.custom_tap = true;
 		} else {
 			machine_config_set(&c->net_tapdev,
 			    ui.tap_descs[sel - 1]);
 			ui.custom_tap = false;
-			edits_clear();
 		}
+		edits_clear();
 	}
 	if (sel == nl - 1) {
 		mu_label(ctx, "");
 		text_field(&c->net_tapdev);
-	}
-	if (ui.n_tap_devs < 0) {
 		mu_label(ctx, "");
-		mu_label(ctx, "(Npcap is not installed)");
-	}
-}
+#ifdef _WIN32
+		mu_label(ctx, "(an interface's name or number)");
+#else
+		mu_label(ctx, "(an interface's name, e.g. eth0, or a tap device, "
+		    "e.g. /dev/tap0)");
 #endif
+	}
+
+	/*  Whether it can be used:  */
+	if (c->net_tapdev[0] != '\0' && (ui.tap_checked == NULL ||
+	    strcmp(ui.tap_checked, c->net_tapdev) != 0)) {
+		free(ui.tap_problem);
+		ui.tap_problem = net_tap_check(c->net_tapdev);
+		machine_config_set(&ui.tap_checked, c->net_tapdev);
+	}
+	mu_label(ctx, "");
+	if (c->net_tapdev[0] == '\0') {
+		if (ui.n_tap_devs < 0)
+#ifdef _WIN32
+			mu_label(ctx, "(Npcap is not installed, so the network "
+			    "can't be connected to a host interface)");
+#else
+			mu_label(ctx, "(libpcap is not installed, so the "
+			    "network can't be connected to a host interface)");
+#endif
+		else
+			mu_label(ctx, "(with a gateway, DHCP, and NAT to the "
+			    "host's network)");
+	} else if (ui.tap_problem != NULL) {
+		char buf[700];
+		snprintf(buf, sizeof(buf), "Can't be used: %s", ui.tap_problem);
+		mu_text(ctx, buf);
+	} else
+		mu_label(ctx, "(bridged: the machine is on that network, "
+		    "without the simulated gateway)");
+}
 
 
 static void page_network(void)
@@ -2351,30 +2392,43 @@ static void page_network(void)
 	struct machine_config *c = ui.cfg;
 	int full[1] = { -1 };
 	int lw[2] = { CH(24), -1 };
-	int i;
+	static const char *encaps[2] = { "Raw Ethernet frames", "L2TPv3" };
+	int i, sel;
 
 	row(1, full);
-	check("Network (a simulated network with a gateway and nameserver)",
-	    &c->net);
+	check("Network", &c->net);
 	if (!c->net)
 		return;
+
 	row(2, lw);
-	mu_label(ctx, "Network address");
-	text_field(&c->net_ipv4);
-	mu_label(ctx, "Prefix length");
-	int_field(&c->net_ipv4len);
-#ifdef _WIN32
-	mu_label(ctx, "Tap / bridge interface");
+	mu_label(ctx, "Ethernet address");
+	text_field(&c->net_mac);
+	mu_label(ctx, "");
+	mu_label(ctx, "(empty = from the serial number, e.g. "
+	    "10:20:30:00:00:10)");
+
+	mu_label(ctx, "Connected to");
 	tap_field();
-#else
-	mu_label(ctx, "Tap device");
-	text_field(&c->net_tapdev);
-#endif
+	if (c->net_tapdev[0] == '\0') {
+		mu_label(ctx, "Network address");
+		text_field(&c->net_ipv4);
+		mu_label(ctx, "Prefix length");
+		int_field(&c->net_ipv4len);
+	}
+
+	/*  The UDP link to other emulators, and how it carries frames:  */
+	row(1, full);
+	mu_label(ctx, "");
+	mu_label(ctx, "Other emulators (frames over UDP, e.g. to other gxemuls, "
+	    "simh, or QEMU):");
+	row(2, lw);
 	mu_label(ctx, "Local UDP port");
 	int_field(&c->net_local_port);
+	mu_label(ctx, "");
+	mu_label(ctx, "(0 = none)");
 
 	row(1, full);
-	mu_label(ctx, "Remote hosts (host:port), for connecting emulators:");
+	mu_label(ctx, "Remote hosts (host:port):");
 	for (i = 0; i < c->n_net_remotes; i++) {
 		int w[2] = { -CH(10), -1 };
 		mu_push_id(ctx, &i, sizeof(i));
@@ -2397,18 +2451,26 @@ static void page_network(void)
 		edits_clear();
 	}
 
-	row(1, full);
-	check("L2TPv3 tunnel", &c->net_l2tp);
+	row(2, lw);
+	mu_label(ctx, "Encapsulation");
+	sel = c->net_l2tp ? 1 : 0;
+	if (dropdown("encaps", encaps, 2, &sel))
+		c->net_l2tp = sel == 1;
 	if (c->net_l2tp) {
 		int session = (int) c->net_l2tp_session;
-		row(2, lw);
+		mu_label(ctx, "");
+		mu_label(ctx, "(static L2TPv3, for the link to all the remote "
+		    "hosts; both ends must agree)");
 		mu_label(ctx, "Session ID");
 		int_field(&session);
 		c->net_l2tp_session = (uint32_t) session;
 		mu_label(ctx, "Cookie");
 		text_field(&c->net_l2tp_cookie);
+		mu_label(ctx, "");
+		mu_label(ctx, "(8 or 16 hex digits, or empty)");
 		row(1, full);
-		check("Sequence numbers", &c->net_l2tp_counter);
+		check("L2-specific sublayer (sequence numbers)",
+		    &c->net_l2tp_counter);
 	}
 }
 
@@ -2739,6 +2801,7 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 
 	SDL_SetMainReady();
 	display_sdl_app_hints();
+	SDL_SetHint("SDL_FORCE_RAISEWINDOW", "1");
 	SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
 	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 	if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -2762,6 +2825,22 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 	}
 	SDL_SetWindowMinimumSize(ui.window, 640, 420);
 	display_sdl_set_icon(ui.window);
+
+	/*  Come to the front:  a window of a new process (e.g. the editor
+	    that a running machine's Edit Configuration... starts) would
+	    otherwise open behind the active one, at least on macOS:  */
+	SDL_RaiseWindow(ui.window);
+#ifdef __APPLE__
+	{
+		/*  [NSApp activateIgnoringOtherApps:YES], as gxemul isn't
+		    an .app that macOS would activate when it starts:  */
+		id app = ((id (*)(Class, SEL)) objc_msgSend)(
+		    objc_getClass("NSApplication"),
+		    sel_registerName("sharedApplication"));
+		((void (*)(id, SEL, BOOL)) objc_msgSend)(app,
+		    sel_registerName("activateIgnoringOtherApps:"), YES);
+	}
+#endif
 	SDL_StartTextInput();
 
 	CHECK_ALLOCATION(ui.ctx = (mu_Context *) malloc(sizeof(mu_Context)));
@@ -2813,6 +2892,8 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 	list_free();
 	rom_dirs_free();
 	tap_devs_free();
+	free(ui.tap_checked);
+	free(ui.tap_problem);
 	machine_config_free(ui.cfg);
 	free(ui.message);
 	free(ui.ctx);

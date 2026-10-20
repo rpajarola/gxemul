@@ -121,6 +121,7 @@ struct machine_config {
 	int		n_net_remotes;
 	char		**net_remotes;
 	char		*net_tapdev;	/*  "" = none  */
+	char		*net_mac;	/*  the first NIC's, "" = automatic  */
 	bool		net_l2tp;
 	uint32_t	net_l2tp_session;
 	char		*net_l2tp_cookie;
@@ -144,6 +145,7 @@ bool machine_config_save(struct machine_config *, const char *path,
 bool machine_config_is_config_file(const char *path);
 char *machine_config_resolve(const struct machine_config *, const char *);
 char *machine_config_absolute(const char *path);
+bool machine_config_parse_mac(const char *s, unsigned char *mac);
 char *machine_config_clean_path(const char *path);
 char *machine_config_resolve_rom(const struct machine_config *, const char *);
 char *machine_config_normalize(const struct machine_config *, const char *p,

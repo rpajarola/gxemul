@@ -286,7 +286,8 @@ shown here, except for the machine type:
     "ipv4len": 8,
     "local_port": 0,            <font color="#2020cf">a UDP port for connecting emulators, 0 = none</font>
     "remotes": [],              <font color="#2020cf">e.g. "localhost:12345"</font>
-    "tapdev": "",               <font color="#2020cf">as -L</font>
+    "tapdev": "",               <font color="#2020cf">as -L: a host interface to bridge to (e.g. "en0"), or a tap device</font>
+    "mac": "",                  <font color="#2020cf">the first NIC's Ethernet address, "" = from the serial number</font>
     "l2tp": { "enabled": false, "session": 1, "cookie": "", "counter": true }
   },
   "devices": []                 <font color="#2020cf">extra devices, as for the debugger's device add</font>
