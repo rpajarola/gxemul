@@ -5437,3 +5437,6 @@ Changelog for GXemul:
 		or L2TPv3) as a choice for the link to all the remote hosts.
 		The window that Edit Configuration... opens comes to the
 		front (on macOS, it activates itself).
+
+==============  RELEASE 1.0.5  ==============
+
