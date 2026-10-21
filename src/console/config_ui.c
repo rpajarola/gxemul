@@ -2431,7 +2431,7 @@ static void page_network(void)
 	mu_label(ctx, "Local UDP port");
 	int_field(&c->net_local_port);
 	mu_label(ctx, "");
-	mu_label(ctx, "(0 = none)");
+	mu_label(ctx, "(0 = automatic)");
 
 	row(1, full);
 	mu_label(ctx, "Remote hosts (host:port):");

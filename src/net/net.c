@@ -778,6 +778,7 @@ struct net *net_init(struct emul *emul, int init_flags,
 	net->tapdev = NULL;
 	net->tap_pcap = NULL;
 	net->tap_fd = -1;
+	net->local_port_socket = -1;
 
 	/*
 	 *  If we're using a tap device, attempt to initialize it and
@@ -818,7 +819,7 @@ struct net *net_init(struct emul *emul, int init_flags,
 	parse_resolvconf(net);
 
 	/*  Distributed network? Then add remote hosts:  */
-	if (local_port != 0) {
+	if (local_port != 0 || n_remote != 0) {
 		struct sockaddr_in si_self;
 
 		net->local_port = local_port;
@@ -838,6 +839,12 @@ struct net *net_init(struct emul *emul, int init_flags,
 			perror("bind");
 			free(net);
 			return NULL;
+		}
+		if (local_port == 0) {
+			socklen_t len = sizeof(si_self);
+			if (getsockname(net->local_port_socket,
+			    (struct sockaddr *)&si_self, &len) == 0)
+				net->local_port = ntohs(si_self.sin_port);
 		}
 
 		/*  Set the socket to non-blocking:  */
