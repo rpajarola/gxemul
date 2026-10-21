@@ -43,6 +43,7 @@
 #include "console.h"
 #include "debugger.h"
 #include "device.h"
+#include "devices.h"
 #include "diskimage.h"
 #include "machine.h"
 #include "memory.h"
@@ -130,6 +131,14 @@ static void fix_console(void)
 {
 	console_deinit_main();
 }
+
+#ifndef _WIN32
+static void terminate_signal(int sig)
+{
+	(void) sig;
+	exit(0);
+}
+#endif
 
 
 /*
@@ -852,6 +861,13 @@ void emul_run(struct emul *emul)
 	win32_set_ctrl_c_handler(debugger_activate);
 #else
 	signal(SIGINT, debugger_activate);
+	signal(SIGTERM, terminate_signal);
+#ifdef SIGHUP
+	signal(SIGHUP, terminate_signal);
+#endif
+#ifdef SIGQUIT
+	signal(SIGQUIT, terminate_signal);
+#endif
 #endif
 #ifdef SIGCONT
 	signal(SIGCONT, console_sigcont);
@@ -961,6 +977,7 @@ void emul_run(struct emul *emul)
 
 	/*  Stop any running timers:  */
 	timer_stop();
+	dev_mc146818_save_nvram();
 
 	/*  Deinitialize all CPUs in all machines:  */
 	for (int j = 0; j <emul->n_machines; j++)

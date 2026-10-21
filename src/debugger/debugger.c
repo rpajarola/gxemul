@@ -41,6 +41,7 @@
 #include "console.h"
 #include "cpu.h"
 #include "device.h"
+#include "devices.h"
 #include "debugger.h"
 #include "diskimage.h"
 #include "emul.h"
@@ -728,6 +729,7 @@ void debugger(void)
 
 	/*  Stop timers while interacting with the user:  */
 	timer_stop();
+	dev_mc146818_save_nvram();
 
 	exit_debugger = false;
 	exit_debugger_to_continue_single_stepping = false;

@@ -47,6 +47,7 @@
 #include <string.h>
 
 #include "compat_win32.h"
+#include "devices.h"
 
 
 /*
@@ -299,8 +300,10 @@ int win32_stdin_read(unsigned char *buf, int len)
 
 static BOOL WINAPI win32_ctrl_handler(DWORD type)
 {
-	if (type != CTRL_C_EVENT && type != CTRL_BREAK_EVENT)
+	if (type != CTRL_C_EVENT && type != CTRL_BREAK_EVENT) {
+		dev_mc146818_save_nvram();
 		return FALSE;
+	}
 
 	ctrl_c_handler(SIGINT);
 	return TRUE;

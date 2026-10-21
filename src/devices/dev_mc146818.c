@@ -91,7 +91,9 @@ struct mc_data {
 	/*  The NVRAM (registers 14..63) is kept in this file, if any:  */
 	char		*nvram_file;
 	bool		nvram_dirty;
-	time_t		nvram_written;
+	bool		nvram_have_saved;
+	unsigned char	nvram_saved[MC_NVRAM_SIZE];
+	time_t		nvram_changed;
 
 	/*
 	 *  A time set by the guest (by clearing the SET bit), which then
@@ -176,6 +178,19 @@ static void mc146818_set_guest_time(struct mc_data *d)
 static struct mc_data *nvrams[MAX_NVRAMS];
 static int n_nvrams;
 
+static bool nvram_has_changed(struct mc_data *d)
+{
+	int i;
+
+	if (!d->nvram_have_saved)
+		return d->nvram_dirty;
+	for (i = 0; i < MC_NVRAM_SIZE; i++)
+		if ((unsigned char) d->reg[4 * (MC_NVRAM_START + i)] !=
+		    d->nvram_saved[i])
+			return true;
+	return false;
+}
+
 static void nvram_write(struct mc_data *d)
 {
 	unsigned char buf[MC_NVRAM_SIZE];
@@ -189,11 +204,13 @@ static void nvram_write(struct mc_data *d)
 		fprintf(stderr, "[ mc146818: could not write the NVRAM to "
 		    "%s ]\n", d->nvram_file);
 		d->nvram_file = NULL;
+	} else {
+		memcpy(d->nvram_saved, buf, sizeof(buf));
+		d->nvram_have_saved = true;
 	}
 	if (f != NULL)
 		fclose(f);
 	d->nvram_dirty = false;
-	d->nvram_written = time(NULL);
 }
 
 static void nvram_read(struct mc_data *d)
@@ -207,6 +224,8 @@ static void nvram_read(struct mc_data *d)
 	if (fread(buf, 1, sizeof(buf), f) == sizeof(buf)) {
 		for (i = 0; i < MC_NVRAM_SIZE; i++)
 			d->reg[4 * (MC_NVRAM_START + i)] = buf[i];
+		memcpy(d->nvram_saved, buf, sizeof(buf));
+		d->nvram_have_saved = true;
 		d->dec_year_done = 1;
 	} else
 		fprintf(stderr, "[ mc146818: %s is too short to be an NVRAM; "
@@ -225,7 +244,8 @@ void dev_mc146818_save_nvram(void)
 	int i;
 
 	for (i = 0; i < n_nvrams; i++)
-		if (nvrams[i]->nvram_file != NULL && nvrams[i]->nvram_dirty)
+		if (nvrams[i]->nvram_file != NULL &&
+		    nvram_has_changed(nvrams[i]))
 			nvram_write(nvrams[i]);
 }
 
@@ -236,17 +256,20 @@ DEVICE_TICK(mc146818)
 	int pti = d->pending_timer_interrupts;
 	time_t now = time(NULL);
 
-	if (d->nvram_dirty && d->nvram_file != NULL &&
-	    now != d->nvram_written)
-		nvram_write(d);
-
 	/*
 	 *  Once a second (unless SET stops the updates), the time is
 	 *  updated, and the Update-ended flag set, with an interrupt if
-	 *  UIE is enabled:
+	 *  UIE is enabled.  Also check whether the NVRAM has changed and
+	 *  settled (no writes in the current second), and persist it.
 	 */
 	if (now != d->last_update) {
 		d->last_update = now;
+		if (d->nvram_file != NULL && now != d->nvram_changed) {
+			if (nvram_has_changed(d))
+				nvram_write(d);
+			else
+				d->nvram_dirty = false;
+		}
 		if (!(d->reg[MC_REGB * 4] & MC_REGB_SET)) {
 			d->reg[MC_REGC * 4] |= MC_REGC_UF;
 			if (d->reg[MC_REGB * 4] & MC_REGB_UIE)
@@ -570,8 +593,10 @@ DEVICE_ACCESS(mc146818)
 		if (relative_addr % 4 == 0 &&
 		    relative_addr >= MC_NVRAM_START * 4 && relative_addr <
 		    (MC_NVRAM_START + MC_NVRAM_SIZE) * 4 &&
-		    d->reg[relative_addr] != data[0])
+		    d->reg[relative_addr] != data[0]) {
 			d->nvram_dirty = true;
+			d->nvram_changed = time(NULL);
+		}
 
 		switch (relative_addr) {
 		case MC_REGA*4:
