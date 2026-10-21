@@ -386,6 +386,23 @@ bool machine_config_parse_mac(const char *s, unsigned char *mac)
 
 
 /*
+ *  machine_config_generate_mac():
+ *
+ *  Sets c->net_mac to a new random 08:00:2b:xx:xx:xx Ethernet address.
+ */
+void machine_config_generate_mac(struct machine_config *c)
+{
+	unsigned char mac[6];
+	char buf[20];
+
+	net_generate_unique_mac(NULL, mac);
+	snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x",
+	    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	machine_config_set(&c->net_mac, buf);
+}
+
+
+/*
  *  machine_config_resolve():
  *
  *  Returns a file name from the configuration as a name that can be
@@ -2431,7 +2448,15 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 			di->inq_revision = xstrdup(d->revision);
 	}
 
-	/*  The first NIC's Ethernet address, if given:  */
+	/*  The first NIC's Ethernet address (generated and saved if empty):  */
+	if (c->net && c->net_mac[0] == '\0') {
+		machine_config_generate_mac(c);
+		if (c->path != NULL) {
+			char *save_err = NULL;
+			machine_config_save(c, c->path, &save_err);
+			free(save_err);
+		}
+	}
 	if (c->net_mac[0] && machine_config_parse_mac(c->net_mac,
 	    m->nic_mac))
 		m->nic_mac_set = true;

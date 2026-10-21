@@ -147,6 +147,7 @@ bool machine_config_is_config_file(const char *path);
 char *machine_config_resolve(const struct machine_config *, const char *);
 char *machine_config_absolute(const char *path);
 bool machine_config_parse_mac(const char *s, unsigned char *mac);
+void machine_config_generate_mac(struct machine_config *);
 char *machine_config_clean_path(const char *path);
 char *machine_config_resolve_rom(const struct machine_config *, const char *);
 char *machine_config_normalize(const struct machine_config *, const char *p,

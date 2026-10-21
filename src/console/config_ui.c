@@ -1444,6 +1444,8 @@ static bool save_to(const char *path)
 	struct machine_config *c = ui.cfg;
 	char *err;
 
+	if (c->net && c->net_mac[0] == '\0')
+		machine_config_generate_mac(c);
 	if (!machine_config_save(c, path, &err)) {
 		set_message(true, "%s", err);
 		free(err);
@@ -1694,6 +1696,8 @@ static void select_machine(struct machine_entry *me,
 			machine_config_set(&ui.auto_name, n->name);
 			machine_config_set(&n->path, c->path);
 			machine_config_set(&n->dir, c->dir);
+			if (n->net && n->net_mac[0] == '\0')
+				machine_config_generate_mac(n);
 			machine_config_free(c);
 			ui.cfg = c = n;
 		}
@@ -1722,6 +1726,8 @@ static void new_machine(const char *path)
 		free(err);
 		return;
 	}
+	if (c->net && c->net_mac[0] == '\0')
+		machine_config_generate_mac(c);
 	open_editor(c, path == NULL);
 	ui.fresh = true;
 	machine_config_set(&ui.auto_name, c->name);
@@ -2406,11 +2412,17 @@ static void page_network(void)
 	if (!c->net)
 		return;
 
-	row(2, lw);
+	int mw[3] = { CH(24), -CH(12), -1 };
+	row(3, mw);
 	mu_label(ctx, "Ethernet address");
 	text_field(&c->net_mac);
+	if (mu_button(ctx, "Generate")) {
+		machine_config_generate_mac(c);
+		edits_clear();
+	}
+	row(2, lw);
 	mu_label(ctx, "");
-	mu_label(ctx, "(empty = random 08:00:2b:xx:xx:xx)");
+	mu_label(ctx, "(empty = generate 08:00:2b:xx:xx:xx when saved)");
 
 	mu_label(ctx, "Connected to");
 	tap_field();
