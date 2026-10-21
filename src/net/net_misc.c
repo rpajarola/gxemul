@@ -76,10 +76,9 @@ void net_debugaddr(void *addr, int type)
 /*
  *  net_generate_unique_mac():
  *
- *  Generate a "unique" serial number for a machine. The machine's serial
- *  number is combined with the machine's current number of NICs to form a
- *  more-or-less valid MAC address.  (The first NIC's address can be given
- *  in a machine.json, "mac" under "network".)
+ *  Generate a MAC address for a machine, starting with DEC's 08:00:2b OUI
+ *  followed by 3 random bytes.  (The first NIC's address can be given in a
+ *  machine.json, "mac" under "network".)
  *
  *  The return value (6 bytes) are written to macbuf.
  */
@@ -97,22 +96,13 @@ void net_generate_unique_mac(struct machine *machine, unsigned char *macbuf)
 		return;
 	}
 
-	// Special case: real SGI machines have 0x08 as their first
-	// byte, so let's mimic that.
-	macbuf[0] = machine->machine_type == MACHINE_SGI ? 0x08 : 0x10;
-	macbuf[1] = 0x20;
-	macbuf[2] = 0x30;
-	macbuf[3] = 0;
-	macbuf[4] = 0;
-	/*  NOTE/TODO: This only allows 8 nics per machine!  */
-	macbuf[5] = (machine->serial_nr << 4) + (machine->nr_of_nics << 1);
+	macbuf[0] = 0x08;
+	macbuf[1] = 0x00;
+	macbuf[2] = 0x2b;
+	macbuf[3] = random() & 0xff;
+	macbuf[4] = random() & 0xff;
+	macbuf[5] = random() & 0xff;
 
-	if (macbuf[0] & 1 || macbuf[5] & 1) {
-		fatal("Internal error in net_generate_unique_mac().\n");
-		exit(1);
-	}
-
-	/*  TODO: Remember the mac addresses somewhere?  */
 	machine->nr_of_nics ++;
 }
 

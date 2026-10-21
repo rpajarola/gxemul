@@ -2410,8 +2410,7 @@ static void page_network(void)
 	mu_label(ctx, "Ethernet address");
 	text_field(&c->net_mac);
 	mu_label(ctx, "");
-	mu_label(ctx, "(empty = from the serial number, e.g. "
-	    "10:20:30:00:00:10)");
+	mu_label(ctx, "(empty = random 08:00:2b:xx:xx:xx)");
 
 	mu_label(ctx, "Connected to");
 	tap_field();

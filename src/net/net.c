@@ -211,6 +211,8 @@ static void net_arp(struct net *net, struct nic_data *nic,
 			/*  q = (packet[8 + 3]) >> 4;  */
 			/*  q = q*15 + ((packet[8 + 4]) >> 4);  */
 			q = (packet[8 + 5]) >> 4;
+			if (q == 0)
+				q = 1;
 			lp->data[24 + 14] = 10;
 			lp->data[25 + 14] =  0;
 			lp->data[26 + 14] =  0;
