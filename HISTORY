@@ -5446,6 +5446,21 @@ Changelog for GXemul:
 		carries frames between the machine and the other emulators
 		(remotes over UDP), e.g. for a network of machines with a
 		server of their own.
+20261020	With remote hosts but no local UDP port (0), an unused port is
+		chosen ("(0 = automatic)" in the configuration window), so the
+		machine can send to the other emulators without a fixed port.
+		Ethernet addresses are DEC's 08:00:2b followed by three random
+		bytes, instead of being made from the serial number. When
+		"mac" under "network" is empty, one is generated and saved in
+		the machine.json (when the machine starts, or is saved or
+		created in the configuration window), so the machine keeps
+		its address; the Network page has a Generate button for a new
+		one.
+		The NVRAM file ("nvram") is written when the NVRAM has
+		changed and the writes have settled (checked once a second),
+		when the debugger is entered, and at exit, also on SIGTERM,
+		SIGHUP and SIGQUIT, so settings aren't lost when the emulator
+		is killed.
 
 ==============  RELEASE 1.0.6  ==============
 
