@@ -5446,3 +5446,6 @@ Changelog for GXemul:
 		carries frames between the machine and the other emulators
 		(remotes over UDP), e.g. for a network of machines with a
 		server of their own.
+
+==============  RELEASE 1.0.6  ==============
+
