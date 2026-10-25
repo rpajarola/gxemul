@@ -402,6 +402,14 @@ and reboot to multi-user. (The script must not <tt>exec</tt> the real
 <tt>dxsession</tt>, since that would replace the shell. To undo it, move
 <tt>dxsession.orig</tt> back.)
 
+<p><a name="ultrix31net"></a><b>No <tt>ln0</tt> interface on Ultrix
+3.1:</b> Ultrix 3.1 finds the Ethernet as <tt>ln0</tt> while booting
+("<tt>ln0 at ibus6</tt>", and in <tt>uerf</tt>), but the driver registers
+the network interface as <tt>se0</tt>, so <tt>ifconfig ln0</tt> fails with
+"no such interface". Use <tt>se0</tt> instead (for example in
+<tt>/etc/rc.local</tt>): <tt><b>ifconfig se0 10.0.0.5 netmask 255.0.0.0
+up</b></tt>. Ultrix 4.x calls both of them <tt>ln0</tt>.
+
 <p>A note for the historically interested: OSF/1 for MIPS was quite similar
 to Ultrix, so that is possible to run as well.  If you are unsuccessful
 in installing Ultrix or OSF/1 directly in the emulator, you can always
