@@ -55,6 +55,13 @@ struct machine;
 
 #define	MC_MAX_SLOTS		8	/*  = MACHINE_MAX_TC_SLOTS  */
 
+/*  What the network is (net_type):  */
+#define	MC_NET_SIMULATED	0	/*  the simulated gateway (DHCP, NAT)  */
+#define	MC_NET_BRIDGED		1	/*  a host interface, or a tap device  */
+#define	MC_NET_UDP		2	/*  raw frames over UDP  */
+#define	MC_NET_L2TP		3	/*  static L2TPv3 over UDP  */
+#define	MC_N_NET_TYPES		4
+
 struct mc_drive {
 	char		*file;		/*  "" for a drive without a medium  */
 	int		kind;		/*  MC_DRIVE_*  */
@@ -115,15 +122,15 @@ struct machine_config {
 
 	/*  Network:  */
 	bool		net;
+	int		net_type;	/*  MC_NET_*  */
 	char		*net_ipv4;
 	int		net_ipv4len;
 	int		net_local_port;	/*  0 = no UDP tunnel  */
 	int		n_net_remotes;
 	char		**net_remotes;
-	char		*net_tapdev;	/*  "" = none  */
+	char		*net_tapdev;	/*  MC_NET_BRIDGED's  */
 	char		*net_mac;	/*  the first NIC's, "" = automatic  */
-	bool		net_gateway;	/*  the simulated gateway (DHCP, NAT)  */
-	bool		net_l2tp;
+	bool		net_gateway;	/*  the simulated gateway, also with UDP  */
 	uint32_t	net_l2tp_session;
 	char		*net_l2tp_cookie;
 	bool		net_l2tp_counter;

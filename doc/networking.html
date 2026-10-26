@@ -149,9 +149,9 @@ port on the host, allowing the guests to access the host's connected LAN.
 the host or by the host's connected LAN.
 
 <p><b>Bridging to a host interface:</b> instead of a tap device,
-<tt>-L</tt> (or <tt>"tapdev"</tt> in a <a
-href="configfiles.html#config">machine.json</a>, "Connected to" on the
-Network page of the configuration window) can name one of the host's
+<tt>-L</tt> (or <tt>"tapdev"</tt> of a <tt>"bridged"</tt> network in a <a
+href="configfiles.html#config">machine.json</a>, "Host interface" of a
+bridged network on the Network page of the configuration window) can name one of the host's
 network interfaces, e.g. <tt>en0</tt> or <tt>eth0</tt>. The emulated
 machine is then on that network, through libpcap (Npcap on Windows), which
 is loaded when it is needed. <tt>-L list</tt> lists the interfaces.
@@ -172,8 +172,8 @@ command line option, e.g.:
 </pre>
 
 <p>In a <a href="configfiles.html">machine.json</a> file, it is the
-<tt>tapdev</tt> network setting (Network, Tap device, in the configuration
-window):
+<tt>tapdev</tt> of a bridged network (Network, Bridged, Host interface,
+Other..., in the configuration window):
 
 <p><pre>
 {
@@ -181,7 +181,7 @@ window):
   "name": "guest machine",
   "machine": { "type": "decstation", "model": "3max" },
   "drives": [ { "file": "nbsd_pmax.img" } ],
-  "network": { "tapdev": "/dev/tap0" }
+  "network": { "type": "bridged", "tapdev": "/dev/tap0" }
 }
 </pre>
 
@@ -240,6 +240,7 @@ machine:
                "serial_nr": 1 },
   "boot": { "load": [ "netbsd-GENERIC32_IP3x.gz" ] },
   "network": {
+    "type": "udp",
     "local_port": 15000,
     "remotes": [ "localhost:15001" ]
   }
@@ -252,6 +253,7 @@ machine:
                "serial_nr": 2 },
   "drives": [ { "file": "nbsd_pmax.img" } ],
   "network": {
+    "type": "udp",
     "local_port": 15001,
     "remotes": [ "localhost:15000" ]
   }
@@ -287,17 +289,17 @@ security checking of any kind. All UDP packets arriving at the input port
 are added to the emulated ethernet. Use L2TPv3 with a cookie (below) for
 anything but a trusted network.</font>
 
-<p><b>L2TPv3:</b> With <tt>l2tp</tt> enabled, frames are carried in static
+<p><b>L2TPv3:</b> With the <tt>"l2tpv3"</tt> network type, frames are carried in static
 L2TPv3 over UDP (RFC 3931, Ethernet as in RFC 4719), as Linux's
 <tt>ip l2tp</tt>, QEMU's <tt>-netdev l2tpv3</tt> and <tt>bootbridge
 -l2tp</tt> speak it, without the control connection:
 
 <p><table border="0"><tr><td width="40">&nbsp;</td><td><pre>
 "network": {
+  "type": "l2tpv3",
   "local_port": 1701,
   "remotes": [ "192.168.1.10:1701" ],
   "l2tp": {
-    "enabled": true,
     "session": 1,                       <font color="#2020cf">default 1, used in both directions</font>
     "cookie": "0x0123456789abcdef",     <font color="#2020cf">8 or 16 hex digits, or ""</font>
     "counter": true                     <font color="#2020cf">default true: L2-specific sublayer</font>
@@ -317,7 +319,9 @@ bridge which learns its peers keeps sending broadcasts to an idle
 machine. Keepalives received are dropped.
 
 <p>Note that the simulated gateway (10.0.0.254 by default, with DHCP and
-NAT) is still active in this mode, and answers DHCP requests.
+NAT) is also on a UDP or L2TPv3 network unless <tt>"gateway"</tt> is false
+("Simulated gateway on this network too" in the configuration window), and
+then answers DHCP requests.
 
 
 
@@ -340,7 +344,7 @@ configuration file, <tt>testconfig.json</tt>, looking something like this:
 	  "gxemul": 1,
 	  "machine": { "type": "decstation", "model": "3max" },
 	  "boot": { "load": [ "netbsd-INSTALL.gz" ] },
-	  "network": { "remotes": [ "localhost:12300" ] }
+	  "network": { "type": "udp", "remotes": [ "localhost:12300" ] }
 	}
 </pre>
 

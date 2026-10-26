@@ -282,15 +282,18 @@ shown here, except for the machine type:
   "slots": { "0": "PMAG-BA.bin" },  <font color="#2020cf">option ROM images, by TURBOchannel slot (see <a href="machine_decstation.html#PROM200">the 5000/200's slots 5 and 6</a>)</font>
   "network": {
     "enabled": true,
+    "type": "simulated",        <font color="#2020cf">"simulated" (the gateway), "bridged" (to tapdev), "udp", or "l2tpv3";</font>
+                                <font color="#2020cf">  without it, bridged with a tapdev, udp/l2tpv3 with remotes or a</font>
+                                <font color="#2020cf">  local_port, else simulated</font>
     "ipv4": "10.0.0.0",
     "ipv4len": 8,
-    "local_port": 0,            <font color="#2020cf">a UDP port for connecting emulators, 0 = none</font>
-    "remotes": [],              <font color="#2020cf">e.g. "localhost:12345"</font>
-    "tapdev": "",               <font color="#2020cf">as -L: a host interface to bridge to (e.g. "en0"), or a tap device</font>
-    "mac": "",                  <font color="#2020cf">the first NIC's Ethernet address, "" = from the serial number</font>
-    "gateway": true,            <font color="#2020cf">the simulated gateway (DHCP, DNS, NAT); false = frames only go</font>
-                                <font color="#2020cf">  to the other NICs and the remote emulators</font>
-    "l2tp": { "enabled": false, "session": 1, "cookie": "", "counter": true }
+    "local_port": 0,            <font color="#2020cf">udp and l2tpv3: the local UDP port, 0 = any</font>
+    "remotes": [],              <font color="#2020cf">udp and l2tpv3: e.g. "localhost:12345"</font>
+    "tapdev": "",               <font color="#2020cf">bridged, as -L: a host interface to bridge to (e.g. "en0"), or a tap device</font>
+    "mac": "",                  <font color="#2020cf">the first NIC's Ethernet address, "" = a random 08:00:2b:xx:xx:xx,</font>
+                                <font color="#2020cf">  saved in the file</font>
+    "gateway": true,            <font color="#2020cf">udp and l2tpv3: the simulated gateway (DHCP, DNS, NAT) too</font>
+    "l2tp": { "enabled": false, "session": 1, "cookie": "", "counter": true }  <font color="#2020cf">l2tpv3's settings</font>
   },
   "devices": []                 <font color="#2020cf">extra devices, as for the debugger's device add</font>
 }

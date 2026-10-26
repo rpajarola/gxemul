@@ -48,7 +48,8 @@
  *	  "display": { "enabled": false, "scale": 0, "cards": -1 },
  *	  "serial": { "telnet": false },
  *	  "slots": { "0": "PMAG-BA.bin" },
- *	  "network": { "enabled": true, "ipv4": "10.0.0.0", "ipv4len": 8,
+ *	  "network": { "enabled": true, "type": "simulated",
+ *	               "ipv4": "10.0.0.0", "ipv4len": 8,
  *	               "local_port": 0, "remotes": [], "tapdev": "",
  *	               "mac": "", "gateway": true,
  *	               "l2tp": { "enabled": false, "session": 1,
@@ -63,6 +64,14 @@
  *  an address, as on the command line (e.g. "0xbfc00000:rom.bin").  On a
  *  machine with a known ROM address, "rom" is used only without PROM
  *  emulation, and "load", "bootname", "bootarg", and "netboot" only with it.
+ *
+ *  The network's "type" is "simulated" (the gateway, with DHCP and NAT),
+ *  "bridged" (to the host interface or tap device "tapdev"), "udp" (raw
+ *  frames to and from "remotes" and "local_port"), or "l2tpv3" (the same,
+ *  in static L2TPv3, with the "l2tp" settings); "gateway" is whether a UDP
+ *  or L2TPv3 network also has the simulated gateway.  Without a "type"
+ *  (older files), it is bridged with a "tapdev", UDP or L2TPv3 (as "l2tp"
+ *  says) with "remotes" or a "local_port", and else simulated.
  */
 
 #include <ctype.h>
@@ -392,12 +401,11 @@ bool machine_config_parse_mac(const char *s, unsigned char *mac)
  */
 void machine_config_generate_mac(struct machine_config *c)
 {
-	unsigned char mac[6];
 	char buf[20];
 
-	net_generate_unique_mac(NULL, mac);
-	snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x",
-	    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	snprintf(buf, sizeof(buf), "08:00:2b:%02x:%02x:%02x",
+	    (int) (random() & 0xff), (int) (random() & 0xff),
+	    (int) (random() & 0xff));
 	machine_config_set(&c->net_mac, buf);
 }
 
@@ -671,6 +679,8 @@ static void rebase_paths(struct machine_config *c, const char *newdir)
  *  JSON
  */
 
+static const char *net_type_names[MC_N_NET_TYPES] = { "simulated",
+    "bridged", "udp", "l2tpv3" };
 static const char *kind_names[] = { "disk", "cdrom", "tape", "floppy" };
 static const char *bus_names[] = { "default", "scsi", "ide" };
 
@@ -1010,7 +1020,11 @@ struct machine_config *machine_config_parse(const char *text,
 
 	if ((o = section(root, "network", &err)) != NULL) {
 		int session = c->net_l2tp_session;
+		char *type = NULL;
+		bool l2tp = false;
+		int t;
 		get_bool(o, "enabled", &c->net, &err);
+		get_str(o, "type", &type, &err);
 		get_str(o, "ipv4", &c->net_ipv4, &err);
 		get_int(o, "ipv4len", &c->net_ipv4len, &err);
 		get_int(o, "local_port", &c->net_local_port, &err);
@@ -1020,12 +1034,29 @@ struct machine_config *machine_config_parse(const char *text,
 		get_str(o, "mac", &c->net_mac, &err);
 		get_bool(o, "gateway", &c->net_gateway, &err);
 		if ((v = section(o, "l2tp", &err)) != NULL) {
-			get_bool(v, "enabled", &c->net_l2tp, &err);
+			get_bool(v, "enabled", &l2tp, &err);
 			get_int(v, "session", &session, &err);
 			get_str(v, "cookie", &c->net_l2tp_cookie, &err);
 			get_bool(v, "counter", &c->net_l2tp_counter, &err);
 		}
 		c->net_l2tp_session = session;
+
+		if (type != NULL) {
+			for (t = 0; t < MC_N_NET_TYPES; t++)
+				if (strcmp(type, net_type_names[t]) == 0)
+					break;
+			if (t < MC_N_NET_TYPES)
+				c->net_type = t;
+			else if (err == NULL)
+				err = xprintf("the network type \"%s\" isn't "
+				    "simulated, bridged, udp, or l2tpv3", type);
+			free(type);
+		} else if (c->net_tapdev[0] != '\0')
+			c->net_type = MC_NET_BRIDGED;
+		else if (c->n_net_remotes > 0 || c->net_local_port != 0)
+			c->net_type = l2tp ? MC_NET_L2TP : MC_NET_UDP;
+		else
+			c->net_type = MC_NET_SIMULATED;
 	}
 
 	get_list(root, "devices", &c->n_devices, &c->devices, &err);
@@ -1141,6 +1172,7 @@ bool machine_config_save(struct machine_config *c, const char *path,
 
 	o = cJSON_AddObjectToObject(root, "network");
 	cJSON_AddBoolToObject(o, "enabled", c->net);
+	cJSON_AddStringToObject(o, "type", net_type_names[c->net_type]);
 	cJSON_AddStringToObject(o, "ipv4", c->net_ipv4);
 	cJSON_AddNumberToObject(o, "ipv4len", c->net_ipv4len);
 	cJSON_AddNumberToObject(o, "local_port", c->net_local_port);
@@ -1149,7 +1181,7 @@ bool machine_config_save(struct machine_config *c, const char *path,
 	cJSON_AddStringToObject(o, "mac", c->net_mac);
 	cJSON_AddBoolToObject(o, "gateway", c->net_gateway);
 	l2 = cJSON_AddObjectToObject(o, "l2tp");
-	cJSON_AddBoolToObject(l2, "enabled", c->net_l2tp);
+	cJSON_AddBoolToObject(l2, "enabled", c->net_type == MC_NET_L2TP);
 	cJSON_AddNumberToObject(l2, "session", c->net_l2tp_session);
 	cJSON_AddStringToObject(l2, "cookie", c->net_l2tp_cookie);
 	cJSON_AddBoolToObject(l2, "counter", c->net_l2tp_counter);
@@ -1398,6 +1430,15 @@ char *machine_config_check_ex(const struct machine_config *c,
 			return xprintf("the Ethernet address %s is a multicast "
 			    "address (its first byte is odd)", c->net_mac);
 	}
+	if (c->net && c->net_type == MC_NET_BRIDGED && c->net_tapdev[0] == '\0')
+		return xstrdup("a bridged network needs a host interface or a "
+		    "tap device");
+	if (c->net && (c->net_type == MC_NET_UDP || c->net_type ==
+	    MC_NET_L2TP) && c->n_net_remotes == 0 && c->net_local_port == 0)
+		return xstrdup("a UDP or L2TPv3 network needs a remote host or "
+		    "a local port");
+	if (c->net && c->net_type == MC_NET_L2TP && c->net_l2tp_session == 0)
+		return xstrdup("the L2TPv3 session ID can't be 0");
 	if (c->scale != 0 && (c->scale < 10 || c->scale > 800))
 		return xstrdup("the window scale must be a percentage from 10 "
 		    "to 800, or 0 (fit the screen)");
@@ -2462,16 +2503,19 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 		m->nic_mac_set = true;
 
 	if (c->net) {
-		emul->net = net_init(emul, c->net_gateway ?
-		    NET_INIT_FLAG_GATEWAY : 0,
-		    c->net_tapdev[0] ? c->net_tapdev : NULL,
-		    c->net_ipv4, c->net_ipv4len, c->net_remotes,
-		    c->n_net_remotes, c->net_local_port, NULL);
+		bool udp = c->net_type == MC_NET_UDP ||
+		    c->net_type == MC_NET_L2TP;
+		emul->net = net_init(emul, c->net_type == MC_NET_SIMULATED ||
+		    (udp && c->net_gateway) ? NET_INIT_FLAG_GATEWAY : 0,
+		    c->net_type == MC_NET_BRIDGED ? c->net_tapdev : NULL,
+		    c->net_ipv4, c->net_ipv4len, udp ? c->net_remotes : NULL,
+		    udp ? c->n_net_remotes : 0, udp ? c->net_local_port : 0,
+		    NULL);
 		if (emul->net == NULL) {
 			fprintf(stderr, "Could not set up the network.\n");
 			return false;
 		}
-		if (c->net_l2tp && !net_l2tp_init(emul->net,
+		if (c->net_type == MC_NET_L2TP && !net_l2tp_init(emul->net,
 		    c->net_l2tp_session, c->net_l2tp_cookie,
 		    c->net_l2tp_counter)) {
 			fprintf(stderr, "Bad L2TPv3 settings.\n");

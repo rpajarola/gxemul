@@ -2305,23 +2305,20 @@ static void tap_devs_free(void)
 
 
 /*
- *  What the network is connected to:  the simulated network, a host
- *  interface (bridged with libpcap, or Npcap on Windows), or another one,
- *  e.g. a tap device.  Whether it can be used is checked when it is
- *  chosen, e.g. for permission to capture.
+ *  The host interface (bridged with libpcap, or Npcap on Windows) or tap
+ *  device of a bridged network.  Whether it can be used is checked when it
+ *  is chosen, e.g. for permission to capture.
  */
-static void tap_field(void)
+static void bridge_field(void)
 {
 	mu_Context *ctx = ui.ctx;
 	struct machine_config *c = ui.cfg;
 	const char *labels[66];
-	int i, nl = 0, sel = 0;
+	int i, nl = 0, sel = -1;
 
 	if (ui.n_tap_devs == -2)
 		ui.n_tap_devs = net_tap_list(&ui.tap_names, &ui.tap_descs);
 
-	labels[nl++] = "Simulated network";
-	labels[nl++] = "No gateway (only other emulators)";
 	for (i = 0; i < ui.n_tap_devs && nl < 64; i++)
 		labels[nl++] = ui.tap_descs[i];
 	labels[nl++] = "Other...";
@@ -2330,25 +2327,20 @@ static void tap_field(void)
 		sel = nl - 1;
 	else if (c->net_tapdev[0] != '\0') {
 		sel = nl - 1;
-		for (i = 0; i < ui.n_tap_devs && i + 2 < nl - 1; i++)
+		for (i = 0; i < nl - 1; i++)
 			if (strcasecmp(c->net_tapdev, ui.tap_names[i]) == 0 ||
 			    strcasecmp(c->net_tapdev, ui.tap_descs[i]) == 0) {
-				sel = i + 2;
+				sel = i;
 				break;
 			}
-	} else
-		sel = c->net_gateway ? 0 : 1;
+	}
 
+	mu_label(ctx, "Host interface");
 	if (dropdown("tapdev", labels, nl, &sel)) {
-		if (sel <= 1) {
-			machine_config_set(&c->net_tapdev, "");
-			c->net_gateway = sel == 0;
-			ui.custom_tap = false;
-		} else if (sel == nl - 1) {
+		if (sel == nl - 1)
 			ui.custom_tap = true;
-		} else {
-			machine_config_set(&c->net_tapdev,
-			    ui.tap_descs[sel - 2]);
+		else {
+			machine_config_set(&c->net_tapdev, ui.tap_descs[sel]);
 			ui.custom_tap = false;
 		}
 		edits_clear();
@@ -2373,76 +2365,59 @@ static void tap_field(void)
 		machine_config_set(&ui.tap_checked, c->net_tapdev);
 	}
 	mu_label(ctx, "");
-	if (c->net_tapdev[0] == '\0' && !c->net_gateway && !ui.custom_tap)
-		mu_label(ctx, "(the machine's network interface is only "
-		    "connected to the other emulators below, if any)");
-	else if (c->net_tapdev[0] == '\0') {
+	if (c->net_tapdev[0] == '\0') {
 		if (ui.n_tap_devs < 0)
 #ifdef _WIN32
-			mu_label(ctx, "(Npcap is not installed, so the network "
-			    "can't be connected to a host interface)");
+			mu_label(ctx, "(Npcap is not installed, so only a tap "
+			    "device can be used)");
 #else
-			mu_label(ctx, "(libpcap is not installed, so the "
-			    "network can't be connected to a host interface)");
+			mu_label(ctx, "(libpcap is not installed, so only a tap "
+			    "device can be used)");
 #endif
 		else
-			mu_label(ctx, "(with a gateway, DHCP, and NAT to the "
-			    "host's network)");
+			mu_label(ctx, "(the machine is on that network, without "
+			    "the simulated gateway)");
 	} else if (ui.tap_problem != NULL) {
 		char buf[700];
 		snprintf(buf, sizeof(buf), "Can't be used: %s", ui.tap_problem);
 		mu_text(ctx, buf);
 	} else
-		mu_label(ctx, "(bridged: the machine is on that network, "
-		    "without the simulated gateway)");
+		mu_label(ctx, "(the machine is on that network, without the "
+		    "simulated gateway)");
 }
 
 
-static void page_network(void)
+/*  The simulated gateway's network:  */
+static void gateway_fields(void)
+{
+	mu_Context *ctx = ui.ctx;
+	struct machine_config *c = ui.cfg;
+
+	mu_label(ctx, "Network address");
+	text_field(&c->net_ipv4);
+	mu_label(ctx, "Prefix length");
+	int_field(&c->net_ipv4len);
+	mu_label(ctx, "");
+	mu_label(ctx, "(the gateway is the last address, with DHCP, DNS, "
+	    "and NAT to the host's network)");
+}
+
+
+/*  A UDP or L2TPv3 link to other emulators, or e.g. a bridge:  */
+static void udp_fields(bool l2tp)
 {
 	mu_Context *ctx = ui.ctx;
 	struct machine_config *c = ui.cfg;
 	int full[1] = { -1 };
 	int lw[2] = { CH(24), -1 };
-	static const char *encaps[2] = { "Raw Ethernet frames", "L2TPv3" };
-	int i, sel;
+	int aw[1] = { CH(14) };
+	int i;
 
-	row(1, full);
-	check("Network", &c->net);
-	if (!c->net)
-		return;
-
-	int mw[3] = { CH(24), -CH(12), -1 };
-	row(3, mw);
-	mu_label(ctx, "Ethernet address");
-	text_field(&c->net_mac);
-	if (mu_button(ctx, "Generate")) {
-		machine_config_generate_mac(c);
-		edits_clear();
-	}
-	row(2, lw);
-	mu_label(ctx, "");
-	mu_label(ctx, "(empty = generate 08:00:2b:xx:xx:xx when saved)");
-
-	mu_label(ctx, "Connected to");
-	tap_field();
-	if (c->net_tapdev[0] == '\0' && c->net_gateway) {
-		mu_label(ctx, "Network address");
-		text_field(&c->net_ipv4);
-		mu_label(ctx, "Prefix length");
-		int_field(&c->net_ipv4len);
-	}
-
-	/*  The UDP link to other emulators, and how it carries frames:  */
-	row(1, full);
-	mu_label(ctx, "");
-	mu_label(ctx, "Other emulators (frames over UDP, e.g. to other gxemuls, "
-	    "simh, or QEMU):");
 	row(2, lw);
 	mu_label(ctx, "Local UDP port");
 	int_field(&c->net_local_port);
 	mu_label(ctx, "");
-	mu_label(ctx, "(0 = automatic)");
+	mu_label(ctx, l2tp ? "(0 = any; usually 1701)" : "(0 = any)");
 
 	row(1, full);
 	mu_label(ctx, "Remote hosts (host:port):");
@@ -2460,34 +2435,120 @@ static void page_network(void)
 		}
 		mu_pop_id(ctx);
 	}
-	int aw[1] = { CH(14) };
 	row(1, aw);
 	if (mu_button(ctx, "Add remote")) {
 		machine_config_add_string(&c->n_net_remotes, &c->net_remotes,
-		    "localhost:15001");
+		    l2tp ? "localhost:1701" : "localhost:15001");
 		edits_clear();
 	}
 
-	row(2, lw);
-	mu_label(ctx, "Encapsulation");
-	sel = c->net_l2tp ? 1 : 0;
-	if (dropdown("encaps", encaps, 2, &sel))
-		c->net_l2tp = sel == 1;
-	if (c->net_l2tp) {
+	if (l2tp) {
 		int session = (int) c->net_l2tp_session;
-		mu_label(ctx, "");
-		mu_label(ctx, "(static L2TPv3, for the link to all the remote "
-		    "hosts; both ends must agree)");
+		row(2, lw);
 		mu_label(ctx, "Session ID");
 		int_field(&session);
 		c->net_l2tp_session = (uint32_t) session;
 		mu_label(ctx, "Cookie");
 		text_field(&c->net_l2tp_cookie);
 		mu_label(ctx, "");
-		mu_label(ctx, "(8 or 16 hex digits, or empty)");
+		mu_label(ctx, "(8 or 16 hex digits, or empty; both ends must "
+		    "agree on all of these)");
 		row(1, full);
 		check("L2-specific sublayer (sequence numbers)",
 		    &c->net_l2tp_counter);
+	}
+
+	row(1, full);
+	mu_label(ctx, "");
+	check("Simulated gateway on this network too (DHCP, DNS, NAT)",
+	    &c->net_gateway);
+	if (c->net_gateway) {
+		row(2, lw);
+		gateway_fields();
+	}
+}
+
+
+static void page_network(void)
+{
+	mu_Context *ctx = ui.ctx;
+	struct machine_config *c = ui.cfg;
+	int full[1] = { -1 };
+	int lw[2] = { CH(24), -1 };
+	int bw[1] = { CH(16) };
+	static const char *types[MC_N_NET_TYPES] = {
+	    "Simulated (gateway with DHCP and NAT)",
+	    "Bridged to a host interface (BPF) or tap",
+	    "UDP (raw Ethernet frames)",
+	    "L2TPv3 (static, over UDP)" };
+	int sel;
+
+	if (!c->net) {
+		row(1, full);
+		mu_label(ctx, "The machine has no network.");
+		row(1, bw);
+		if (mu_button(ctx, "Add network")) {
+			c->net = true;
+			if (c->net_mac[0] == '\0')
+				machine_config_generate_mac(c);
+			edits_clear();
+		}
+		return;
+	}
+
+	row(2, lw);
+	mu_label(ctx, "Network");
+	sel = c->net_type;
+	if (dropdown("nettype", types, MC_N_NET_TYPES, &sel)) {
+		c->net_type = sel;
+		ui.custom_tap = false;
+		edits_clear();
+	}
+
+	int mw[3] = { CH(24), -CH(12), -1 };
+	row(3, mw);
+	mu_label(ctx, "Ethernet address");
+	text_field(&c->net_mac);
+	if (mu_button(ctx, "Generate")) {
+		machine_config_generate_mac(c);
+		edits_clear();
+	}
+	row(2, lw);
+	mu_label(ctx, "");
+	mu_label(ctx, "(empty = generate 08:00:2b:xx:xx:xx when saved)");
+
+	switch (c->net_type) {
+	case MC_NET_SIMULATED:
+		gateway_fields();
+		break;
+	case MC_NET_BRIDGED:
+		bridge_field();
+		break;
+	case MC_NET_UDP:
+		row(1, full);
+		mu_label(ctx, "");
+		mu_text(ctx, "Each UDP datagram carries one Ethernet frame, as "
+		    "for other gxemuls, simh, QEMU (-netdev dgram), or the "
+		    "HECnet bridge.  There is no security checking of any "
+		    "kind; use L2TPv3 with a cookie on untrusted networks.");
+		udp_fields(false);
+		break;
+	case MC_NET_L2TP:
+		row(1, full);
+		mu_label(ctx, "");
+		mu_text(ctx, "Frames in static L2TPv3 over UDP (RFC 3931, "
+		    "without the control connection), as for Linux's ip l2tp, "
+		    "QEMU (-netdev l2tpv3), or bootbridge -l2tp.");
+		udp_fields(true);
+		break;
+	}
+
+	row(1, full);
+	mu_label(ctx, "");
+	row(1, bw);
+	if (mu_button(ctx, "Remove network")) {
+		c->net = false;
+		edits_clear();
 	}
 }
 
