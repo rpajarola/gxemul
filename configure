@@ -1028,6 +1028,10 @@ if [ "z$PREFIX" = z ]; then
 fi
 echo "checking for 'make install' prefix: $PREFIX"
 
+#  Where installed data, e.g. the ROM images of the gxemul-rp-roms package,
+#  is looked for:
+printf "#define GXEMUL_DATADIR \"$PREFIX/share/gxemul\"\n" >> config.h
+
 
 ###############################################################################
 

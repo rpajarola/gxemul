@@ -47,7 +47,7 @@
 #define	GZIP_FCOMMENT	0x10
 
 
-static uint32_t crc32_update(uint32_t crc, const unsigned char *p, size_t n)
+uint32_t crc32_update(uint32_t crc, const unsigned char *p, size_t n)
 {
 	static uint32_t table[256];
 

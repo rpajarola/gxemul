@@ -706,17 +706,20 @@ static void pick_file(char **field, const char *title, bool rom)
 static void rom_found(const char *name)
 {
 	struct stat st;
-	char *f, buf[1200];
+	char *f, *zip, buf[1200];
 
 	if (name == NULL || name[0] == '\0')
 		return;
-	f = machine_config_resolve_rom(ui.cfg, name);
-	if (stat(f, &st) == 0)
+	f = machine_config_find_rom(ui.cfg, name, &zip);
+	if (zip != NULL)
+		snprintf(buf, sizeof(buf), "(in %s)", zip);
+	else if (stat(f, &st) == 0)
 		snprintf(buf, sizeof(buf), "(%s)", f);
 	else
 		snprintf(buf, sizeof(buf), "(not found in the machine's folder, "
 		    "or in the ROM folders under Settings)");
 	free(f);
+	free(zip);
 	int full[1] = { -1 };
 	row(1, full);
 	mu_label(ui.ctx, buf);
@@ -1028,9 +1031,10 @@ static void screen_settings(void)
 	mu_label(ctx, "ROM images");
 	mu_text(ctx, "A ROM image given by name (e.g. a system ROM, or an "
 	    "option ROM) is looked for in the machine's folder, then in the "
-	    "common ROM folder, and then in the other folders listed here.  "
-	    "A ROM image chosen in one of these folders is kept by its name, "
-	    "so machines can share them.");
+	    "common ROM folder, the other folders listed here, and the "
+	    "installed and MAME ROM folders.  A ROM image chosen in one of "
+	    "these folders is kept by its name, so machines can share them.  "
+	    "\"set/file\" is also found in set.zip, as in MAME's ROM sets.");
 	mu_label(ctx, "");
 	int cw[4] = { CH(16), -CH(22), CH(11), CH(9) };
 	row(4, cw);
@@ -1072,6 +1076,33 @@ static void screen_settings(void)
 	mu_label(ctx, "");
 	if (mu_button(ctx, "Add folder..."))
 		pick_rom_dir(-1);
+
+	/*  The others searched ($GXEMUL_ROM_PATH, installed, and MAME's):  */
+	{
+		char **dirs;
+		int n = appdirs_rom_search_path(&dirs), j, shown = 0;
+		int ow[2] = { CH(16), -1 };
+
+		row(2, ow);
+		for (i = 0; i < n; i++) {
+			char *mine = NULL;
+			bool listed = false;
+			for (j = -1; j < ui.n_rom_dirs && !listed; j++) {
+				free(mine);
+				mine = machine_config_clean_path(j < 0 ?
+				    appdirs_roms_dir() : ui.rom_dirs[j]);
+				listed = strcmp(mine, dirs[i]) == 0;
+			}
+			free(mine);
+			if (!listed) {
+				mu_label(ctx, shown++ == 0 ? "Also searched:" :
+				    "");
+				mu_label(ctx, dirs[i]);
+			}
+			free(dirs[i]);
+		}
+		free(dirs);
+	}
 	mu_end_panel(ctx);
 
 	int bw[1] = { CH(10) };

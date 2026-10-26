@@ -157,6 +157,8 @@ bool machine_config_parse_mac(const char *s, unsigned char *mac);
 void machine_config_generate_mac(struct machine_config *);
 char *machine_config_clean_path(const char *path);
 char *machine_config_resolve_rom(const struct machine_config *, const char *);
+char *machine_config_find_rom(const struct machine_config *, const char *,
+	char **zipp);
 char *machine_config_normalize(const struct machine_config *, const char *p,
 	bool rom);
 char *machine_config_check(const struct machine_config *);
@@ -244,5 +246,7 @@ const char *appdirs_roms_dir(void);
 void appdirs_set_roms_dir(const char *dir);
 int appdirs_rom_dirs(char ***listp);
 void appdirs_set_rom_dirs(int n, char **list);
+int appdirs_rom_search_path(char ***listp);
+const char *appdirs_cache_dir(void);
 
 #endif	/*  MACHINE_CONFIG_H  */

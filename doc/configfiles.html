@@ -214,6 +214,36 @@ These are set with <b>Settings...</b> in the machines window.  A ROM image
 in one of these folders is kept by its name relative to that folder, so
 several machines can use the same ROM images, wherever they are.
 
+<p>After those, ROM images are looked for in:
+
+<ul>
+  <li>the folders in the <tt>GXEMUL_ROM_PATH</tt> environment variable
+	(separated by colons, or semicolons on Windows);
+  <li>the installed ROM folder, <tt>share/gxemul/roms</tt> where gxemul is
+	installed (<tt>/usr/share/gxemul/roms</tt> for the <tt>.deb</tt>,
+	<tt>/usr/local/share/gxemul/roms</tt> for the macOS <tt>.pkg</tt>
+	and <tt>make install</tt>), or <tt>roms</tt> next to
+	<tt>gxemul.exe</tt> on Windows.  The <tt>gxemul-rp-roms</tt>
+	package (see <tt>packaging/build-roms.sh</tt>) puts ROM images there;
+  <li>MAME's ROM folders: its <tt>rompath</tt> in <tt>~/.mame/mame.ini</tt>
+	(or <tt>/etc/mame/mame.ini</tt>, as Debian's MAME has it), and
+	<tt>~/mame/roms</tt>, <tt>~/.mame/roms</tt>, and
+	<tt>/usr/share/games/mame/roms</tt>, if they exist.
+</ul>
+
+<p>These are listed under <b>Settings...</b>, too.  In any of the ROM
+folders, a name like <tt>"ds5k133/ds5000-133_005eb.bin"</tt> is also found
+in a zip archive, as in MAME's ROM sets: the file
+<tt>ds5000-133_005eb.bin</tt> in <tt>ds5k133.zip</tt>.  (It is taken out to
+gxemul's cache folder.)  The DECstation ROM images in MAME's sets are also
+found by their names alone:
+
+<p><table border="0"><tr><td width="40">&nbsp;</td><td><pre>
+kn01-aa.v7.01.img        <font color="#2020cf">DECstation 2100 and 3100 (KN01) system ROM, in ds3100 or ds2100</font>
+ds5000-133_005eb.bin     <font color="#2020cf">DECstation 5000/1xx (KN02-BA) system ROM V5.7j, in ds5k133</font>
+pmagb-ba-rom.img         <font color="#2020cf">PMAGB-BA (HX) framebuffer option ROM, in ds5k133</font>
+</pre></td></tr></table>
+
 <p>The list of recently used machines (<tt>recent.json</tt>), and the
 settings (<tt>settings.json</tt>: the ROM folders, and the folder last used
 in a file chooser) are kept in:

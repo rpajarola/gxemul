@@ -264,6 +264,9 @@ void dreamcast_descramble(char *from, char *to);
 /*  file.c:  */
 int file_n_executables_loaded(void);
 bool gunzip_file(const char *from, const char *to);
+uint32_t crc32_update(uint32_t crc, const unsigned char *p, size_t n);
+bool unzip_find(const char *zip, const char *name);
+bool unzip_extract(const char *zip, const char *name, const char *to);
 void file_load(struct machine *machine, struct memory *mem,
 	char *filename, uint64_t *entrypointp,
 	int arch, uint64_t *gpp, int *byte_order, uint64_t *tocp);

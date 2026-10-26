@@ -426,6 +426,7 @@ char *machine_config_resolve(const struct machine_config *c, const char *p)
 
 
 static bool file_exists(const char *path);
+static bool is_dir(const char *path);
 
 
 /*
@@ -520,7 +521,7 @@ static char *shorten(const char *abs, const char *dir, bool rom)
 	}
 	if (rom) {
 		r = NULL;
-		n = appdirs_rom_dirs(&dirs);
+		n = appdirs_rom_search_path(&dirs);
 		for (i = 0; i < n; i++) {
 			d = machine_config_clean_path(dirs[i]);
 			if (r == NULL && (rest = inside(d, abs)) != NULL)
@@ -537,37 +538,151 @@ static char *shorten(const char *abs, const char *dir, bool rom)
 
 
 /*
- *  machine_config_resolve_rom():
+ *  ROM images in MAME's ROM sets, which are found by their name alone in
+ *  the set's directory or zip archive in a ROM directory (MAME's, or any
+ *  other); others are found as "set/file".
+ */
+static const struct {
+	const char	*set;
+	const char	*file;
+} mame_roms[] = {
+	{ "ds3100",	"kn01-aa.v7.01.img" },		/*  KN01 V7.01  */
+	{ "ds2100",	"kn01-aa.v7.01.img" },
+	{ "ds5k133",	"ds5000-133_005eb.bin" },	/*  KN02-BA V5.7j  */
+	{ "ds5k133",	"pmagb-ba-rom.img" },		/*  PMAGB-BA  */
+};
+
+
+/*  The directory zip archives' ROM images are taken out to:  */
+static char *rom_cache_dir(void)
+{
+	return xprintf("%s/roms", appdirs_cache_dir());
+}
+
+
+static bool newer_or_same(const char *a, const char *b)
+{
+	struct stat sa, sb;
+	return stat(a, &sa) == 0 && stat(b, &sb) == 0 &&
+	    sa.st_mtime >= sb.st_mtime;
+}
+
+
+/*
+ *  Looks for the ROM image p (a relative name) in dir: as a file, or if p
+ *  is "set/file", as file in set.zip there (taken out to the cache, unless
+ *  it is there already).  Returns the file's name (freed by the caller),
+ *  or NULL, and in *zipp (if not NULL) the zip archive it came from.
+ */
+static char *rom_in_dir(const char *dir, const char *p, char **zipp)
+{
+	char *f = xprintf("%s/%s", dir, p), *zip, *cache, *cdir;
+	const char *slash = strrchr(p, '/');
+
+	if (file_exists(f) && !is_dir(f))
+		return f;
+	free(f);
+	if (slash == NULL || slash == p || slash[1] == '\0')
+		return NULL;
+
+	zip = xprintf("%s/%.*s.zip", dir, (int) (slash - p), p);
+	if (!file_exists(zip)) {
+		free(zip);
+		return NULL;
+	}
+	cdir = rom_cache_dir();
+	cache = xprintf("%s/%s", cdir, p);
+	free(cdir);
+	if (!newer_or_same(cache, zip)) {
+		/*  (What can't be taken out isn't tried again until the
+		    archive changes, e.g. every time the configuration
+		    window is drawn.)  */
+		static int n_failed = 0;
+		static char **failed = NULL;
+		struct stat st;
+		char *d = dirname_of(cache), *what;
+		int i;
+
+		what = xprintf("%s:%s:%lld", zip, p, stat(zip, &st) == 0 ?
+		    (long long) st.st_mtime : 0LL);
+
+		for (i = 0; i < n_failed; i++)
+			if (strcmp(failed[i], what) == 0)
+				break;
+		machine_config_make_dir(d);
+		free(d);
+		if (i < n_failed || !unzip_extract(zip, slash + 1, cache)) {
+			if (i == n_failed)
+				machine_config_add_string(&n_failed, &failed,
+				    what);
+			free(what);
+			free(cache);
+			free(zip);
+			return NULL;
+		}
+		free(what);
+	}
+	if (zipp != NULL)
+		*zipp = zip;
+	else
+		free(zip);
+	return cache;
+}
+
+
+/*
+ *  machine_config_find_rom(), machine_config_resolve_rom():
  *
  *  Like machine_config_resolve(), for a ROM image: a relative name which
  *  isn't in the configuration's directory is looked for in the ROM
- *  directories (see appdirs_rom_dirs()).  The caller frees it.
+ *  directories (see appdirs_rom_search_path()), as a file, or as "set/file"
+ *  in set.zip, and a file in one of MAME's ROM sets (see mame_roms) also
+ *  by its name alone.  machine_config_find_rom() also returns, in *zipp
+ *  (if not NULL), the zip archive it was found in, or NULL.  The caller
+ *  frees what is returned.
  */
-char *machine_config_resolve_rom(const struct machine_config *c,
-	const char *p)
+char *machine_config_find_rom(const struct machine_config *c, const char *p,
+	char **zipp)
 {
 	char *f, **dirs, *found = NULL;
+	size_t k;
 	int n, i;
 
+	if (zipp != NULL)
+		*zipp = NULL;
 	f = machine_config_resolve(c, p);
 	if (p == NULL || p[0] == '\0' || is_absolute(p) || file_exists(f))
 		return f;
 
-	n = appdirs_rom_dirs(&dirs);
-	for (i = 0; i < n; i++) {
-		char *g = xprintf("%s/%s", dirs[i], p);
-		if (found == NULL && file_exists(g))
-			found = g;
-		else
-			free(g);
-		free(dirs[i]);
+	n = appdirs_rom_search_path(&dirs);
+	for (i = 0; i < n && found == NULL; i++)
+		found = rom_in_dir(dirs[i], p, zipp);
+	for (k = 0; k < sizeof(mame_roms) / sizeof(mame_roms[0]) &&
+	    found == NULL; k++) {
+		char *q;
+		if (strcasecmp(p, mame_roms[k].file) != 0)
+			continue;
+		q = xprintf("%s/%s", mame_roms[k].set, mame_roms[k].file);
+		for (i = 0; i < n && found == NULL; i++)
+			found = rom_in_dir(dirs[i], q, zipp);
+		free(q);
 	}
+	for (i = 0; i < n; i++)
+		free(dirs[i]);
 	free(dirs);
+
 	if (found != NULL) {
 		free(f);
 		return found;
 	}
 	return f;
+}
+
+
+char *machine_config_resolve_rom(const struct machine_config *c,
+	const char *p)
+{
+	return machine_config_find_rom(c, p, NULL);
 }
 
 
@@ -581,14 +696,20 @@ char *machine_config_resolve_rom(const struct machine_config *c,
 char *machine_config_normalize(const struct machine_config *c,
 	const char *p, bool rom)
 {
-	char *f, *abs, *r;
+	char *f, *abs, *r, *zip = NULL;
 
 	if (p == NULL || p[0] == '\0')
 		return xstrdup("");
 	if (!is_absolute(p) && c->dir == NULL)
 		return xstrdup(p);
-	f = rom ? machine_config_resolve_rom(c, p) :
+	f = rom ? machine_config_find_rom(c, p, &zip) :
 	    machine_config_resolve(c, p);
+	if (zip != NULL) {
+		/*  (In a zip archive, it is kept as it is.)  */
+		free(zip);
+		free(f);
+		return xstrdup(p);
+	}
 	abs = machine_config_clean_path(f);
 	r = shorten(abs, c->dir, rom);
 	free(f);
@@ -638,15 +759,21 @@ static void rebase_one(const struct machine_config *c, const char *newdir,
 	char **field, bool is_load, bool rom)
 {
 	size_t n;
-	char *f, *abs, *rel;
+	char *f, *abs, *rel, *zip = NULL;
 
 	if (*field == NULL || (*field)[0] == '\0')
 		return;
 	n = is_load ? load_prefix_len(*field) : 0;
 	if (c->dir == NULL && !is_absolute(*field + n))
 		return;
-	f = rom ? machine_config_resolve_rom(c, *field + n) :
+	f = rom ? machine_config_find_rom(c, *field + n, &zip) :
 	    machine_config_resolve(c, *field + n);
+	if (zip != NULL) {
+		/*  (In a zip archive, it is kept as it is.)  */
+		free(zip);
+		free(f);
+		return;
+	}
 	abs = machine_config_clean_path(f);
 	rel = shorten(abs, newdir, rom);
 	free(f);

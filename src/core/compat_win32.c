@@ -378,6 +378,25 @@ bool win32_replace_file(const char *from, const char *to)
 
 
 /*
+ *  win32_exe_dir():
+ *
+ *  Returns the directory this executable is in (the caller frees it), or
+ *  NULL if it isn't known.
+ */
+char *win32_exe_dir(void)
+{
+	char exe[MAX_PATH], *p;
+
+	if (GetModuleFileNameA(NULL, exe, sizeof(exe)) == 0)
+		return NULL;
+	if ((p = strrchr(exe, '\\')) == NULL)
+		return NULL;
+	*p = '\0';
+	return strdup(exe);
+}
+
+
+/*
  *  win32_spawn_self():
  *
  *  Starts another gxemul (this executable) with the arguments given (a

@@ -124,6 +124,24 @@ or a release binary). The version is the git tag without its `v`, or
 `1.0.0~git<sha>`; set `VERSION` to override it, and `configure` takes it
 from `GXEMUL_VERSION`.
 
+## ROM images
+
+`gxemul-rp-roms` is a separate package of ROM images, installed where
+gxemul looks for them after the user's own ROM folders
+(`/usr/share/gxemul/roms` on Debian and Ubuntu,
+`/usr/local/share/gxemul/roms` on macOS). The images are not in this
+repository and the release workflow does not build the package: they are
+the machines' copyrighted firmware, so it is built from a directory of
+images that may be redistributed:
+
+```
+packaging/build-roms.sh deb DIR   # dist/gxemul-rp-roms_<version>_all.deb (needs nfpm)
+packaging/build-roms.sh pkg DIR   # dist/gxemul-rp-roms-<version>.pkg (on macOS)
+```
+
+Everything in `DIR` is installed as it is, including MAME ROM sets (zip
+archives or directories). The version is `VERSION`, or the date.
+
 ## Releasing
 
 Tag, then publish a GitHub release for the tag:

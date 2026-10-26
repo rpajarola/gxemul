@@ -84,6 +84,9 @@ int win32_stdin_read(unsigned char *buf, int len);
     SIGINT):  */
 void win32_set_ctrl_c_handler(void (*handler)(int));
 
+/*  The directory this executable is in (freed by the caller), or NULL:  */
+char *win32_exe_dir(void);
+
 /*  Starts Winsock:  */
 void win32_sockets_init(void);
 

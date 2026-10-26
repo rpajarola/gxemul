@@ -38,15 +38,19 @@
  *  ("roms_dir", the common one, if not the default, and "rom_dirs", the
  *  others).  New machines are saved in
  *  ~/GXemul by default (Documents\GXemul on Windows), and ROM images go in
- *  its ROMs folder.
+ *  its ROMs folder.  ROM images are also looked for in installed and MAME
+ *  ROM directories (see appdirs_rom_search_path()), and those taken out of
+ *  zip archives are kept in a cache directory (appdirs_cache_dir()).
  */
 
+#include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 
 #include "machine_config.h"
 #include "misc.h"
@@ -437,4 +441,299 @@ void appdirs_set_rom_dirs(int n, char **list)
 	cJSON_DeleteItemFromObjectCaseSensitive(settings_get(), "rom_dirs");
 	cJSON_AddItemToObject(settings_get(), "rom_dirs", a);
 	settings_write();
+}
+
+
+/*
+ *  appdirs_cache_dir():
+ *
+ *  Returns GXemul's cache directory (creating it if needed), e.g. for ROM
+ *  images taken out of zip archives.
+ */
+const char *appdirs_cache_dir(void)
+{
+	static char *dir = NULL;
+	char buf[4096];
+
+	if (dir != NULL)
+		return dir;
+
+#if defined(_WIN32)
+	{
+		const char *a = getenv("LOCALAPPDATA");
+		if (a == NULL)
+			a = getenv("APPDATA");
+		snprintf(buf, sizeof(buf), "%s\\gxemul\\cache",
+		    a ? a : home_dir());
+	}
+#elif defined(__APPLE__)
+	snprintf(buf, sizeof(buf), "%s/Library/Caches/gxemul", home_dir());
+#else
+	{
+		const char *x = getenv("XDG_CACHE_HOME");
+		if (x != NULL && x[0] == '/')
+			snprintf(buf, sizeof(buf), "%s/gxemul", x);
+		else
+			snprintf(buf, sizeof(buf), "%s/.cache/gxemul",
+			    home_dir());
+	}
+#endif
+
+	make_dirs(buf);
+	CHECK_ALLOCATION(dir = strdup(buf));
+	return dir;
+}
+
+
+static bool dir_exists(const char *path)
+{
+	struct stat st;
+	return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+
+/*  Adds a directory to a list, unless it is in it already:  */
+static void add_dir(int *np, char ***listp, const char *dir, bool must_exist)
+{
+	char *clean;
+	int i;
+
+	if (dir == NULL || dir[0] == '\0' || (must_exist && !dir_exists(dir)))
+		return;
+	clean = machine_config_clean_path(dir);
+	for (i = 0; i < *np; i++)
+		if (strcmp((*listp)[i], clean) == 0)
+			break;
+	if (i == *np)
+		machine_config_add_string(np, listp, clean);
+	free(clean);
+}
+
+
+/*
+ *  Expands environment variables ($NAME, ${NAME}, or $(NAME)) and a ~ at
+ *  the start, as MAME does in its paths.  The caller frees the result.
+ */
+static char *expand_path(const char *s)
+{
+	char out[4096], name[256];
+	size_t n = 0;
+
+	if (s[0] == '~' && (s[1] == '/' || s[1] == '\0')) {
+		n = snprintf(out, sizeof(out), "%s", home_dir());
+		s++;
+	}
+	while (*s && n < sizeof(out) - 1) {
+		if (*s == '$') {
+			const char *start = s + 1, *v;
+			char close = *start == '{' ? '}' : *start == '(' ?
+			    ')' : '\0';
+			size_t l = 0;
+
+			if (close)
+				start++;
+			while ((isalnum((unsigned char) start[l]) ||
+			    start[l] == '_') && l < sizeof(name) - 1)
+				l++;
+			if (l > 0 && (!close || start[l] == close)) {
+				memcpy(name, start, l);
+				name[l] = '\0';
+				v = getenv(name);
+				if (v != NULL)
+					n += snprintf(out + n, sizeof(out) - n,
+					    "%s", v);
+				s = start + l + (close ? 1 : 0);
+				if (n >= sizeof(out))
+					n = sizeof(out) - 1;
+				continue;
+			}
+		}
+		out[n++] = *s++;
+	}
+	out[n] = '\0';
+	return strdup(out);
+}
+
+
+/*
+ *  Adds the directories of a list separated by sep (e.g. MAME's rompath,
+ *  or $GXEMUL_ROM_PATH) that exist; relative ones are relative to base,
+ *  if it isn't NULL.
+ */
+static void add_dir_list(int *np, char ***listp, const char *s, char sep,
+	const char *base)
+{
+	char *copy = strdup(s), *p, *next;
+
+	for (p = copy; p != NULL; p = next) {
+		char *dir;
+
+		if ((next = strchr(p, sep)) != NULL)
+			*next++ = '\0';
+		while (isspace((unsigned char) *p))
+			p++;
+		if (*p == '\0')
+			continue;
+		dir = expand_path(p);
+		if (base != NULL && dir[0] != '/'
+#ifdef _WIN32
+		    && dir[0] != '\\' && !(isalpha((unsigned char) dir[0]) &&
+		    dir[1] == ':')
+#endif
+		    ) {
+			size_t l = strlen(base) + strlen(dir) + 2;
+			char *full = (char *) malloc(l);
+			CHECK_ALLOCATION(full);
+			snprintf(full, l, "%s/%s", base, dir);
+			free(dir);
+			dir = full;
+		}
+		add_dir(np, listp, dir, true);
+		free(dir);
+	}
+	free(copy);
+}
+
+
+/*
+ *  Adds MAME's ROM directories: the rompath in a mame.ini (one of those
+ *  MAME itself reads, or e.g. Debian's in /etc/mame), and the usual
+ *  places, if they exist.
+ */
+static void add_mame_dirs(int *np, char ***listp)
+{
+	static const char *inis[] = {
+		"~/.mame/mame.ini",
+#ifdef __APPLE__
+		"~/Library/Application Support/mame/mame.ini",
+#endif
+		"$XDG_CONFIG_HOME/mame/mame.ini",
+		"~/.config/mame/mame.ini",
+		"/etc/mame/mame.ini",
+		"/usr/local/etc/mame/mame.ini",
+#ifdef __APPLE__
+		"/opt/homebrew/etc/mame/mame.ini",
+#endif
+		NULL };
+	static const char *dirs[] = {
+		"~/mame/roms",
+		"~/.mame/roms",
+#ifdef __APPLE__
+		"~/Library/Application Support/mame/roms",
+		"~/Documents/mame/roms",
+#endif
+		"/usr/local/share/games/mame/roms",
+		"/usr/share/games/mame/roms",
+		NULL };
+	int i;
+
+	for (i = 0; inis[i] != NULL; i++) {
+		char *ini = expand_path(inis[i]), line[4096], *slash;
+		FILE *f = fopen(ini, "r");
+
+		if (f == NULL) {
+			free(ini);
+			continue;
+		}
+		if ((slash = strrchr(ini, '/')) != NULL)
+			*slash = '\0';
+		while (fgets(line, sizeof(line), f) != NULL) {
+			char *p = line, *e;
+			while (isspace((unsigned char) *p))
+				p++;
+			if (strncmp(p, "rompath", 7) != 0 ||
+			    !isspace((unsigned char) p[7]))
+				continue;
+			p += 7;
+			while (isspace((unsigned char) *p))
+				p++;
+			e = p + strlen(p);
+			while (e > p && isspace((unsigned char) e[-1]))
+				*--e = '\0';
+			if (*p == '"' && e > p + 1 && e[-1] == '"') {
+				e[-1] = '\0';
+				p++;
+			}
+			add_dir_list(np, listp, p, ';', ini);
+		}
+		fclose(f);
+		free(ini);
+	}
+
+	for (i = 0; dirs[i] != NULL; i++) {
+		char *d = expand_path(dirs[i]);
+		add_dir(np, listp, d, true);
+		free(d);
+	}
+}
+
+
+/*
+ *  appdirs_rom_search_path():
+ *
+ *  All the directories searched for ROM images, in this order: those of
+ *  appdirs_rom_dirs(), those in $GXEMUL_ROM_PATH (separated by colons, or
+ *  semicolons on Windows), the installed ones (share/gxemul/roms, e.g. from
+ *  the gxemul-rp-roms package, or roms next to gxemul.exe on Windows), and
+ *  MAME's (see add_mame_dirs()).  Except for the first ones, only those
+ *  that exist are in the list, which the caller frees, with its strings.
+ *  (Those after the first ones are looked for again every few seconds,
+ *  not every time.)
+ */
+int appdirs_rom_search_path(char ***listp)
+{
+	static char **more = NULL;
+	static int n_more = 0;
+	static time_t more_time = 0;
+	char **dirs, *e;
+	int n = 0, m, i;
+
+	if (more == NULL || time(NULL) - more_time > 5) {
+		for (i = 0; i < n_more; i++)
+			free(more[i]);
+		free(more);
+		more = NULL;
+		n_more = 0;
+		more_time = time(NULL);
+
+		if ((e = getenv("GXEMUL_ROM_PATH")) != NULL)
+#ifdef _WIN32
+			add_dir_list(&n_more, &more, e, ';', NULL);
+#else
+			add_dir_list(&n_more, &more, e, ':', NULL);
+#endif
+
+#ifdef _WIN32
+		if ((e = win32_exe_dir()) != NULL) {
+			size_t l = strlen(e) + 6;
+			char *d = (char *) malloc(l);
+			CHECK_ALLOCATION(d);
+			snprintf(d, l, "%s\\roms", e);
+			add_dir(&n_more, &more, d, true);
+			free(d);
+			free(e);
+		}
+#else
+		add_dir(&n_more, &more, GXEMUL_DATADIR "/roms", true);
+		add_dir(&n_more, &more, "/usr/local/share/gxemul/roms", true);
+		add_dir(&n_more, &more, "/usr/share/gxemul/roms", true);
+#ifdef __APPLE__
+		add_dir(&n_more, &more, "/opt/homebrew/share/gxemul/roms",
+		    true);
+#endif
+#endif
+
+		add_mame_dirs(&n_more, &more);
+	}
+
+	*listp = NULL;
+	m = appdirs_rom_dirs(&dirs);
+	for (i = 0; i < m; i++) {
+		add_dir(&n, listp, dirs[i], false);
+		free(dirs[i]);
+	}
+	free(dirs);
+	for (i = 0; i < n_more; i++)
+		add_dir(&n, listp, more[i], false);
+	return n;
 }
