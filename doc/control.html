@@ -1,0 +1,369 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+  <title>GXemul: The control socket</title>
+  <meta name="robots" content="noarchive,nofollow,noindex">
+</head>
+<body style="font-family : sans-serif;">
+
+<!-- 10 lines header.  -->
+
+<h1>GXemul: The control socket</h1>
+<p>
+
+<a href="./">Back to the index.</a>
+
+<!--
+
+Copyright (C) 2026  Rico Pajarola.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+-->
+
+<p><br>
+<ul>
+	<li><a href="#intro">Introduction</a>
+	<li><a href="#cli">The command line client</a>
+	<li><a href="#transport">Transport and framing</a>
+	<li><a href="#messages">Requests, responses and events</a>
+	<li><a href="#state">Running and stopped</a>
+	<li><a href="#commands">Commands</a>
+	<li><a href="#events">Events</a>
+	<li><a href="#errors">Error codes</a>
+	<li><a href="#future">Planned additions</a>
+</ul>
+
+
+
+
+<p><br>
+<a name="intro"></a>
+<h4>Introduction</h4>
+
+<p>The <a href="debugging.html">built-in debugger</a> is made for a person at
+a terminal. The control socket gives programs (scripts, test harnesses,
+AI agents) the same kind of access, with structured requests and replies:
+pausing and continuing the machine, single-stepping, breakpoints, reading
+what the guest wrote to its serial consoles and typing into them, and any
+debugger command at all.
+
+<p>It is enabled with <tt>--control</tt>:
+
+<pre>
+$ <b>gxemul --control unix:/tmp/gx.sock -e 3max -d ultrix.img</b>
+</pre>
+
+<p>The terminal and its <tt>GXemul&gt;</tt> prompt keep working as usual
+alongside it.
+
+<p>The control socket has no authentication. Anyone who can connect to it
+can read and change the emulated machine's memory and registers, so a TCP
+socket only listens on 127.0.0.1, and a Unix socket is protected by the
+permissions of the directory it is in.
+
+
+
+<p><br>
+<a name="cli"></a>
+<h4>The command line client</h4>
+
+<p><tt>gxemul --ctl</tt> sends one request and prints the reply, so that each
+step is one shell command:
+
+<pre>
+gxemul --ctl <i>socket</i> [--wait] [--timeout <i>seconds</i>] <i>command</i> [<i>argument</i>]
+</pre>
+
+<p><i>socket</i> is the same as given to <tt>--control</tt>. The
+<i>argument</i> is either a JSON object with the request's parameters, or, for
+the commands below, a plain value for their main parameter:
+
+<p><table border="0" cellspacing="0" cellpadding="2">
+<tr><td><tt>raw</tt></td><td>&nbsp;&nbsp;</td><td><tt>line</tt></td></tr>
+<tr><td><tt>step</tt></td><td></td><td><tt>n</tt></td></tr>
+<tr><td><tt>break_add</tt></td><td></td><td><tt>pc</tt></td></tr>
+<tr><td><tt>break_del</tt></td><td></td><td><tt>id</tt></td></tr>
+<tr><td><tt>console_read</tt></td><td></td><td><tt>since</tt></td></tr>
+<tr><td><tt>console_write</tt></td><td></td><td><tt>data</tt></td></tr>
+</table>
+
+<p>The reply is printed as one line of JSON. With <tt>--wait</tt>, after a
+successful <tt>continue</tt>, <tt>step</tt> or <tt>pause</tt>, the client
+also waits for the machine to stop (or exit), and prints that event too. The
+exit code is 0 for success, 1 if the emulator replied with an error, 2 if the
+socket could not be used, and 3 if <tt>--timeout</tt> expired while
+waiting. (A timeout leaves the machine running.)
+
+<pre>
+$ <b>gxemul --control unix:/tmp/gx.sock -V -e 3max -d ultrix.img &amp;</b>
+$ <b>gxemul --ctl unix:/tmp/gx.sock break_add panic</b>
+{"id":1,"ok":true,"result":{"id":1,"addr":"0xffffffff8004c1a8","expr":"panic"},"ninstrs":0}
+$ <b>gxemul --ctl unix:/tmp/gx.sock --wait --timeout 300 continue</b>
+{"id":1,"ok":true,"result":{"already_running":false},"ninstrs":0}
+{"event":"stopped","reason":"breakpoint","bp":1,"cpu":0,"pc":"0xffffffff8004c1a8","ninstrs":901238877}
+$ <b>gxemul --ctl unix:/tmp/gx.sock console_read 0</b>
+$ <b>gxemul --ctl unix:/tmp/gx.sock raw "reg"</b>
+$ <b>gxemul --ctl unix:/tmp/gx.sock raw "unassemble pc-16 pc+16"</b>
+</pre>
+
+<p>Since each <tt>--ctl</tt> is its own connection, events that happen
+between two of them are not seen by anyone. <tt>status</tt> tells how the
+machine last stopped, and console output is kept by the emulator until it
+is read, so nothing important is lost.
+
+
+
+<p><br>
+<a name="transport"></a>
+<h4>Transport and framing</h4>
+
+<ul>
+  <li><tt>--control unix:<i>path</i></tt> listens on a Unix domain socket
+	(not on Windows). An old socket at <i>path</i> is replaced; any other
+	kind of file there is an error.
+  <li><tt>--control tcp:<i>port</i></tt> listens on 127.0.0.1. Port 0 picks
+	a free port, which is printed at startup.
+  <li>Each message is one line of JSON (UTF-8), ending with a newline.
+  <li>There is one client at a time. While one is connected, another
+	connection gets <tt>{"ok":false,"error":{"code":"busy",...}}</tt>
+	and is closed.
+  <li>Requests are handled by the emulator's own thread, between the
+	slices of instructions it runs. A request never sees a CPU in the
+	middle of an instruction, so registers and memory can be read
+	consistently even while the machine runs.
+</ul>
+
+
+
+<p><br>
+<a name="messages"></a>
+<h4>Requests, responses and events</h4>
+
+<p>A request names a command, and may carry an <tt>id</tt> of the client's
+choosing, which is copied to the response:
+
+<pre>
+{"id": 7, "cmd": "break_add", "pc": "memcpy+0x40"}
+</pre>
+
+<p>Each request gets exactly one response, in the order the requests were
+sent:
+
+<pre>
+{"id": 7, "ok": true, "result": {"id": 3, "addr": "0xffffffff80012340", "expr": "memcpy+0x40"}, "ninstrs": 1203}
+{"id": 7, "ok": false, "error": {"code": "bad_arg", "message": "couldn't parse 'memcpy+0x40'"}, "ninstrs": 1203}
+</pre>
+
+<p>Events come unasked, have no <tt>id</tt>, and are never put inside another
+message's line:
+
+<pre>
+{"event": "stopped", "reason": "breakpoint", "bp": 3, "cpu": 0, "pc": "0xffffffff80012340", "ninstrs": 1203}
+</pre>
+
+<p>Conventions:
+
+<ul>
+  <li>Addresses and register values are strings in hexadecimal, as JSON
+	numbers can't hold 64-bit values exactly.
+  <li>Where an address is given, it can also be a number, or any expression
+	the debugger understands, such as <tt>"panic"</tt>,
+	<tt>"memcpy+0x40"</tt> or <tt>"sp+16"</tt>.
+  <li>Every response and event has <tt>ninstrs</tt>: the number of
+	instructions the first machine's boot CPU has run. It is the
+	clock for relating things to each other.
+</ul>
+
+
+
+<p><br>
+<a name="state"></a>
+<h4>Running and stopped</h4>
+
+<p>The emulator is either <i>running</i> or <i>stopped</i> (at the debugger
+prompt). <tt>continue</tt>, <tt>step</tt> and <tt>pause</tt> reply right
+away; when the machine then stops, a <tt>stopped</tt> event follows.
+
+<p>Everything except <tt>step</tt> works in both states. A stop caused at
+the terminal (CTRL-C, or typing <tt>step</tt>) sends a <tt>stopped</tt> event
+to the client too, and a <tt>continue</tt> from the client continues the
+terminal's prompt.
+
+
+
+<p><br>
+<a name="commands"></a>
+<h4>Commands</h4>
+
+<p><b>Session and control</b>
+
+<p><table border="1" cellspacing="0" cellpadding="4">
+<tr><th>cmd</th><th>parameters</th><th>result</th></tr>
+<tr><td><tt>hello</tt></td><td></td>
+    <td><tt>proto</tt> (1), <tt>version</tt>, <tt>state</tt>,
+	<tt>machines</tt> (each with <tt>name</tt> and <tt>cpus</tt>:
+	<tt>id</tt>, <tt>name</tt>, <tt>arch</tt>, <tt>bits</tt>,
+	<tt>endian</tt>), <tt>consoles</tt> (<tt>id</tt>,
+	<tt>name</tt>, <tt>machine</tt>), <tt>default_console</tt></td></tr>
+<tr><td><tt>status</tt></td><td></td>
+    <td><tt>state</tt>, <tt>stop</tt> (how it last stopped, as in the
+	<tt>stopped</tt> event; absent if it never stopped),
+	<tt>cpus</tt> (<tt>id</tt>, <tt>pc</tt>, <tt>halted</tt>: stopped
+	by the guest or the emulator, not just paused)</td></tr>
+<tr><td><tt>pause</tt></td><td></td>
+    <td><tt>already_stopped</tt>; if false, a <tt>stopped</tt> event
+	with reason <tt>pause</tt> follows</td></tr>
+<tr><td><tt>continue</tt></td><td></td>
+    <td><tt>already_running</tt></td></tr>
+<tr><td><tt>step</tt></td><td><tt>n</tt> (default 1)</td>
+    <td>empty; a <tt>stopped</tt> event with reason <tt>step</tt> follows
+	after <tt>n</tt> instructions</td></tr>
+<tr><td><tt>quit</tt></td><td></td>
+    <td>empty; then an <tt>exited</tt> event, and the connection
+	closes</td></tr>
+</table>
+
+<p><b>Breakpoints</b>
+
+<p><table border="1" cellspacing="0" cellpadding="4">
+<tr><th>cmd</th><th>parameters</th><th>result</th></tr>
+<tr><td><tt>break_add</tt></td><td><tt>pc</tt> (an address)</td>
+    <td><tt>id</tt>, <tt>addr</tt>, <tt>expr</tt></td></tr>
+<tr><td><tt>break_del</tt></td><td><tt>id</tt></td><td>empty</td></tr>
+<tr><td><tt>break_list</tt></td><td></td>
+    <td><tt>breakpoints</tt>: list of <tt>id</tt>, <tt>addr</tt>,
+	<tt>expr</tt></td></tr>
+</table>
+
+<p>A breakpoint's id never changes, unlike the numbers shown by the
+debugger's <tt>breakpoint show</tt>, which are positions in the list.
+
+<p><b>Serial consoles</b>
+
+<p><table border="1" cellspacing="0" cellpadding="4">
+<tr><th>cmd</th><th>parameters</th><th>result</th></tr>
+<tr><td><tt>console_read</tt></td>
+    <td><tt>console</tt> (default: the machine's main console),
+	<tt>since</tt> (default 0), <tt>max</tt> (default 65536),
+	<tt>encoding</tt> (<tt>"text"</tt> or <tt>"hex"</tt>)</td>
+    <td><tt>data</tt>, <tt>start</tt>, <tt>offset</tt>,
+	<tt>dropped</tt></td></tr>
+<tr><td><tt>console_write</tt></td>
+    <td><tt>console</tt>, <tt>data</tt>, <tt>encoding</tt></td>
+    <td><tt>written</tt></td></tr>
+</table>
+
+<p>The emulator keeps the last 1 MB written to each console, counted by a
+byte offset which only grows. <tt>console_read</tt> returns what was written
+from offset <tt>since</tt> on: <tt>start</tt> is the offset of the first byte
+returned, and <tt>offset</tt> is where to continue next time.
+<tt>dropped</tt> is true if part of what was asked for is no longer
+kept. With <tt>"text"</tt>, bytes 0x80-0xff come back as the characters
+U+0080-U+00FF, and NUL bytes are left out; <tt>"hex"</tt> gives the bytes
+exactly.
+
+<p><tt>console_write</tt> types into the console, as if from its terminal.
+Text is sent as its UTF-8 bytes. <tt>written</tt> may be less than the
+length if the console's input buffer is full; write the rest later.
+
+<p><b>Any debugger command</b>
+
+<p><table border="1" cellspacing="0" cellpadding="4">
+<tr><th>cmd</th><th>parameters</th><th>result</th></tr>
+<tr><td><tt>raw</tt></td><td><tt>line</tt></td>
+    <td><tt>text</tt>: what the command printed</td></tr>
+</table>
+
+<p><tt>raw</tt> runs a line as if typed at the <tt>GXemul&gt;</tt> prompt,
+such as <tt>"reg"</tt>, <tt>"dump 0x80001000"</tt>, <tt>"tlbdump"</tt> or
+<tt>"device list"</tt>. Use <tt>pause</tt>, <tt>continue</tt> and
+<tt>step</tt> rather than their raw forms, to get the events right.
+
+
+
+<p><br>
+<a name="events"></a>
+<h4>Events</h4>
+
+<pre>
+{"event":"stopped", "reason":..., "cpu":0, "pc":"0x...", "ninstrs":N}
+{"event":"exited", "ninstrs":N}
+</pre>
+
+<p>The <tt>reason</tt> for a stop is one of:
+
+<ul>
+  <li><tt>breakpoint</tt> (the event also has <tt>bp</tt>, the breakpoint's id)
+  <li><tt>step</tt>
+  <li><tt>pause</tt> (asked for by the client)
+  <li><tt>user</tt> (CTRL-C, or the display's menu)
+  <li><tt>startup</tt> (started with <tt>-V</tt>)
+  <li><tt>unimplemented_instruction</tt>
+  <li><tt>all_stopped</tt> (all CPUs stopped, with <tt>-V</tt>)
+  <li><tt>other</tt>
+</ul>
+
+
+
+<p><br>
+<a name="errors"></a>
+<h4>Error codes</h4>
+
+<ul>
+  <li><tt>bad_request</tt>: not a JSON object, or no <tt>cmd</tt>
+  <li><tt>unknown_cmd</tt>
+  <li><tt>bad_arg</tt>: a parameter is missing or can't be used
+  <li><tt>not_stopped</tt>: the command needs a stopped machine
+  <li><tt>no_such_console</tt>, <tt>no_such_breakpoint</tt>
+  <li><tt>capture_failed</tt>: the output of <tt>raw</tt> could not be captured
+  <li><tt>busy</tt>: another client is connected
+</ul>
+
+
+
+<p><br>
+<a name="future"></a>
+<h4>Planned additions</h4>
+
+<ul>
+  <li><tt>regs</tt>, <tt>reg_set</tt>, <tt>mem_read</tt>, <tt>mem_write</tt>,
+	<tt>disasm</tt>, <tt>symbol</tt>, <tt>tlb</tt>, <tt>devices</tt>,
+	with structured results.
+  <li><tt>run_until</tt>: run until a console prints a pattern (such as
+	<tt>login:|panic</tt>), a pc is reached, a number of instructions
+	have run, or a timeout.
+  <li><tt>stop_on</tt>: stop on exceptions of a kind, or on accesses to a
+	device's registers.
+  <li>A trace ring buffer: the last instructions, exceptions and device
+	accesses before a stop.
+  <li><tt>subscribe</tt>, for <tt>console</tt> and <tt>log</tt> events as
+	they happen.
+</ul>
+
+</p>
+
+</body>
+</html>

@@ -38,6 +38,7 @@
 
 #include "config_ui.h"
 #include "console.h"
+#include "control.h"
 #include "cpu.h"
 #include "debugger.h"
 #include "device.h"
@@ -80,6 +81,7 @@ static char *config_file = NULL;
 static bool want_ui = false;
 static char *edit_path = NULL;
 static bool edit_no_start = false;
+static char *control_spec = NULL;
 
 /*  Set by the Reset menu item: start the machine again when it stops.  */
 bool restart_machine = false;
@@ -247,6 +249,10 @@ static void usage(bool longusage)
 	printf("  -x        give each emulated serial port a TCP port on localhost, from\n"
 	       "            4000 and up, to connect to with telnet (default is on when\n"
 	       "            -X is used, off otherwise)\n");
+	printf("  --control unix:path | tcp:port\n"
+	       "            listen for requests from programs; send them with\n"
+	       "            %s --ctl unix:path|tcp:port command [argument]\n"
+	       "            (see doc/control.html)\n", progname);
 	printf("\n");
 	printf("If you are selecting a machine type to emulate directly "
 	    "on the command line,\nthen you must specify one or more names"
@@ -449,6 +455,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 			break;
 		case 'V':
 			single_step = true;
+			debugger_set_stop_reason("startup");
 			debugger_enter_at_end_of_run = true;
 			break;
 		case 'v':
@@ -755,6 +762,11 @@ int main(int argc, char *argv[])
 #ifdef _WIN32
 	win32_sockets_init();
 #endif
+
+	/*  gxemul --ctl ...: a control socket client, see control.c:  */
+	if (argc >= 2 && strcmp(argv[1], "--ctl") == 0)
+		return control_client_main(argc, argv);
+
 	console_init();
 	cpu_init();
 	device_init();
@@ -795,6 +807,21 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "--no-start needs --edit machine.json.\n");
 		return 1;
 	}
+
+	/*  --control unix:path or tcp:port (anywhere among the options):  */
+	for (i = 1; i < argc; i++)
+		if (strcmp(argv[i], "--control") == 0) {
+			if (i + 1 >= argc) {
+				fprintf(stderr, "--control needs unix:path or "
+				    "tcp:port.\n");
+				return 1;
+			}
+			control_spec = argv[i + 1];
+			memmove(&argv[i], &argv[i + 2],
+			    sizeof(char *) * (argc - i - 1));
+			argc -= 2;
+			break;
+		}
 
 	/*  --export machine.json folder:  */
 	if (argc >= 2 && strcmp(argv[1], "--export") == 0)
@@ -932,6 +959,9 @@ int main(int argc, char *argv[])
 	// Print "INFO" during startup, but then just "WARNINGS" by default.
 	debugmsg_add_verbosity_level(SUBSYS_ALL, -1);
 
+
+	if (control_spec != NULL)
+		control_init(emul, control_spec);
 
 	/*  Run the emulation:  */
 	emul_run(emul);

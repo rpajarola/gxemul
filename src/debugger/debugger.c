@@ -39,6 +39,7 @@
 #include <unistd.h>
 
 #include "console.h"
+#include "control.h"
 #include "cpu.h"
 #include "device.h"
 #include "devices.h"
@@ -81,6 +82,12 @@ static int debugger_n_steps_left_before_interaction = 0;
 static volatile bool exit_debugger;
 static volatile bool exit_debugger_to_continue_single_stepping;
 
+/*  True while at the prompt, i.e. stopped:  */
+static bool debugger_interactive = false;
+
+/*  Why the debugger is about to be entered, if known:  */
+static const char *debugger_stop_reason = NULL;
+
 
 /*
  *  Private (global) debugger variables:
@@ -118,6 +125,11 @@ char debugger_readchar(void)
 		/*  Check for X11 events:  */
 		display_check_event(debugger_emul);
 
+		/*  ... and for requests on the control socket:  */
+		control_poll(true);
+		if (exit_debugger)
+			break;
+
 		/*  Give up some CPU time:  */
 		usleep(10000);
 	}
@@ -148,6 +160,7 @@ void debugger_activate(int x)
 		 * NOTE: Setting single_step = true directly is not wise,
 		 * since it may be in the middle of executing.
 		 */
+		debugger_set_stop_reason("user");
 		about_to_enter_single_step = true;
 
 		/*  Discard any chars in the input queue:  */
@@ -178,6 +191,113 @@ static void show_breakpoint(struct machine *m, int i)
 	if (m->breakpoints.string[i] != NULL)
 		printf(" (%s)", m->breakpoints.string[i]);
 	printf("\n");
+}
+
+
+/*
+ *  debugger_breakpoint_add():
+ *
+ *  Adds a breakpoint at the address that expr evaluates to. Returns its
+ *  index in m->breakpoints, or -1 if expr couldn't be parsed.
+ */
+int debugger_breakpoint_add(struct machine *m, const char *expr)
+{
+	uint64_t addr;
+	char *tmp;
+	int i, res;
+
+	CHECK_ALLOCATION(tmp = strdup(expr));
+	res = debugger_parse_expression(m, tmp, 0, &addr);
+	free(tmp);
+	if (!res)
+		return -1;
+
+	i = m->breakpoints.n;
+
+	CHECK_ALLOCATION(m->breakpoints.string = (char **) realloc(
+	    m->breakpoints.string, sizeof(char *) * (i + 1)));
+	CHECK_ALLOCATION(m->breakpoints.addr = (uint64_t *) realloc(
+	    m->breakpoints.addr, sizeof(uint64_t) * (i + 1)));
+	CHECK_ALLOCATION(m->breakpoints.id = (int *) realloc(
+	    m->breakpoints.id, sizeof(int) * (i + 1)));
+
+	CHECK_ALLOCATION(m->breakpoints.string[i] = strdup(expr));
+	m->breakpoints.addr[i] = addr;
+	m->breakpoints.id[i] = ++ m->breakpoints.next_id;
+	m->breakpoints.n ++;
+
+	/*  Clear translations:  */
+	for (int j=0; j<m->ncpus; j++)
+		if (m->cpus[j]->translation_cache != NULL)
+			cpu_create_or_reset_tc(m->cpus[j]);
+
+	return i;
+}
+
+
+/*
+ *  debugger_breakpoint_delete():
+ *
+ *  Removes the breakpoint at index i (0 .. m->breakpoints.n - 1).
+ */
+void debugger_breakpoint_delete(struct machine *m, int i)
+{
+	free(m->breakpoints.string[i]);
+
+	for (; i<m->breakpoints.n-1; i++) {
+		m->breakpoints.addr[i]   = m->breakpoints.addr[i+1];
+		m->breakpoints.string[i] = m->breakpoints.string[i+1];
+		m->breakpoints.id[i]     = m->breakpoints.id[i+1];
+	}
+	m->breakpoints.n --;
+
+	/*  Clear translations:  */
+	for (i=0; i<m->ncpus; i++)
+		if (m->cpus[i]->translation_cache != NULL)
+			cpu_create_or_reset_tc(m->cpus[i]);
+}
+
+
+/*
+ *  debugger_set_stop_reason():
+ *
+ *  Tells why the debugger is about to be entered ("pause", "step", ...),
+ *  for the control socket's stopped event. The first reason given wins.
+ */
+void debugger_set_stop_reason(const char *reason)
+{
+	if (debugger_stop_reason == NULL)
+		debugger_stop_reason = reason;
+}
+
+
+/*
+ *  Control socket entry points: debugger_is_stopped() is true while at
+ *  the prompt. The others do what continue, step, and CTRL-C do.
+ */
+bool debugger_is_stopped(void)
+{
+	return debugger_interactive;
+}
+
+void debugger_ctl_continue(void)
+{
+	exit_debugger = true;
+}
+
+void debugger_ctl_step(int n)
+{
+	debugger_n_steps_left_before_interaction = n - 1;
+	debugger_set_stop_reason("step");
+	exit_debugger = true;
+	exit_debugger_to_continue_single_stepping = true;
+}
+
+void debugger_ctl_pause(void)
+{
+	debugger_set_stop_reason("pause");
+	debugger_n_steps_left_before_interaction = 0;
+	about_to_enter_single_step = true;
 }
 
 
@@ -734,9 +854,25 @@ void debugger(void)
 	exit_debugger = false;
 	exit_debugger_to_continue_single_stepping = false;
 
+	debugger_interactive = true;
+	control_note_stop(debugger_machine, single_step_breakpoint?
+	    "breakpoint" : debugger_stop_reason != NULL?
+	    debugger_stop_reason : "other");
+	debugger_stop_reason = NULL;
+
 	while (!exit_debugger) {
 		/*  Read a line from the terminal:  */
 		cmd = debugger_readline();
+
+		/*  Continued or stepped from the control socket?  */
+		if (exit_debugger) {
+			printf("\n");
+			if (exit_debugger_to_continue_single_stepping) {
+				debugger_interactive = false;
+				return;
+			}
+			break;
+		}
 
 		cmd_len = strlen(cmd);
 
@@ -764,9 +900,13 @@ void debugger(void)
 		debugger_execute_cmd(cmd, cmd_len);
 
 		/*  Special hack for the "step" command:  */
-		if (exit_debugger_to_continue_single_stepping)
+		if (exit_debugger_to_continue_single_stepping) {
+			debugger_interactive = false;
 			return;
+		}
 	}
+
+	debugger_interactive = false;
 
 	/*  Start up timers again:  */
 	timer_start();

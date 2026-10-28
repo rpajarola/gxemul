@@ -59,6 +59,9 @@ struct breakpoints {
 	/*  Arrays, with one element for each entry:  */
 	char		**string;
 	uint64_t	*addr;
+	int		*id;		/*  stable, unlike the index  */
+
+	int		next_id;
 };
 
 struct statistics {

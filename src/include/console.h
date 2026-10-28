@@ -60,6 +60,13 @@ int console_change_inputability(int handle, int inputability);
 void console_init_main(struct emul *);
 void console_debug_dump(struct machine *);
 void console_allow_slaves(int);
+void console_enable_output_log(void);
+size_t console_output_read(int handle, uint64_t since, unsigned char *buf,
+	size_t maxlen, uint64_t *startp, uint64_t *totalp);
+int console_input_room(int handle);
+bool console_handle_info(int handle, const char **namep,
+	const char **machine_namep, bool *inputp, bool *outputp);
+int console_n_handles(void);
 
 void console_init(void);
 void console_deinit(void);

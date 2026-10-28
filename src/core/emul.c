@@ -41,6 +41,7 @@
 #include "cpu.h"
 #include "emul.h"
 #include "console.h"
+#include "control.h"
 #include "debugger.h"
 #include "device.h"
 #include "devices.h"
@@ -944,6 +945,8 @@ void emul_run(struct emul *emul)
 			bootcpu->ninstrs_show = bootcpu->ninstrs;
 		}
 		
+		control_poll(false);
+
 		if (about_to_enter_single_step) {
 			single_step = true;
 			about_to_enter_single_step = false;
@@ -967,6 +970,7 @@ void emul_run(struct emul *emul)
 			if (debugger_enter_at_end_of_run) {
 				debugmsg(SUBSYS_EMUL, NULL, VERBOSITY_WARNING, "All machines stopped.");
 				debugger_reset();
+				debugger_set_stop_reason("all_stopped");
 				single_step = true;
 			} else {
 				break;
@@ -978,6 +982,8 @@ void emul_run(struct emul *emul)
 	/*  Stop any running timers:  */
 	timer_stop();
 	dev_mc146818_save_nvram();
+
+	control_shutdown();
 
 	/*  Deinitialize all CPUs in all machines:  */
 	for (int j = 0; j <emul->n_machines; j++)

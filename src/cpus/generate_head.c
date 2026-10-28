@@ -118,7 +118,8 @@ int main(int argc, char *argv[])
 	    "extern bool about_to_enter_single_step;\n"
 	    "extern int single_step_breakpoint;\n"
 	    "extern int old_quiet_mode;\n"
-	    "extern int quiet_mode;\n");
+	    "extern int quiet_mode;\n"
+	    "void debugger_set_stop_reason(const char *);\n");
 
 	printf("\n/* instr uses the same names as in "
 	    "cpu_%s_instr.c */\n#define instr(n) %s_instr_ ## n\n\n", a, a);

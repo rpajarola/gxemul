@@ -257,10 +257,14 @@ void machine_add_breakpoint_string(struct machine *machine, char *str)
 	    realloc(machine->breakpoints.string, n * sizeof(char *)));
 	CHECK_ALLOCATION(machine->breakpoints.addr = (uint64_t *)
 	    realloc(machine->breakpoints.addr, n * sizeof(uint64_t)));
+	CHECK_ALLOCATION(machine->breakpoints.id = (int *)
+	    realloc(machine->breakpoints.id, n * sizeof(int)));
 	CHECK_ALLOCATION(machine->breakpoints.string[machine->breakpoints.n] =
-	    strdup(optarg));
+	    strdup(str));
 
 	machine->breakpoints.addr[machine->breakpoints.n] = 0;
+	machine->breakpoints.id[machine->breakpoints.n] =
+	    ++ machine->breakpoints.next_id;
 	machine->breakpoints.n ++;
 }
 

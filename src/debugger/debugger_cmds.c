@@ -45,7 +45,7 @@ static void debugger_cmd_allsettings(struct machine *m, char *args)
  */
 static void debugger_cmd_breakpoint(struct machine *m, char *args)
 {
-	int i, res;
+	int i;
 
 	while (args[0] != '\0' && args[0] == ' ')
 		args ++;
@@ -74,61 +74,24 @@ static void debugger_cmd_breakpoint(struct machine *m, char *args)
 			printf("No breakpoints set.\n");
 			return;
 		}
-		if (x < 0 || x > m->breakpoints.n) {
+		if (x < 0 || x >= m->breakpoints.n) {
 			printf("Invalid breakpoint nr %i. Use 'breakpoint "
 			    "show' to see the current breakpoints.\n", x);
 			return;
 		}
 
-		free(m->breakpoints.string[x]);
-
-		for (i=x; i<m->breakpoints.n-1; i++) {
-			m->breakpoints.addr[i]   = m->breakpoints.addr[i+1];
-			m->breakpoints.string[i] = m->breakpoints.string[i+1];
-		}
-		m->breakpoints.n --;
-
-		/*  Clear translations:  */
-		for (i=0; i<m->ncpus; i++)
-			if (m->cpus[i]->translation_cache != NULL)
-				cpu_create_or_reset_tc(m->cpus[i]);
+		debugger_breakpoint_delete(m, x);
 		return;
 	}
 
 	if (strncmp(args, "add ", 4) == 0) {
-		uint64_t tmp;
-		size_t breakpoint_buf_len;
-
-		i = m->breakpoints.n;
-
-		res = debugger_parse_expression(m, args + 4, 0, &tmp);
-		if (!res) {
+		i = debugger_breakpoint_add(m, args + 4);
+		if (i < 0) {
 			printf("Couldn't parse '%s'\n", args + 4);
 			return;
 		}
 
-		CHECK_ALLOCATION(m->breakpoints.string = (char **) realloc(
-		    m->breakpoints.string, sizeof(char *) *
-		    (m->breakpoints.n + 1)));
-		CHECK_ALLOCATION(m->breakpoints.addr = (uint64_t *) realloc(
-		    m->breakpoints.addr, sizeof(uint64_t) *
-		   (m->breakpoints.n + 1)));
-
-		breakpoint_buf_len = strlen(args+4) + 1;
-
-		CHECK_ALLOCATION(m->breakpoints.string[i] = (char *)
-		    malloc(breakpoint_buf_len));
-		strlcpy(m->breakpoints.string[i], args+4,
-		    breakpoint_buf_len);
-		m->breakpoints.addr[i] = tmp;
-
-		m->breakpoints.n ++;
 		show_breakpoint(m, i);
-
-		/*  Clear translations:  */
-		for (i=0; i<m->ncpus; i++)
-			if (m->cpus[i]->translation_cache != NULL)
-				cpu_create_or_reset_tc(m->cpus[i]);
 		return;
 	}
 
@@ -946,6 +909,7 @@ static void debugger_cmd_step(struct machine *m, char *args)
 	}
 
 	debugger_n_steps_left_before_interaction = n - 1;
+	debugger_set_stop_reason("step");
 
 	/*  Special hack, see the main debugger() loop for more info.  */
 	exit_debugger = true;

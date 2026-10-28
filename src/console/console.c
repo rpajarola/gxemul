@@ -103,6 +103,7 @@ static int console_stdout_pending;
 
 #define	CONSOLE_FIFO_LEN	4096
 #define	CONSOLE_BACKLOG_LEN	65536
+#define	CONSOLE_OUTLOG_LEN	(1 << 20)
 
 #define	DEFAULT_TELNET_PORT	4000
 
@@ -115,6 +116,9 @@ static int console_mouse_buttons;	/*  left=4, middle=2, right=1  */
 
 static int allow_slaves = 0;
 static int telnet_port = DEFAULT_TELNET_PORT;	/*  the next port to try  */
+
+/*  Keep what is written to each console, for the control socket:  */
+static bool outlog_enabled = false;
 
 struct console_handle {
 	int		in_use;
@@ -143,6 +147,11 @@ struct console_handle {
 	unsigned char	fifo[CONSOLE_FIFO_LEN];
 	int		fifo_head;
 	int		fifo_tail;
+
+	/*  The last CONSOLE_OUTLOG_LEN bytes of output, when outlog_enabled.
+	    outlog_total counts all bytes ever written:  */
+	unsigned char	*outlog;
+	uint64_t	outlog_total;
 };
 
 /*  Telnet protocol (RFC 854):  */
@@ -771,6 +780,15 @@ void console_putchar(int handle, int ch)
 	    !console_handles[handle].outputonly)
 		console_change_inputability(handle, 1);
 
+	if (outlog_enabled) {
+		struct console_handle *chp = &console_handles[handle];
+		if (chp->outlog == NULL)
+			CHECK_ALLOCATION(chp->outlog = (unsigned char *)
+			    malloc(CONSOLE_OUTLOG_LEN));
+		chp->outlog[chp->outlog_total % CONSOLE_OUTLOG_LEN] = ch;
+		chp->outlog_total ++;
+	}
+
 	if (!console_handles[handle].using_telnet) {
 		/*  stdout:  */
 		putchar(ch);
@@ -791,6 +809,96 @@ void console_putchar(int handle, int ch)
 		}
 
 	telnet_output(handle, ch);
+}
+
+
+/*
+ *  console_enable_output_log():
+ *
+ *  From now on, keep the last CONSOLE_OUTLOG_LEN bytes written to each
+ *  console, for console_output_read().
+ */
+void console_enable_output_log(void)
+{
+	outlog_enabled = true;
+}
+
+
+/*
+ *  console_output_read():
+ *
+ *  Copies up to maxlen bytes of what was written to a console, from byte
+ *  offset since (counting from the first byte ever written) on, to buf.
+ *  *startp is set to the offset of the first byte copied (later than since
+ *  if those bytes are no longer kept), and *totalp to the number of bytes
+ *  written so far. Returns the number of bytes copied.
+ */
+size_t console_output_read(int handle, uint64_t since, unsigned char *buf,
+	size_t maxlen, uint64_t *startp, uint64_t *totalp)
+{
+	struct console_handle *chp = &console_handles[handle];
+	uint64_t oldest = chp->outlog_total > CONSOLE_OUTLOG_LEN?
+	    chp->outlog_total - CONSOLE_OUTLOG_LEN : 0;
+	size_t n = 0;
+
+	if (since < oldest)
+		since = oldest;
+	if (since > chp->outlog_total)
+		since = chp->outlog_total;
+
+	*startp = since;
+	*totalp = chp->outlog_total;
+
+	while (n < maxlen && since + n < chp->outlog_total) {
+		buf[n] = chp->outlog[(since + n) % CONSOLE_OUTLOG_LEN];
+		n ++;
+	}
+
+	return n;
+}
+
+
+/*
+ *  console_input_room():
+ *
+ *  Returns how many characters can be given to console_makeavail() for a
+ *  handle without overrunning its fifo.
+ */
+int console_input_room(int handle)
+{
+	return console_room_left_in_fifo(handle) - 1;
+}
+
+
+/*
+ *  console_handle_info():
+ *
+ *  For listing the consoles: returns false if handle isn't in use.
+ */
+bool console_handle_info(int handle, const char **namep,
+	const char **machine_namep, bool *inputp, bool *outputp)
+{
+	struct console_handle *chp;
+
+	if (handle < 0 || handle >= n_console_handles ||
+	    !console_handles[handle].in_use)
+		return false;
+
+	chp = &console_handles[handle];
+	*namep = chp->name;
+	*machine_namep = chp->machine_name;
+	*inputp = !chp->outputonly;
+	*outputp = !chp->inputonly;
+	return true;
+}
+
+
+/*
+ *  console_n_handles():
+ */
+int console_n_handles(void)
+{
+	return n_console_handles;
 }
 
 

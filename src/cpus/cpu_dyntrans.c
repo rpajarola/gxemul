@@ -1959,6 +1959,7 @@ bad:	/*
 	 *  instruction that should be implemented for real.
 	 */
 
+	debugger_set_stop_reason("unimplemented_instruction");
 	about_to_enter_single_step = true;
 
 	if (cpu->is_32bit)
