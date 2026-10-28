@@ -67,6 +67,7 @@
 #include <string.h>
 
 #include "console.h"
+#include "control.h"
 #include "cpu.h"
 #include "emul.h"
 #include "machine.h"
@@ -129,6 +130,17 @@ static void va_debug(va_list argp, const char *fmt)
 static void debugmsg_va(struct cpu* cpu, int subsystem,
 	const char *name, int verbosity, va_list argp, const char *fmt)
 {
+	/*  For log events on the control socket, at its own level:  */
+	if (verbosity <= control_log_level) {
+		char msg[DEBUG_BUFSIZE];
+		va_list ap2;
+		va_copy(ap2, argp);
+		vsnprintf(msg, sizeof(msg), fmt, ap2);
+		va_end(ap2);
+		control_log(cpu, subsystem >= 0? debugmsg_subsystem_name[
+		    subsystem] : "", name, verbosity, msg);
+	}
+
 	if (!single_step && !ENOUGH_VERBOSITY(subsystem, verbosity))
 		return;
 

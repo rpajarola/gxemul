@@ -95,6 +95,25 @@ static size_t inlen = 0;
 static bool in_poll = false;
 static int64_t last_poll_us = 0;
 
+/*  What a watch saw (see the trace, below):  */
+struct trace_entry {
+	uint64_t	seq;
+	int64_t		ninstrs;
+	int		cpu;
+	uint64_t	pc;
+	bool		is_32bit;
+	int		watch;
+
+	bool		device;
+	char		name[32];	/*  exception or device name  */
+	int		code;		/*  exception code  */
+	uint64_t	addr;		/*  exception vaddr, or device offset  */
+	uint64_t	vector;		/*  exception: the handler  */
+	size_t		len;		/*  device access  */
+	bool		write;
+	unsigned char	data[8];	/*  (the first 8 bytes)  */
+};
+
 /*  How the machine last stopped:  */
 static struct {
 	bool		valid;
@@ -108,6 +127,10 @@ static struct {
 	const char	*condition;
 	char		match[200];
 	uint64_t	console_offset;
+
+	/*  For watches:  */
+	bool		has_hit;
+	struct trace_entry hit;
 } last_stop;
 
 /*
@@ -139,6 +162,56 @@ static struct {
 	uint64_t	match_end;
 } ru;
 
+
+/*
+ *  Watches: on exceptions, or on accesses to a device's registers. Each
+ *  either stops the machine or just records what happened in the trace.
+ */
+bool control_watch_exceptions = false;
+bool control_watch_devices = false;
+
+struct watch {
+	int		id;
+	bool		device;		/*  else an exception watch  */
+	bool		stop;		/*  else trace only  */
+
+	char		**names;	/*  exception names; none = any  */
+	int		n_names;
+
+	char		devname[32];
+	uint64_t	offset;
+	uint64_t	len;
+	bool		reads, writes;
+};
+
+static struct watch *watches = NULL;
+static int n_watches = 0;
+static int next_watch_id = 0;
+
+/*  The trace: the last TRACE_LEN things which watches saw.  */
+#define	TRACE_LEN	32768
+
+
+static struct trace_entry *trace_buf = NULL;
+static uint64_t trace_next_seq = 0;
+
+/*  What a stopping watch saw, for the stopped event:  */
+static bool watch_hit_valid = false;
+static struct trace_entry watch_hit;
+
+/*  Subscriptions, for console and log events:  */
+static bool *sub_console = NULL;
+static uint64_t *sub_offset = NULL;
+static int n_sub_console = 0;
+int control_log_level = -1;
+
+#define	LOG_QUEUE_MAX	1000
+static cJSON *log_queue = NULL;
+static int log_dropped = 0;
+
+static void flush_subscriptions(void);
+static void add_trace_entry(cJSON *o, struct trace_entry *e);
+
 struct ctl_error {
 	const char	*code;
 	char		message[200];
@@ -164,12 +237,18 @@ static struct machine *cur_machine(void)
 /*
  *  An address as a string, 8 or 16 hex digits depending on the CPU:
  */
-static void format_addr(char *buf, size_t len, struct cpu *cpu, uint64_t v)
+static void fmt_addr(char *buf, size_t len, bool is_32bit, uint64_t v)
 {
-	if (cpu->is_32bit)
+	if (is_32bit)
 		snprintf(buf, len, "0x%08" PRIx32, (uint32_t) v);
 	else
 		snprintf(buf, len, "0x%016" PRIx64, (uint64_t) v);
+}
+
+
+static void format_addr(char *buf, size_t len, struct cpu *cpu, uint64_t v)
+{
+	fmt_addr(buf, len, cpu->is_32bit, v);
 }
 
 
@@ -297,6 +376,17 @@ static void disconnect_client(void)
 	socket_close(client_fd);
 	client_fd = -1;
 	inlen = 0;
+
+	/*  Subscriptions are the client's:  */
+	free(sub_console);
+	free(sub_offset);
+	sub_console = NULL;
+	sub_offset = NULL;
+	n_sub_console = 0;
+	control_log_level = -1;
+	cJSON_Delete(log_queue);
+	log_queue = NULL;
+	log_dropped = 0;
 }
 
 
@@ -371,6 +461,11 @@ static void add_stop(cJSON *o)
 		cJSON_AddNumberToObject(o, "bp", last_stop.bp);
 	cJSON_AddNumberToObject(o, "cpu", last_stop.cpu);
 	cJSON_AddStringToObject(o, "pc", last_stop.pc);
+	if (last_stop.has_hit) {
+		cJSON_AddNumberToObject(o, "watch", last_stop.hit.watch);
+		add_trace_entry(cJSON_AddObjectToObject(o, "hit"),
+		    &last_stop.hit);
+	}
 	if (last_stop.condition != NULL) {
 		cJSON_AddStringToObject(o, "condition", last_stop.condition);
 		if (strcmp(last_stop.condition, "console") == 0) {
@@ -425,6 +520,11 @@ void control_note_stop(struct machine *m, const char *reason)
 	last_stop.ninstrs = ninstrs_now();
 	last_stop.condition = NULL;
 
+	last_stop.has_hit = strcmp(reason, "watch") == 0 && watch_hit_valid;
+	if (last_stop.has_hit)
+		last_stop.hit = watch_hit;
+	watch_hit_valid = false;
+
 	/*  The end of a run_until, because of one of its conditions or not:  */
 	if (ru.active) {
 		if (strcmp(reason, "run_until") == 0 && ru.fired != NULL) {
@@ -443,6 +543,9 @@ void control_note_stop(struct machine *m, const char *reason)
 
 	if (client_fd < 0)
 		return;
+
+	/*  Output and log lines from before the stop come first:  */
+	flush_subscriptions();
 
 	cJSON *ev = cJSON_CreateObject();
 	cJSON_AddStringToObject(ev, "event", "stopped");
@@ -678,12 +781,41 @@ static bool get_hex_encoding(cJSON *req, bool *hexp, struct ctl_error *err)
 }
 
 
+/*
+ *  encode_console():
+ *
+ *  Console output for JSON (malloced). Text: bytes 0x80-0xff as
+ *  U+0080-U+00FF, in UTF-8, without NULs. Hex: two digits per byte.
+ */
+static char *encode_console(const unsigned char *buf, size_t n, bool hex)
+{
+	char *out, *p;
+
+	CHECK_ALLOCATION(out = (char *) malloc(2 * n + 1));
+	p = out;
+	for (size_t i = 0; i < n; i++) {
+		unsigned char b = buf[i];
+		if (hex) {
+			snprintf(p, 3, "%02x", b);
+			p += 2;
+		} else if (b >= 0x80) {
+			*p++ = 0xc0 | (b >> 6);
+			*p++ = 0x80 | (b & 0x3f);
+		} else if (b != 0)
+			*p++ = b;
+	}
+	*p = '\0';
+
+	return out;
+}
+
+
 CTL_HANDLER(cmd_console_read)
 {
 	int64_t since, max;
 	uint64_t start, total;
 	unsigned char *buf;
-	char *out, *p;
+	char *out;
 	size_t n;
 	bool hex;
 	int h = 0;
@@ -702,23 +834,7 @@ CTL_HANDLER(cmd_console_read)
 	CHECK_ALLOCATION(buf = (unsigned char *) malloc(max));
 	n = console_output_read(h, since, buf, max, &start, &total);
 
-	/*  Text: bytes 0x80-0xff as U+0080-U+00FF, in UTF-8, without NULs.
-	    Hex: two digits per byte.  */
-	CHECK_ALLOCATION(out = (char *) malloc(2 * n + 1));
-	p = out;
-	for (size_t i = 0; i < n; i++) {
-		unsigned char b = buf[i];
-		if (hex) {
-			snprintf(p, 3, "%02x", b);
-			p += 2;
-		} else if (b >= 0x80) {
-			*p++ = 0xc0 | (b >> 6);
-			*p++ = 0x80 | (b & 0x3f);
-		} else if (b != 0)
-			*p++ = b;
-	}
-	*p = '\0';
-
+	out = encode_console(buf, n, hex);
 	cJSON_AddStringToObject(result, "data", out);
 	cJSON_AddNumberToObject(result, "start", start);
 	cJSON_AddNumberToObject(result, "offset", start + n);
@@ -1651,6 +1767,583 @@ CTL_HANDLER(cmd_run_until)
 }
 
 
+/*****************************************************************************/
+
+
+/*
+ *  Watches and the trace:
+ */
+
+/*
+ *  A device name in a watch matches a device's whole name, or the part
+ *  before " [" (as in "le [08:00:2b:...]"), ignoring case:
+ */
+static bool dev_name_matches(const char *wanted, const char *devname)
+{
+	const char *br = strstr(devname, " [");
+	size_t n = br != NULL? (size_t) (br - devname) : strlen(devname);
+
+	return strcasecmp(wanted, devname) == 0 ||
+	    (strlen(wanted) == n && strncasecmp(wanted, devname, n) == 0);
+}
+
+
+static void update_watch_flags(void)
+{
+	control_watch_exceptions = control_watch_devices = false;
+	for (int i = 0; i < n_watches; i++) {
+		if (watches[i].device)
+			control_watch_devices = true;
+		else
+			control_watch_exceptions = true;
+	}
+}
+
+
+static void add_trace_entry(cJSON *o, struct trace_entry *e)
+{
+	char buf[24];
+
+	cJSON_AddNumberToObject(o, "seq", e->seq);
+	cJSON_AddNumberToObject(o, "ninstrs", e->ninstrs);
+	cJSON_AddNumberToObject(o, "cpu", e->cpu);
+	cJSON_AddNumberToObject(o, "watch", e->watch);
+
+	fmt_addr(buf, sizeof(buf), e->is_32bit, e->pc);
+	cJSON_AddStringToObject(o, "pc", buf);
+
+	if (e->device) {
+		cJSON_AddStringToObject(o, "kind", "device");
+		cJSON_AddStringToObject(o, "device", e->name);
+		snprintf(buf, sizeof(buf), "0x%" PRIx64, e->addr);
+		cJSON_AddStringToObject(o, "offset", buf);
+		cJSON_AddStringToObject(o, "access", e->write? "w" : "r");
+		cJSON_AddNumberToObject(o, "len", e->len);
+		add_hex(o, "data", e->data, e->len < sizeof(e->data)?
+		    e->len : sizeof(e->data));
+	} else {
+		cJSON_AddStringToObject(o, "kind", "exception");
+		cJSON_AddStringToObject(o, "name", e->name);
+		cJSON_AddNumberToObject(o, "code", e->code);
+		fmt_addr(buf, sizeof(buf), e->is_32bit, e->addr);
+		cJSON_AddStringToObject(o, "vaddr", buf);
+		fmt_addr(buf, sizeof(buf), e->is_32bit, e->vector);
+		cJSON_AddStringToObject(o, "vector", buf);
+	}
+}
+
+
+/*
+ *  watch_saw():
+ *
+ *  A watch saw something: records it in the trace, and if the watch
+ *  stops, asks for a stop (the first such thing is told about in the
+ *  stopped event). Returns true if it stops.
+ */
+static bool watch_saw(struct watch *w, struct trace_entry *e)
+{
+	if (trace_buf == NULL)
+		CHECK_ALLOCATION(trace_buf = (struct trace_entry *)
+		    calloc(TRACE_LEN, sizeof(struct trace_entry)));
+
+	e->seq = trace_next_seq ++;
+	e->watch = w->id;
+	trace_buf[e->seq % TRACE_LEN] = *e;
+
+	if (!w->stop)
+		return false;
+
+	if (!watch_hit_valid && !debugger_is_stopped()) {
+		watch_hit = *e;
+		watch_hit_valid = true;
+	}
+	debugger_ctl_stop("watch");
+	return true;
+}
+
+
+/*
+ *  control_exception():
+ *
+ *  Called by a CPU's exception code (when control_watch_exceptions),
+ *  after it has set the pc to the handler. Returns true if the CPU should
+ *  stop right there.
+ */
+bool control_exception(struct cpu *cpu, const char *name, int code,
+	uint64_t from_pc, uint64_t vaddr)
+{
+	bool stop = false;
+
+	for (int i = 0; i < n_watches; i++) {
+		struct watch *w = &watches[i];
+		bool match = w->n_names == 0;
+
+		if (w->device)
+			continue;
+		for (int k = 0; k < w->n_names && !match; k++)
+			match = strcasecmp(w->names[k], name) == 0;
+		if (!match)
+			continue;
+
+		struct trace_entry e;
+		memset(&e, 0, sizeof(e));
+		e.ninstrs = cpu->ninstrs + cpu->n_translated_instrs;
+		e.cpu = cpu->cpu_id;
+		e.pc = from_pc;
+		e.is_32bit = cpu->is_32bit;
+		strlcpy(e.name, name, sizeof(e.name));
+		e.code = code;
+		e.addr = vaddr;
+		e.vector = cpu->pc;
+		stop |= watch_saw(w, &e);
+	}
+
+	return stop;
+}
+
+
+/*
+ *  control_device_access():
+ *
+ *  Called by memory_rw() after a device has handled an access (when
+ *  control_watch_devices). A stop happens a little later, when the CPU
+ *  leaves its run of translated instructions.
+ */
+void control_device_access(struct cpu *cpu, const char *devname,
+	uint64_t offset, const unsigned char *data, size_t len, int writeflag)
+{
+	for (int i = 0; i < n_watches; i++) {
+		struct watch *w = &watches[i];
+
+		if (!w->device || !dev_name_matches(w->devname, devname) ||
+		    !(writeflag? w->writes : w->reads) ||
+		    offset + len <= w->offset ||
+		    (w->len != 0 && offset >= w->offset + w->len))
+			continue;
+
+		struct trace_entry e;
+		memset(&e, 0, sizeof(e));
+		e.ninstrs = cpu->ninstrs + cpu->n_translated_instrs;
+		e.cpu = cpu->cpu_id;
+		e.pc = cpu->pc;
+		e.is_32bit = cpu->is_32bit;
+		e.device = true;
+		strlcpy(e.name, devname, sizeof(e.name));
+		e.addr = offset;
+		e.len = len;
+		e.write = writeflag;
+		memcpy(e.data, data, len < sizeof(e.data)? len : sizeof(e.data));
+		watch_saw(w, &e);
+	}
+}
+
+
+static struct memory *cur_memory(void)
+{
+	return cur_machine()->cpus[0]->mem;
+}
+
+
+static struct memory_device *find_device(const char *name)
+{
+	struct memory *mem = cur_memory();
+
+	for (int i = 0; i < mem->n_mmapped_devices; i++)
+		if (dev_name_matches(name, mem->devices[i].name))
+			return &mem->devices[i];
+	return NULL;
+}
+
+
+static void free_watch(struct watch *w)
+{
+	for (int k = 0; k < w->n_names; k++)
+		free(w->names[k]);
+	free(w->names);
+}
+
+
+CTL_HANDLER(cmd_watch_add)
+{
+	cJSON *kind = cJSON_GetObjectItemCaseSensitive(req, "kind");
+	cJSON *action = cJSON_GetObjectItemCaseSensitive(req, "action");
+	struct watch w;
+
+	memset(&w, 0, sizeof(w));
+	w.stop = true;
+	if (action != NULL) {
+		if (cJSON_IsString(action) && strcmp(action->valuestring,
+		    "trace") == 0)
+			w.stop = false;
+		else if (!cJSON_IsString(action) || strcmp(action->valuestring,
+		    "stop") != 0)
+			return fail(err, "bad_arg", "'action' should be "
+			    "\"stop\" or \"trace\"");
+	}
+
+	if (cJSON_IsString(kind) && strcmp(kind->valuestring,
+	    "exception") == 0) {
+		cJSON *names = cJSON_GetObjectItemCaseSensitive(req, "names");
+		int n = 0;
+
+		if (cJSON_IsString(names))
+			n = 1;
+		else if (cJSON_IsArray(names))
+			n = cJSON_GetArraySize(names);
+		else if (names != NULL)
+			return fail(err, "bad_arg", "'names' should be an "
+			    "exception name or a list of them");
+
+		for (int k = 0; k < n; k++) {
+			cJSON *nm = cJSON_IsArray(names)?
+			    cJSON_GetArrayItem(names, k) : names;
+			if (!cJSON_IsString(nm))
+				return fail(err, "bad_arg", "'names' should "
+				    "be an exception name or a list of them");
+		}
+
+		if (n > 0)
+			CHECK_ALLOCATION(w.names = (char **)
+			    malloc(sizeof(char *) * n));
+		for (int k = 0; k < n; k++) {
+			cJSON *nm = cJSON_IsArray(names)?
+			    cJSON_GetArrayItem(names, k) : names;
+			CHECK_ALLOCATION(w.names[k] = strdup(nm->valuestring));
+		}
+		w.n_names = n;
+	} else if (cJSON_IsString(kind) && strcmp(kind->valuestring,
+	    "device") == 0) {
+		cJSON *dev = cJSON_GetObjectItemCaseSensitive(req, "device");
+		cJSON *access = cJSON_GetObjectItemCaseSensitive(req, "access");
+		struct memory_device *d;
+		int64_t offset, len;
+
+		if (!cJSON_IsString(dev))
+			return fail(err, "bad_arg", "'device' should be a "
+			    "device name (see the devices command)");
+		d = find_device(dev->valuestring);
+		if (d == NULL)
+			return fail(err, "no_such_device", "no device '%s'",
+			    dev->valuestring);
+		if (!get_int(req, "offset", 0, &offset, err) ||
+		    !get_int(req, "len", 0, &len, err))
+			return false;
+		if (offset < 0 || len < 0)
+			return fail(err, "bad_arg", "'offset' and 'len' "
+			    "can't be negative");
+
+		w.device = true;
+		strlcpy(w.devname, dev->valuestring, sizeof(w.devname));
+		(void) d;
+		w.offset = offset;
+		w.len = len;
+		w.reads = w.writes = true;
+		if (access != NULL) {
+			const char *a = cJSON_IsString(access)?
+			    access->valuestring : "";
+			w.reads = strchr(a, 'r') != NULL;
+			w.writes = strchr(a, 'w') != NULL;
+			if (!w.reads && !w.writes)
+				return fail(err, "bad_arg", "'access' should "
+				    "be \"r\", \"w\" or \"rw\"");
+		}
+	} else
+		return fail(err, "bad_arg", "'kind' should be \"exception\" "
+		    "or \"device\"");
+
+	w.id = ++ next_watch_id;
+	CHECK_ALLOCATION(watches = (struct watch *) realloc(watches,
+	    sizeof(struct watch) * (n_watches + 1)));
+	watches[n_watches ++] = w;
+	update_watch_flags();
+
+	cJSON_AddNumberToObject(result, "id", w.id);
+	return true;
+}
+
+
+CTL_HANDLER(cmd_watch_del)
+{
+	int64_t id;
+
+	if (!get_int(req, "id", -1, &id, err))
+		return false;
+
+	for (int i = 0; i < n_watches; i++)
+		if (watches[i].id == id) {
+			free_watch(&watches[i]);
+			memmove(&watches[i], &watches[i + 1],
+			    sizeof(struct watch) * (n_watches - i - 1));
+			n_watches --;
+			update_watch_flags();
+			return true;
+		}
+
+	return fail(err, "no_such_watch", "no watch with id %" PRIi64, id);
+}
+
+
+CTL_HANDLER(cmd_watch_list)
+{
+	cJSON *list = cJSON_AddArrayToObject(result, "watches");
+	char buf[24];
+
+	for (int i = 0; i < n_watches; i++) {
+		struct watch *w = &watches[i];
+		cJSON *o = cJSON_CreateObject();
+
+		cJSON_AddNumberToObject(o, "id", w->id);
+		cJSON_AddStringToObject(o, "kind", w->device? "device" :
+		    "exception");
+		cJSON_AddStringToObject(o, "action", w->stop? "stop" : "trace");
+		if (w->device) {
+			cJSON_AddStringToObject(o, "device", w->devname);
+			snprintf(buf, sizeof(buf), "0x%" PRIx64, w->offset);
+			cJSON_AddStringToObject(o, "offset", buf);
+			cJSON_AddNumberToObject(o, "len", w->len);
+			cJSON_AddStringToObject(o, "access", w->reads?
+			    (w->writes? "rw" : "r") : "w");
+		} else {
+			cJSON *names = cJSON_AddArrayToObject(o, "names");
+			for (int k = 0; k < w->n_names; k++)
+				cJSON_AddItemToArray(names,
+				    cJSON_CreateString(w->names[k]));
+		}
+		cJSON_AddItemToArray(list, o);
+	}
+
+	return true;
+}
+
+
+CTL_HANDLER(cmd_trace_read)
+{
+	int64_t since, max;
+	uint64_t oldest = trace_next_seq > TRACE_LEN?
+	    trace_next_seq - TRACE_LEN : 0;
+	cJSON *list = cJSON_AddArrayToObject(result, "events");
+	uint64_t seq;
+
+	if (!get_int(req, "since", 0, &since, err) ||
+	    !get_int(req, "max", 1000, &max, err))
+		return false;
+	if (since < 0)
+		since = 0;
+	if (max < 1 || max > TRACE_LEN)
+		max = TRACE_LEN;
+
+	seq = (uint64_t) since < oldest? oldest : (uint64_t) since;
+	cJSON_AddBoolToObject(result, "dropped", (uint64_t) since < oldest);
+
+	for (; seq < trace_next_seq && max > 0; seq++, max--) {
+		cJSON *o = cJSON_CreateObject();
+		add_trace_entry(o, &trace_buf[seq % TRACE_LEN]);
+		cJSON_AddItemToArray(list, o);
+	}
+
+	cJSON_AddNumberToObject(result, "next", seq);
+	return true;
+}
+
+
+CTL_HANDLER(cmd_devices)
+{
+	struct memory *mem = cur_memory();
+	cJSON *list = cJSON_AddArrayToObject(result, "devices");
+	char buf[24];
+
+	for (int i = 0; i < mem->n_mmapped_devices; i++) {
+		struct memory_device *d = &mem->devices[i];
+		cJSON *o = cJSON_CreateObject();
+
+		cJSON_AddStringToObject(o, "name", d->name);
+		snprintf(buf, sizeof(buf), "0x%" PRIx64, d->baseaddr);
+		cJSON_AddStringToObject(o, "base", buf);
+		snprintf(buf, sizeof(buf), "0x%" PRIx64, d->length);
+		cJSON_AddStringToObject(o, "length", buf);
+		cJSON_AddBoolToObject(o, "direct",
+		    (d->flags & DM_DYNTRANS_OK) != 0);
+		cJSON_AddItemToArray(list, o);
+	}
+
+	return true;
+}
+
+
+/*
+ *  Subscriptions:
+ */
+
+static const char *level_names[] = { "error", "warning", "info", "debug" };
+
+void control_log(struct cpu *cpu, const char *subsystem, const char *name,
+	int verbosity, const char *msg)
+{
+	cJSON *ev;
+
+	if (client_fd < 0)
+		return;
+	if (log_queue == NULL)
+		log_queue = cJSON_CreateArray();
+	if (cJSON_GetArraySize(log_queue) >= LOG_QUEUE_MAX) {
+		log_dropped ++;
+		return;
+	}
+
+	ev = cJSON_CreateObject();
+	cJSON_AddStringToObject(ev, "event", "log");
+	cJSON_AddStringToObject(ev, "subsystem", subsystem);
+	cJSON_AddStringToObject(ev, "name", name != NULL? name : "");
+	cJSON_AddStringToObject(ev, "level", verbosity >= 0 && verbosity <= 3?
+	    level_names[verbosity] : "debug");
+	if (cpu != NULL)
+		cJSON_AddNumberToObject(ev, "cpu", cpu->cpu_id);
+	cJSON_AddStringToObject(ev, "msg", msg);
+	cJSON_AddNumberToObject(ev, "ninstrs", ninstrs_now());
+	cJSON_AddItemToArray(log_queue, ev);
+}
+
+
+/*
+ *  flush_subscriptions():
+ *
+ *  Sends console output and log lines which subscribed-to clients haven't
+ *  seen yet.
+ */
+static void flush_subscriptions(void)
+{
+	if (client_fd < 0)
+		return;
+
+	for (int h = 0; h < n_sub_console; h++) {
+		uint64_t start, total;
+		unsigned char buf[4096];
+		size_t n;
+
+		while (sub_console[h] && client_fd >= 0) {
+			n = console_output_read(h, sub_offset[h], buf,
+			    sizeof(buf), &start, &total);
+			if (n == 0)
+				break;
+
+			char *text = encode_console(buf, n, false);
+			cJSON *ev = cJSON_CreateObject();
+			cJSON_AddStringToObject(ev, "event", "console");
+			cJSON_AddNumberToObject(ev, "console", h);
+			cJSON_AddNumberToObject(ev, "offset", start);
+			cJSON_AddStringToObject(ev, "data", text);
+			free(text);
+			sub_offset[h] = start + n;
+			send_msg(ev);
+		}
+	}
+
+	if (log_queue != NULL && client_fd >= 0) {
+		cJSON *q = log_queue;
+		int dropped = log_dropped;
+		log_queue = NULL;
+		log_dropped = 0;
+
+		cJSON *ev;
+		while (client_fd >= 0 && (ev = cJSON_DetachItemFromArray(q, 0))
+		    != NULL)
+			send_msg(ev);
+		cJSON_Delete(q);
+
+		if (dropped > 0 && client_fd >= 0) {
+			ev = cJSON_CreateObject();
+			cJSON_AddStringToObject(ev, "event", "log_dropped");
+			cJSON_AddNumberToObject(ev, "count", dropped);
+			send_msg(ev);
+		}
+	}
+}
+
+
+CTL_HANDLER(cmd_subscribe)
+{
+	cJSON *console = cJSON_GetObjectItemCaseSensitive(req, "console");
+	cJSON *log = cJSON_GetObjectItemCaseSensitive(req, "log");
+
+	if (console != NULL) {
+		int n = console_n_handles();
+		bool *want;
+
+		CHECK_ALLOCATION(want = (bool *) calloc(n, sizeof(bool)));
+		if (cJSON_IsTrue(console)) {
+			/*  All consoles with output:  */
+			for (int h = MAIN_CONSOLE + 1; h < n; h++) {
+				const char *nm, *mn;
+				bool in, out;
+				want[h] = console_handle_info(h, &nm, &mn,
+				    &in, &out) && out;
+			}
+		} else if (cJSON_IsArray(console)) {
+			cJSON *c;
+			cJSON_ArrayForEach(c, console) {
+				const char *nm, *mn;
+				bool in, out;
+				int h = cJSON_IsNumber(c)? c->valueint : -1;
+				if (h <= MAIN_CONSOLE || h >= n ||
+				    !console_handle_info(h, &nm, &mn, &in,
+				    &out) || !out) {
+					free(want);
+					return fail(err, "no_such_console",
+					    "no console %i for output", h);
+				}
+				want[h] = true;
+			}
+		} else if (!cJSON_IsFalse(console)) {
+			free(want);
+			return fail(err, "bad_arg", "'console' should be true, "
+			    "false, or a list of console ids");
+		}
+
+		/*  From what is written from now on:  */
+		uint64_t *offs;
+		CHECK_ALLOCATION(offs = (uint64_t *) calloc(n,
+		    sizeof(uint64_t)));
+		for (int h = 0; h < n; h++) {
+			uint64_t start;
+			if (h < n_sub_console && sub_console[h])
+				offs[h] = sub_offset[h];
+			else if (want[h])
+				console_output_read(h, ~0ULL, NULL, 0, &start,
+				    &offs[h]);
+		}
+
+		free(sub_console);
+		free(sub_offset);
+		sub_console = want;
+		sub_offset = offs;
+		n_sub_console = n;
+	}
+
+	if (log != NULL) {
+		int level = -1;
+		if (cJSON_IsString(log))
+			for (int k = 0; k < 4; k++)
+				if (strcmp(log->valuestring, level_names[k]) == 0)
+					level = k;
+		if (level < 0 && !cJSON_IsFalse(log))
+			return fail(err, "bad_arg", "'log' should be \"error\", "
+			    "\"warning\", \"info\", \"debug\", or false");
+		control_log_level = level;
+	}
+
+	cJSON *cl = cJSON_AddArrayToObject(result, "console");
+	for (int h = 0; h < n_sub_console; h++)
+		if (sub_console[h])
+			cJSON_AddItemToArray(cl, cJSON_CreateNumber(h));
+	if (control_log_level >= 0)
+		cJSON_AddStringToObject(result, "log",
+		    level_names[control_log_level]);
+	else
+		cJSON_AddBoolToObject(result, "log", false);
+	return true;
+}
+
+
 static const struct {
 	const char	*name;
 	bool		(*f)(cJSON *, cJSON *, struct ctl_error *);
@@ -1674,6 +2367,12 @@ static const struct {
 	{ "disasm",		cmd_disasm },
 	{ "symbol",		cmd_symbol },
 	{ "run_until",		cmd_run_until },
+	{ "watch_add",		cmd_watch_add },
+	{ "watch_del",		cmd_watch_del },
+	{ "watch_list",		cmd_watch_list },
+	{ "trace_read",		cmd_trace_read },
+	{ "devices",		cmd_devices },
+	{ "subscribe",		cmd_subscribe },
 	{ NULL,			NULL }
 };
 
@@ -1843,6 +2542,7 @@ void control_poll(bool force)
 	    is turned away as busy:  */
 	in_poll = true;
 	run_until_check();
+	flush_subscriptions();
 	read_client();
 	accept_clients();
 	read_client();

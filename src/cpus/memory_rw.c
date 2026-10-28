@@ -36,6 +36,8 @@
  *  TODO: Cleanup the "ok" variable usage!
  */
 
+#include "control.h"
+
 
 /*
  *  memory_rw():
@@ -341,6 +343,12 @@ not just the device in question.
 					res = mem->devices[i].f(cpu, mem, paddr,
 					    data, len, writeflag,
 					    mem->devices[i].extra);
+
+					/*  (Not the debugger's own accesses.)  */
+					if (control_watch_devices && !no_exceptions)
+						control_device_access(cpu,
+						    mem->devices[i].name, paddr,
+						    data, len, writeflag);
 
 					if (running_before_device_access && !cpu->running)
 						return MEMORY_ACCESS_FAILED;

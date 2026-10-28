@@ -34,10 +34,23 @@
 
 #include "misc.h"
 
+struct cpu;
 struct emul;
 struct machine;
 
+/*  Set while a watch (or a log subscription) needs these hooks; checked
+    before calling them, as they are on fast paths:  */
+extern bool control_watch_exceptions;
+extern bool control_watch_devices;
+extern int control_log_level;		/*  -1: no log events  */
+
 void control_init(struct emul *emul, const char *spec);
+bool control_exception(struct cpu *cpu, const char *name, int code,
+	uint64_t from_pc, uint64_t vaddr);
+void control_device_access(struct cpu *cpu, const char *devname,
+	uint64_t offset, const unsigned char *data, size_t len, int writeflag);
+void control_log(struct cpu *cpu, const char *subsystem, const char *name,
+	int verbosity, const char *msg);
 void control_poll(bool force);
 void control_note_stop(struct machine *m, const char *reason);
 void control_shutdown(void);

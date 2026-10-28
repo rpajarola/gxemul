@@ -337,7 +337,8 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 			S; I; S; I; S; I; S; I; S; I; S; I;
 
 			cpu->n_translated_instrs += 24;
-			if (cpu->n_translated_instrs >= N_SAFE_DYNTRANS_LIMIT)
+			if (cpu->n_translated_instrs >= N_SAFE_DYNTRANS_LIMIT
+			    || about_to_enter_single_step)
 				break;
 		}
 	} else {
@@ -368,7 +369,8 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 			I; I; I; I; I;   I; I; I; I; I;
 
 			cpu->n_translated_instrs += 120;
-			if (cpu->n_translated_instrs >= N_SAFE_DYNTRANS_LIMIT)
+			if (cpu->n_translated_instrs >= N_SAFE_DYNTRANS_LIMIT
+			    || about_to_enter_single_step)
 				break;
 		}
 	}

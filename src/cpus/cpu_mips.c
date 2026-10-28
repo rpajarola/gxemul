@@ -40,6 +40,7 @@
 #include "arcbios.h"
 #include "cop0.h"
 #include "cpu.h"
+#include "control.h"
 #include "cpu_mips.h"
 #include "debugger.h"
 #include "devices.h"
@@ -1727,6 +1728,7 @@ void mips_cpu_exception(struct cpu *cpu, int exccode, int tlb, uint64_t vaddr,
 	uint64_t base;
 	uint64_t *reg = &cpu->cd.mips.coproc[0]->reg[0];
 	int exc_model = cpu->cd.mips.cpu_type.exc_model;
+	uint64_t from_pc = cpu->pc;
 
 	if (cpu->is_halted) {
 		/*
@@ -2004,6 +2006,12 @@ void mips_cpu_exception(struct cpu *cpu, int exccode, int tlb, uint64_t vaddr,
 	} else {
 		mips_pc_to_pointers(cpu);
 	}
+
+	/*  A watch on the control socket may stop here, at the handler's
+	    first instruction:  */
+	if (control_watch_exceptions && control_exception(cpu,
+	    exception_names[exccode], exccode, from_pc, vaddr))
+		cpu->cd.mips.next_ic = &nothing_call;
 }
 
 

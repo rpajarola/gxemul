@@ -390,6 +390,101 @@ exactly.
 Text is sent as its UTF-8 bytes. <tt>written</tt> may be less than the
 length if the console's input buffer is full; write the rest later.
 
+<p><b>Watches and the trace</b>
+
+<p><table border="1" cellspacing="0" cellpadding="4">
+<tr><th>cmd</th><th>parameters</th><th>result</th></tr>
+<tr><td><tt>watch_add</tt></td>
+    <td><tt>kind</tt>: <tt>"exception"</tt>, with <tt>names</tt> (a name
+	or a list; default: any), or <tt>"device"</tt>, with
+	<tt>device</tt> (a name), <tt>offset</tt> and <tt>len</tt> (a
+	range of its registers; default: all), <tt>access</tt>
+	(<tt>"r"</tt>, <tt>"w"</tt> or <tt>"rw"</tt>, the default);
+	<tt>action</tt>: <tt>"stop"</tt> (the default) or
+	<tt>"trace"</tt></td>
+    <td><tt>id</tt></td></tr>
+<tr><td><tt>watch_del</tt></td><td><tt>id</tt></td><td>empty</td></tr>
+<tr><td><tt>watch_list</tt></td><td></td>
+    <td><tt>watches</tt>: as given to <tt>watch_add</tt>, with their
+	<tt>id</tt></td></tr>
+<tr><td><tt>trace_read</tt></td>
+    <td><tt>since</tt> (a sequence number, default 0), <tt>max</tt>
+	(default 1000)</td>
+    <td><tt>events</tt>, <tt>next</tt> (where to continue),
+	<tt>dropped</tt></td></tr>
+<tr><td><tt>devices</tt></td><td></td>
+    <td><tt>devices</tt>: list of <tt>name</tt>, <tt>base</tt> (a physical
+	address), <tt>length</tt>, <tt>direct</tt></td></tr>
+</table>
+
+<p>A watch sees CPU exceptions, or the guest's accesses to a device's
+registers. Everything a watch sees goes into the trace, which keeps the
+last 32768 events, numbered by <tt>seq</tt>; a stopping watch also stops
+the machine, with reason <tt>watch</tt>, and the event has the
+<tt>watch</tt> id and what it saw as <tt>hit</tt>. Trace events look like:
+
+<pre>
+{"seq":0, "ninstrs":N, "cpu":0, "watch":1, "pc":"0xa0200000", "kind":"exception",
+ "name":"SYS", "code":8, "vaddr":"0x00000000", "vector":"0x80000080"}
+{"seq":1, "ninstrs":N, "cpu":0, "watch":2, "pc":"0xa0010270", "kind":"device",
+ "device":"dc7085", "offset":"0x18", "access":"w", "len":2, "data":"6800"}
+</pre>
+
+<ul>
+  <li><b>Exceptions</b> (MIPS only, so far) have the exception's
+	<tt>name</tt> (<tt>INT</tt>, <tt>MOD</tt>, <tt>TLBL</tt>,
+	<tt>TLBS</tt>, <tt>ADEL</tt>, <tt>ADES</tt>, <tt>IBE</tt>,
+	<tt>DBE</tt>, <tt>SYS</tt>, <tt>BP</tt>, <tt>RI</tt>,
+	<tt>CPU</tt>, <tt>OV</tt>, <tt>TR</tt>, ...) and <tt>code</tt>,
+	<tt>pc</tt> where it happened, <tt>vaddr</tt> (for address
+	exceptions), and the handler's <tt>vector</tt>. A stop happens
+	exactly at the handler's first instruction, before it runs.
+  <li><b>Device accesses</b> have the <tt>device</tt>, the
+	<tt>offset</tt> into it, <tt>access</tt>, <tt>len</tt> and the
+	(first 8) bytes read or written as <tt>data</tt>, in memory order,
+	and the <tt>pc</tt> of the instruction. A stop happens a little
+	later (within about 120 instructions). Devices are named as in the
+	<tt>devices</tt> list, or by the part of the name before
+	" <tt>[</tt>" (<tt>le</tt> for <tt>le [08:00:2b:45:2b:2f]</tt>),
+	ignoring case; a name which several devices have matches them
+	all. Devices which are <tt>direct</tt> (such as RAM-like buffers)
+	are mostly accessed without the emulator seeing it, so watches
+	miss those accesses. The debugger's own accesses aren't seen.
+</ul>
+
+<p>The <tt>ninstrs</tt> of a trace event is approximate, to within about
+120 instructions; <tt>seq</tt> gives the order.
+
+<p><b>Events as they happen</b>
+
+<p><table border="1" cellspacing="0" cellpadding="4">
+<tr><th>cmd</th><th>parameters</th><th>result</th></tr>
+<tr><td><tt>subscribe</tt></td>
+    <td><tt>console</tt> (<tt>true</tt> for all consoles, a list of
+	console ids, or <tt>false</tt>), <tt>log</tt> (<tt>"error"</tt>,
+	<tt>"warning"</tt>, <tt>"info"</tt>, <tt>"debug"</tt>, or
+	<tt>false</tt>)</td>
+    <td>what is now subscribed to: <tt>console</tt>, <tt>log</tt></td></tr>
+</table>
+
+<p>For a client which stays connected: after subscribing, it gets
+<tt>console</tt> events with what consoles print (from then on), and
+<tt>log</tt> events with the emulator's messages up to that level of
+detail, independently of what the terminal shows. Both are sent every few
+milliseconds, and before a <tt>stopped</tt> event; subscriptions end with
+the connection.
+
+<pre>
+{"event":"console", "console":1, "offset":77, "data":"help\r\n?CNF: help\r\n&gt;&gt;"}
+{"event":"log", "subsystem":"memory", "name":"WRITE", "level":"warning", "cpu":0,
+ "msg":"to non-existant paddr=0x04400000 len=4 pc=0xbfc01ef8", "ninstrs":N}
+{"event":"log_dropped", "count":N}
+</pre>
+
+<p>At most 1000 log events wait to be sent; more are counted by
+<tt>log_dropped</tt>. Only messages from the emulator's newer message system
+are sent; some older parts of it still just print.
+
 <p><b>Any debugger command</b>
 
 <p><table border="1" cellspacing="0" cellpadding="4">
@@ -422,6 +517,8 @@ such as <tt>"reg"</tt>, <tt>"dump 0x80001000"</tt>, <tt>"tlbdump"</tt> or
   <li><tt>step</tt>
   <li><tt>pause</tt> (asked for by the client)
   <li><tt>run_until</tt> (with the <tt>condition</tt> which happened)
+  <li><tt>watch</tt> (with the <tt>watch</tt> id, and what it saw as
+	<tt>hit</tt>)
   <li><tt>user</tt> (CTRL-C, or the display's menu)
   <li><tt>startup</tt> (started with <tt>-V</tt>)
   <li><tt>unimplemented_instruction</tt>
@@ -441,7 +538,8 @@ such as <tt>"reg"</tt>, <tt>"dump 0x80001000"</tt>, <tt>"tlbdump"</tt> or
   <li><tt>bad_arg</tt>: a parameter is missing or can't be used
   <li><tt>not_stopped</tt>: the command needs a stopped machine
   <li><tt>no_such_cpu</tt>, <tt>no_such_console</tt>,
-	<tt>no_such_breakpoint</tt>, <tt>no_such_symbol</tt>
+	<tt>no_such_breakpoint</tt>, <tt>no_such_symbol</tt>,
+	<tt>no_such_device</tt>, <tt>no_such_watch</tt>
   <li><tt>mem_fault</tt>: nothing could be read or written at the address
   <li><tt>capture_failed</tt>: the output of <tt>raw</tt> or the
 	disassembler could not be captured
@@ -455,13 +553,9 @@ such as <tt>"reg"</tt>, <tt>"dump 0x80001000"</tt>, <tt>"tlbdump"</tt> or
 <h4>Planned additions</h4>
 
 <ul>
-  <li><tt>tlb</tt> and <tt>devices</tt>, with structured results.
-  <li><tt>stop_on</tt>: stop on exceptions of a kind, or on accesses to a
-	device's registers.
-  <li>A trace ring buffer: the last instructions, exceptions and device
-	accesses before a stop.
-  <li><tt>subscribe</tt>, for <tt>console</tt> and <tt>log</tt> events as
-	they happen.
+  <li><tt>tlb</tt>, with structured results.
+  <li>Exception watches for CPUs other than MIPS.
+  <li>Interrupts in the trace.
 </ul>
 
 </p>
