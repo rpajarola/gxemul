@@ -273,7 +273,8 @@ void debugger_set_stop_reason(const char *reason)
 
 /*
  *  Control socket entry points: debugger_is_stopped() is true while at
- *  the prompt. The others do what continue, step, and CTRL-C do.
+ *  the prompt. The others do what continue, step, and CTRL-C do
+ *  (debugger_ctl_stop() with a reason for the stopped event).
  */
 bool debugger_is_stopped(void)
 {
@@ -293,9 +294,9 @@ void debugger_ctl_step(int n)
 	exit_debugger_to_continue_single_stepping = true;
 }
 
-void debugger_ctl_pause(void)
+void debugger_ctl_stop(const char *reason)
 {
-	debugger_set_stop_reason("pause");
+	debugger_set_stop_reason(reason);
 	debugger_n_steps_left_before_interaction = 0;
 	about_to_enter_single_step = true;
 }

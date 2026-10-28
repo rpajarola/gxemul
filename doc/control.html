@@ -108,10 +108,17 @@ the commands below, a plain value for their main parameter:
 <tr><td><tt>break_del</tt></td><td></td><td><tt>id</tt></td></tr>
 <tr><td><tt>console_read</tt></td><td></td><td><tt>since</tt></td></tr>
 <tr><td><tt>console_write</tt></td><td></td><td><tt>data</tt></td></tr>
+<tr><td><tt>mem_read</tt></td><td></td><td><tt>addr</tt></td></tr>
+<tr><td><tt>disasm</tt></td><td></td><td><tt>addr</tt></td></tr>
+<tr><td><tt>symbol</tt></td><td></td><td><tt>name</tt>, or <tt>addr</tt> if
+	it starts with a digit</td></tr>
+<tr><td><tt>run_until</tt></td><td></td><td>a console pattern
+	(<tt>console.pattern</tt>)</td></tr>
 </table>
 
 <p>The reply is printed as one line of JSON. With <tt>--wait</tt>, after a
-successful <tt>continue</tt>, <tt>step</tt> or <tt>pause</tt>, the client
+successful <tt>continue</tt>, <tt>step</tt>, <tt>run_until</tt> or
+<tt>pause</tt>, the client
 also waits for the machine to stop (or exit), and prints that event too. The
 exit code is 0 for success, 1 if the emulator replied with an error, 2 if the
 socket could not be used, and 3 if <tt>--timeout</tt> expired while
@@ -207,7 +214,9 @@ message's line:
 prompt). <tt>continue</tt>, <tt>step</tt> and <tt>pause</tt> reply right
 away; when the machine then stops, a <tt>stopped</tt> event follows.
 
-<p>Everything except <tt>step</tt> works in both states. A stop caused at
+<p>Reading works in both states, as does <tt>run_until</tt>. Changing the
+machine (<tt>step</tt>, <tt>reg_set</tt>, <tt>mem_write</tt>) needs it
+stopped. A stop caused at
 the terminal (CTRL-C, or typing <tt>step</tt>) sends a <tt>stopped</tt> event
 to the client too, and a <tt>continue</tt> from the client continues the
 terminal's prompt.
@@ -261,6 +270,98 @@ terminal's prompt.
 <p>A breakpoint's id never changes, unlike the numbers shown by the
 debugger's <tt>breakpoint show</tt>, which are positions in the list.
 
+<p><b>Registers and memory</b>
+
+<p><table border="1" cellspacing="0" cellpadding="4">
+<tr><th>cmd</th><th>parameters</th><th>result</th></tr>
+<tr><td><tt>regs</tt></td>
+    <td><tt>cpu</tt> (default: the debugger's current CPU),
+	<tt>names</tt> (a list; default: all)</td>
+    <td><tt>cpu</tt>, <tt>regs</tt>: an object of register names and
+	values, in the CPU's order</td></tr>
+<tr><td><tt>reg_set</tt></td>
+    <td><tt>cpu</tt>, <tt>name</tt>, <tt>value</tt> (an
+	expression)</td>
+    <td><tt>value</tt>, as now stored</td></tr>
+<tr><td><tt>mem_read</tt></td>
+    <td><tt>addr</tt>, <tt>len</tt> (default 64, at most 1 MB),
+	<tt>space</tt> (<tt>"virtual"</tt> or <tt>"physical"</tt>),
+	<tt>cpu</tt></td>
+    <td><tt>addr</tt>, <tt>data</tt> (hex), and <tt>fault_at</tt> if
+	only part could be read</td></tr>
+<tr><td><tt>mem_write</tt></td>
+    <td><tt>addr</tt>, <tt>data</tt> (hex), <tt>space</tt>,
+	<tt>cpu</tt></td>
+    <td><tt>written</tt>, and <tt>fault_at</tt> if only part could be
+	written</td></tr>
+</table>
+
+<p>The registers are those the debugger knows by name (as in
+<tt>print pc</tt> or <tt>a0 = 5</tt>), for any kind of CPU; values are as
+wide as the register. Memory is accessed as the debugger does it: through
+the CPU's address translation, without causing exceptions, so an unmapped
+address gives the error <tt>mem_fault</tt> rather than a guest fault. Code
+which has been written is translated again.
+
+<p><b>Code and symbols</b>
+
+<p><table border="1" cellspacing="0" cellpadding="4">
+<tr><th>cmd</th><th>parameters</th><th>result</th></tr>
+<tr><td><tt>disasm</tt></td>
+    <td><tt>addr</tt> (default: pc), <tt>count</tt> (default 10, at
+	most 1000), <tt>cpu</tt></td>
+    <td><tt>instructions</tt>: list of <tt>addr</tt>, <tt>bytes</tt>
+	(hex, in memory order), <tt>text</tt>, and <tt>symbol</tt> if the
+	address is in one</td></tr>
+<tr><td><tt>symbol</tt></td>
+    <td><tt>name</tt>, or <tt>addr</tt></td>
+    <td><tt>name</tt>, <tt>addr</tt> (where the symbol starts), and with
+	<tt>addr</tt>, the <tt>offset</tt> into it</td></tr>
+</table>
+
+<p><tt>text</tt> is the instruction as the debugger's <tt>unassemble</tt>
+shows it, after the address: on MIPS, the instruction word, an arrow at
+the pc, and the instruction.
+
+<p><b>Running until something happens</b>
+
+<p><table border="1" cellspacing="0" cellpadding="4">
+<tr><th>cmd</th><th>parameters</th><th>result</th></tr>
+<tr><td><tt>run_until</tt></td>
+    <td>one or more of:
+	<tt>console</tt> (<tt>{"pattern": ..., "console": ...,
+	"since": ..., "input": ...}</tt>),
+	<tt>pc</tt>, <tt>insns</tt>, <tt>timeout_ms</tt></td>
+    <td><tt>already_running</tt>; with <tt>console</tt>,
+	<tt>console_offset</tt> (where the search starts), and with
+	<tt>input</tt>, <tt>written</tt></td></tr>
+</table>
+
+<p>Continues the machine (if stopped) until the first of the conditions
+happens; it then stops with reason <tt>run_until</tt>, and the
+<tt>condition</tt> which happened:
+
+<ul>
+  <li><tt>console</tt>: the console printed one of the patterns, a string or
+	a list of strings (plain text, not regular expressions). The event
+	has the <tt>match</tt>, and the <tt>console_offset</tt> just after
+	it. The search starts at what is printed from now on, or at offset
+	<tt>since</tt>. <tt>input</tt> is typed into the console after the
+	search starts, so its reply can't be missed:
+	<tt>{"console": {"pattern": ["login:", "panic"], "input":
+	"boot\r"}}</tt>
+  <li><tt>pc</tt>: an address is reached (as a breakpoint, which is
+	removed again).
+  <li><tt>insns</tt>: this many more instructions have run.
+  <li><tt>timeout_ms</tt>: this many milliseconds have passed.
+</ul>
+
+<p>Console patterns, <tt>insns</tt> and <tt>timeout_ms</tt> are checked
+every few milliseconds, so the machine stops a little after them (and may
+have printed more after the match); <tt>pc</tt> is exact. If the machine
+stops for any other reason, such as a breakpoint, the <tt>run_until</tt> is
+over. A new <tt>run_until</tt> replaces one which is still waiting.
+
 <p><b>Serial consoles</b>
 
 <p><table border="1" cellspacing="0" cellpadding="4">
@@ -310,6 +411,7 @@ such as <tt>"reg"</tt>, <tt>"dump 0x80001000"</tt>, <tt>"tlbdump"</tt> or
 
 <pre>
 {"event":"stopped", "reason":..., "cpu":0, "pc":"0x...", "ninstrs":N}
+{"event":"stopped", "reason":"run_until", "condition":"console", "match":"login:", "console_offset":N, ...}
 {"event":"exited", "ninstrs":N}
 </pre>
 
@@ -319,6 +421,7 @@ such as <tt>"reg"</tt>, <tt>"dump 0x80001000"</tt>, <tt>"tlbdump"</tt> or
   <li><tt>breakpoint</tt> (the event also has <tt>bp</tt>, the breakpoint's id)
   <li><tt>step</tt>
   <li><tt>pause</tt> (asked for by the client)
+  <li><tt>run_until</tt> (with the <tt>condition</tt> which happened)
   <li><tt>user</tt> (CTRL-C, or the display's menu)
   <li><tt>startup</tt> (started with <tt>-V</tt>)
   <li><tt>unimplemented_instruction</tt>
@@ -337,8 +440,11 @@ such as <tt>"reg"</tt>, <tt>"dump 0x80001000"</tt>, <tt>"tlbdump"</tt> or
   <li><tt>unknown_cmd</tt>
   <li><tt>bad_arg</tt>: a parameter is missing or can't be used
   <li><tt>not_stopped</tt>: the command needs a stopped machine
-  <li><tt>no_such_console</tt>, <tt>no_such_breakpoint</tt>
-  <li><tt>capture_failed</tt>: the output of <tt>raw</tt> could not be captured
+  <li><tt>no_such_cpu</tt>, <tt>no_such_console</tt>,
+	<tt>no_such_breakpoint</tt>, <tt>no_such_symbol</tt>
+  <li><tt>mem_fault</tt>: nothing could be read or written at the address
+  <li><tt>capture_failed</tt>: the output of <tt>raw</tt> or the
+	disassembler could not be captured
   <li><tt>busy</tt>: another client is connected
 </ul>
 
@@ -349,12 +455,7 @@ such as <tt>"reg"</tt>, <tt>"dump 0x80001000"</tt>, <tt>"tlbdump"</tt> or
 <h4>Planned additions</h4>
 
 <ul>
-  <li><tt>regs</tt>, <tt>reg_set</tt>, <tt>mem_read</tt>, <tt>mem_write</tt>,
-	<tt>disasm</tt>, <tt>symbol</tt>, <tt>tlb</tt>, <tt>devices</tt>,
-	with structured results.
-  <li><tt>run_until</tt>: run until a console prints a pattern (such as
-	<tt>login:|panic</tt>), a pc is reached, a number of instructions
-	have run, or a timeout.
+  <li><tt>tlb</tt> and <tt>devices</tt>, with structured results.
   <li><tt>stop_on</tt>: stop on exceptions of a kind, or on accesses to a
 	device's registers.
   <li>A trace ring buffer: the last instructions, exceptions and device

@@ -250,6 +250,31 @@ static int settings_write(struct settings *settings, int i, uint64_t *valuep)
 
 
 /*
+ *  settings_entry():
+ *
+ *  For listing a settings object's entries: gets entry i (0 and up), and
+ *  its value unless it is a string or subsettings. Returns false if there
+ *  is no entry i.
+ */
+bool settings_entry(struct settings *settings, int i, const char **namep,
+	int *typep, int *formatp, uint64_t *valuep)
+{
+	if (i < 0 || i >= settings->n_settings)
+		return false;
+
+	*namep = settings->name[i];
+	*typep = settings->storage_type[i];
+	*formatp = settings->presentation_format[i];
+	*valuep = 0;
+	if (*typep != SETTINGS_TYPE_SUBSETTINGS &&
+	    *typep != SETTINGS_TYPE_STRING)
+		settings_read(settings, i, valuep);
+
+	return true;
+}
+
+
+/*
  *  settings_debugdump():
  *
  *  Dump settings in a settings object to stdout.

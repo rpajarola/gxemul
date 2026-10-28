@@ -48,7 +48,7 @@ void debugger_set_stop_reason(const char *reason);
 bool debugger_is_stopped(void);
 void debugger_ctl_continue(void);
 void debugger_ctl_step(int n);
-void debugger_ctl_pause(void);
+void debugger_ctl_stop(const char *reason);
 
 /*  debugger_expr.c:  */
 #define	PARSE_NOMATCH		0

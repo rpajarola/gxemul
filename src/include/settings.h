@@ -29,6 +29,7 @@
  */
 
 #include <inttypes.h>
+#include <stdbool.h>
 
 #define	GLOBAL_SETTINGS_NAME	"settings"
 
@@ -76,6 +77,8 @@ void settings_remove_all(struct settings *settings);
 
 int settings_access(struct settings *settings, const char *fullname,
 	int writeflag, uint64_t *valuep);
+bool settings_entry(struct settings *settings, int i, const char **namep,
+	int *typep, int *formatp, uint64_t *valuep);
 
 /*  Result codes from settings_access:  */
 #define	SETTINGS_OK			1
