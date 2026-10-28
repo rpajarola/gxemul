@@ -316,6 +316,63 @@ void debug_indentation(int diff)
 
 
 /*
+ *  legacy_log():
+ *
+ *  Lines printed by the older debug() and fatal() functions, as log events
+ *  on the control socket. A line is often printed a piece at a time, so
+ *  the pieces are collected until a newline; a line with any fatal() part
+ *  is a warning, else it is at the debug level. "[ name: message ]" gives
+ *  the name and the message.
+ */
+static char legacy_line[DEBUG_BUFSIZE];
+static size_t legacy_len = 0;
+static int legacy_level = VERBOSITY_DEBUG;
+
+static void legacy_log(int verbosity, va_list argp, const char *fmt)
+{
+	char buf[DEBUG_BUFSIZE];
+
+	vsnprintf(buf, sizeof(buf), fmt, argp);
+	if (verbosity < legacy_level)
+		legacy_level = verbosity;
+
+	for (char *s = buf; *s; s++) {
+		if (*s != '\n') {
+			if (*s != '\r' && legacy_len < sizeof(legacy_line) - 1)
+				legacy_line[legacy_len++] = *s;
+			continue;
+		}
+
+		legacy_line[legacy_len] = '\0';
+		char *msg = legacy_line, *name = NULL;
+		while (*msg == ' ')
+			msg ++;
+
+		size_t len = strlen(msg);
+		if (msg[0] == '[' && msg[1] == ' ' && len >= 4 &&
+		    strcmp(msg + len - 2, " ]") == 0) {
+			msg[len - 2] = '\0';
+			msg += 2;
+
+			char *colon = strstr(msg, ": ");
+			if (colon != NULL && colon - msg < 32 &&
+			    memchr(msg, ' ', colon - msg) == NULL) {
+				*colon = '\0';
+				name = msg;
+				msg = colon + 2;
+			}
+		}
+
+		if (*msg != '\0' && legacy_level <= control_log_level)
+			control_log(NULL, "legacy", name, legacy_level, msg);
+
+		legacy_len = 0;
+		legacy_level = VERBOSITY_DEBUG;
+	}
+}
+
+
+/*
  *  debug() and fatal():
  *
  *  These are here because of all the legacy code that uses them. Basically,
@@ -329,6 +386,12 @@ void debug(const char *fmt, ...)
 	va_list argp;
 	bool ss = single_step || about_to_enter_single_step;
 	int v = verbose;
+
+	if (control_log_level >= VERBOSITY_WARNING) {
+		va_start(argp, fmt);
+		legacy_log(VERBOSITY_DEBUG, argp, fmt);
+		va_end(argp);
+	}
 	if (emul_executing)
 		v--;
 	if (ss)
@@ -346,6 +409,12 @@ void debug(const char *fmt, ...)
 void fatal(const char *fmt, ...)
 {
 	va_list argp;
+
+	if (control_log_level >= VERBOSITY_WARNING) {
+		va_start(argp, fmt);
+		legacy_log(VERBOSITY_WARNING, argp, fmt);
+		va_end(argp);
+	}
 
 	va_start(argp, fmt);
 	va_debug(argp, fmt);

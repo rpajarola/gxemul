@@ -2181,7 +2181,8 @@ void control_log(struct cpu *cpu, const char *subsystem, const char *name,
 {
 	cJSON *ev;
 
-	if (client_fd < 0)
+	/*  Not what the debugger prints, for a request or at the prompt:  */
+	if (client_fd < 0 || in_poll || debugger_is_stopped())
 		return;
 	if (log_queue == NULL)
 		log_queue = cJSON_CreateArray();

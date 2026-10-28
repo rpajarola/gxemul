@@ -481,9 +481,15 @@ the connection.
 {"event":"log_dropped", "count":N}
 </pre>
 
+<p>Lines which older parts of the emulator print are sent too, with
+subsystem <tt>"legacy"</tt>: at level <tt>"warning"</tt> if they are always
+printed, else <tt>"debug"</tt>. A line like
+<tt>[ turbochannel: read from slot 0 ... ]</tt> becomes name
+<tt>"turbochannel"</tt> and the message after it. What the debugger prints
+(at its prompt, or for a request) isn't sent.
+
 <p>At most 1000 log events wait to be sent; more are counted by
-<tt>log_dropped</tt>. Only messages from the emulator's newer message system
-are sent; some older parts of it still just print.
+<tt>log_dropped</tt>.
 
 <p><b>Any debugger command</b>
 
