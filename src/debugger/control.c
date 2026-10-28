@@ -734,8 +734,11 @@ CTL_HANDLER(cmd_break_del)
 	struct machine *m = cur_machine();
 	int64_t id;
 
-	if (!get_int(req, "id", -1, &id, err))
+	if (!get_int(req, "bp", -1, &id, err))
 		return false;
+	if (id < 0)
+		return fail(err, "bad_arg", "'bp' should be a breakpoint's "
+		    "id, from break_add");
 
 	for (int i = 0; i < m->breakpoints.n; i++)
 		if (m->breakpoints.id[i] == id) {
@@ -1667,6 +1670,15 @@ CTL_HANDLER(cmd_run_until)
 			    "{\"pattern\": string or list of strings}");
 		if (!get_console(console, &h, false, err))
 			return false;
+		cJSON *item;
+		cJSON_ArrayForEach(item, console)
+			if (strcmp(item->string, "console") != 0 &&
+			    strcmp(item->string, "pattern") != 0 &&
+			    strcmp(item->string, "since") != 0 &&
+			    strcmp(item->string, "input") != 0)
+				return fail(err, "bad_arg", "unknown parameter "
+				    "'console.%s'; 'console' takes: console "
+				    "pattern since input", item->string);
 		cJSON *input = cJSON_GetObjectItemCaseSensitive(console,
 		    "input");
 		if (input != NULL && !cJSON_IsString(input))
@@ -2066,8 +2078,11 @@ CTL_HANDLER(cmd_watch_del)
 {
 	int64_t id;
 
-	if (!get_int(req, "id", -1, &id, err))
+	if (!get_int(req, "watch", -1, &id, err))
 		return false;
+	if (id < 0)
+		return fail(err, "bad_arg", "'watch' should be a watch's id, "
+		    "from watch_add");
 
 	for (int i = 0; i < n_watches; i++)
 		if (watches[i].id == id) {
@@ -2345,37 +2360,72 @@ CTL_HANDLER(cmd_subscribe)
 }
 
 
+/*  The commands, and the parameters they take:  */
 static const struct {
 	const char	*name;
 	bool		(*f)(cJSON *, cJSON *, struct ctl_error *);
+	const char	*params;
 } ctl_cmds[] = {
-	{ "hello",		cmd_hello },
-	{ "status",		cmd_status },
-	{ "pause",		cmd_pause },
-	{ "continue",		cmd_continue },
-	{ "step",		cmd_step },
-	{ "quit",		cmd_quit },
-	{ "break_add",		cmd_break_add },
-	{ "break_del",		cmd_break_del },
-	{ "break_list",		cmd_break_list },
-	{ "console_read",	cmd_console_read },
-	{ "console_write",	cmd_console_write },
-	{ "raw",		cmd_raw },
-	{ "regs",		cmd_regs },
-	{ "reg_set",		cmd_reg_set },
-	{ "mem_read",		cmd_mem_read },
-	{ "mem_write",		cmd_mem_write },
-	{ "disasm",		cmd_disasm },
-	{ "symbol",		cmd_symbol },
-	{ "run_until",		cmd_run_until },
-	{ "watch_add",		cmd_watch_add },
-	{ "watch_del",		cmd_watch_del },
-	{ "watch_list",		cmd_watch_list },
-	{ "trace_read",		cmd_trace_read },
-	{ "devices",		cmd_devices },
-	{ "subscribe",		cmd_subscribe },
-	{ NULL,			NULL }
+	{ "hello",		cmd_hello,		"" },
+	{ "status",		cmd_status,		"" },
+	{ "pause",		cmd_pause,		"" },
+	{ "continue",		cmd_continue,		"" },
+	{ "step",		cmd_step,		"n" },
+	{ "quit",		cmd_quit,		"" },
+	{ "break_add",		cmd_break_add,		"pc" },
+	{ "break_del",		cmd_break_del,		"bp" },
+	{ "break_list",		cmd_break_list,		"" },
+	{ "console_read",	cmd_console_read,	"console since max encoding" },
+	{ "console_write",	cmd_console_write,	"console data encoding" },
+	{ "raw",		cmd_raw,		"line" },
+	{ "regs",		cmd_regs,		"cpu names" },
+	{ "reg_set",		cmd_reg_set,		"cpu name value" },
+	{ "mem_read",		cmd_mem_read,		"cpu addr len space" },
+	{ "mem_write",		cmd_mem_write,		"cpu addr data space" },
+	{ "disasm",		cmd_disasm,		"cpu addr count" },
+	{ "symbol",		cmd_symbol,		"name addr" },
+	{ "run_until",		cmd_run_until,		"console pc insns timeout_ms" },
+	{ "watch_add",		cmd_watch_add,		"kind names device offset len access action" },
+	{ "watch_del",		cmd_watch_del,		"watch" },
+	{ "watch_list",		cmd_watch_list,		"" },
+	{ "trace_read",		cmd_trace_read,		"since max" },
+	{ "devices",		cmd_devices,		"" },
+	{ "subscribe",		cmd_subscribe,		"console log" },
+	{ NULL,			NULL,			NULL }
 };
+
+
+/*
+ *  unknown_param():
+ *
+ *  Returns the first parameter of a request which isn't id, cmd, or one
+ *  of the space-separated params, or NULL.
+ */
+static cJSON *unknown_param(cJSON *req, const char *params)
+{
+	cJSON *item;
+
+	cJSON_ArrayForEach(item, req) {
+		if (strcmp(item->string, "id") == 0 ||
+		    strcmp(item->string, "cmd") == 0)
+			continue;
+
+		size_t len = strlen(item->string);
+		const char *p = params;
+		bool found = false;
+		while (*p != '\0' && !found) {
+			while (*p == ' ')
+				p ++;
+			size_t wlen = strcspn(p, " ");
+			found = wlen == len && strncmp(p, item->string, len) == 0;
+			p += wlen;
+		}
+		if (!found)
+			return item;
+	}
+
+	return NULL;
+}
 
 
 /*
@@ -2418,9 +2468,17 @@ static void handle_line(const char *line, size_t len)
 			if (strcmp(ctl_cmds[k].name, cmd->valuestring) == 0)
 				break;
 
+		cJSON *unknown;
 		if (ctl_cmds[k].name == NULL)
 			fail(&err, "unknown_cmd", "unknown command '%s'",
 			    cmd->valuestring);
+		else if ((unknown = unknown_param(req, ctl_cmds[k].params))
+		    != NULL)
+			/*  A mistake, not something to ignore:  */
+			fail(&err, "bad_arg", "unknown parameter '%s'; %s "
+			    "takes: %s", unknown->string, cmd->valuestring,
+			    ctl_cmds[k].params[0] != '\0'?
+			    ctl_cmds[k].params : "nothing");
 		else {
 			result = cJSON_CreateObject();
 			ok = ctl_cmds[k].f(req, result, &err);
@@ -2709,9 +2767,10 @@ static int client_usage(void)
 	    "[--timeout seconds] command [argument]\n"
 	    "The argument is a JSON object with the request's parameters,"
 	    " or a plain value\nfor raw (line), step (n), break_add (pc), "
-	    "break_del (id), console_read\n(since), console_write (data), "
-	    "mem_read (addr), disasm (addr), symbol (name\nor addr), or "
-	    "run_until (a console pattern). See doc/control.html.\n");
+	    "break_del (bp), watch_del\n(watch), trace_read (since), "
+	    "console_read (since), console_write (data),\nmem_read (addr), "
+	    "disasm (addr), symbol (name or addr), or run_until (a\n"
+	    "console pattern). See doc/control.html.\n");
 	return 2;
 }
 
@@ -2830,7 +2889,9 @@ int control_client_main(int argc, char *argv[])
 		{ "raw", "line", false },
 		{ "step", "n", true },
 		{ "break_add", "pc", false },
-		{ "break_del", "id", true },
+		{ "break_del", "bp", true },
+		{ "watch_del", "watch", true },
+		{ "trace_read", "since", true },
 		{ "console_read", "since", true },
 		{ "console_write", "data", false },
 		{ "mem_read", "addr", false },

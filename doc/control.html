@@ -105,7 +105,9 @@ the commands below, a plain value for their main parameter:
 <tr><td><tt>raw</tt></td><td>&nbsp;&nbsp;</td><td><tt>line</tt></td></tr>
 <tr><td><tt>step</tt></td><td></td><td><tt>n</tt></td></tr>
 <tr><td><tt>break_add</tt></td><td></td><td><tt>pc</tt></td></tr>
-<tr><td><tt>break_del</tt></td><td></td><td><tt>id</tt></td></tr>
+<tr><td><tt>break_del</tt></td><td></td><td><tt>bp</tt></td></tr>
+<tr><td><tt>watch_del</tt></td><td></td><td><tt>watch</tt></td></tr>
+<tr><td><tt>trace_read</tt></td><td></td><td><tt>since</tt></td></tr>
 <tr><td><tt>console_read</tt></td><td></td><td><tt>since</tt></td></tr>
 <tr><td><tt>console_write</tt></td><td></td><td><tt>data</tt></td></tr>
 <tr><td><tt>mem_read</tt></td><td></td><td><tt>addr</tt></td></tr>
@@ -170,7 +172,9 @@ is read, so nothing important is lost.
 <h4>Requests, responses and events</h4>
 
 <p>A request names a command, and may carry an <tt>id</tt> of the client's
-choosing, which is copied to the response:
+choosing, which is copied to the response. A parameter which the command
+doesn't take is an error (<tt>bad_arg</tt>, naming the parameters it does
+take), not silently ignored:
 
 <pre>
 {"id": 7, "cmd": "break_add", "pc": "memcpy+0x40"}
@@ -261,7 +265,8 @@ terminal's prompt.
 <tr><th>cmd</th><th>parameters</th><th>result</th></tr>
 <tr><td><tt>break_add</tt></td><td><tt>pc</tt> (an address)</td>
     <td><tt>id</tt>, <tt>addr</tt>, <tt>expr</tt></td></tr>
-<tr><td><tt>break_del</tt></td><td><tt>id</tt></td><td>empty</td></tr>
+<tr><td><tt>break_del</tt></td><td><tt>bp</tt> (a breakpoint's
+	<tt>id</tt>)</td><td>empty</td></tr>
 <tr><td><tt>break_list</tt></td><td></td>
     <td><tt>breakpoints</tt>: list of <tt>id</tt>, <tt>addr</tt>,
 	<tt>expr</tt></td></tr>
@@ -403,7 +408,8 @@ length if the console's input buffer is full; write the rest later.
 	<tt>action</tt>: <tt>"stop"</tt> (the default) or
 	<tt>"trace"</tt></td>
     <td><tt>id</tt></td></tr>
-<tr><td><tt>watch_del</tt></td><td><tt>id</tt></td><td>empty</td></tr>
+<tr><td><tt>watch_del</tt></td><td><tt>watch</tt> (a watch's
+	<tt>id</tt>)</td><td>empty</td></tr>
 <tr><td><tt>watch_list</tt></td><td></td>
     <td><tt>watches</tt>: as given to <tt>watch_add</tt>, with their
 	<tt>id</tt></td></tr>
@@ -541,7 +547,7 @@ such as <tt>"reg"</tt>, <tt>"dump 0x80001000"</tt>, <tt>"tlbdump"</tt> or
 <ul>
   <li><tt>bad_request</tt>: not a JSON object, or no <tt>cmd</tt>
   <li><tt>unknown_cmd</tt>
-  <li><tt>bad_arg</tt>: a parameter is missing or can't be used
+  <li><tt>bad_arg</tt>: a parameter is missing, unknown, or can't be used
   <li><tt>not_stopped</tt>: the command needs a stopped machine
   <li><tt>no_such_cpu</tt>, <tt>no_such_console</tt>,
 	<tt>no_such_breakpoint</tt>, <tt>no_such_symbol</tt>,
