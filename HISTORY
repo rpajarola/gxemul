@@ -5485,3 +5485,6 @@ Changelog for GXemul:
 		(also the debugger's grab) are written as PNG files by
 		gxemul itself, compressed with zlib if it is available,
 		instead of by ffmpeg.
+
+==============  RELEASE 1.0.8  ==============
+
