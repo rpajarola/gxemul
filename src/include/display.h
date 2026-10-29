@@ -194,6 +194,8 @@ void display_flush(struct fb_window *win);
 void display_check_event(struct emul *emul);
 void display_key(struct machine *m, int key);
 int display_screenshot(struct machine *, const char *file);
+int display_screendump(struct machine *, int n, const char *file,
+	char **namep, int *wp, int *hp);
 int display_video_start(struct machine *, const char *file);
 void display_video_stop(void);
 bool display_video_recording(void);

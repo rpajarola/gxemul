@@ -93,7 +93,7 @@ windows' icons.
 Debian or Ubuntu:
 
 ```
-sudo apt install build-essential pkg-config libsdl2-dev dpkg-dev
+sudo apt install build-essential pkg-config libsdl2-dev zlib1g-dev dpkg-dev
 packaging/build-deb.sh      # dist/gxemul-rp_<version>_<arch>.deb
 ```
 

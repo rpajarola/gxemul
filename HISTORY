@@ -5477,3 +5477,11 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.7  ==============
 
+20261029	The control socket's screendump command saves what a
+		framebuffer window shows as a PNG file, also while the
+		machine runs (like QEMU's screendump). With
+		SDL_VIDEODRIVER=dummy, a machine with its display on runs
+		without windows, e.g. for an agent on a server. Screenshots
+		(also the debugger's grab) are written as PNG files by
+		gxemul itself, compressed with zlib if it is available,
+		instead of by ffmpeg.

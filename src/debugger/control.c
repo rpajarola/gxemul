@@ -39,6 +39,7 @@
  *  shell (control_client_main()).
  */
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,6 +57,7 @@
 #include "control.h"
 #include "cpu.h"
 #include "debugger.h"
+#include "display.h"
 #include "emul.h"
 #include "machine.h"
 #include "memory.h"
@@ -2186,6 +2188,60 @@ CTL_HANDLER(cmd_devices)
 
 
 /*
+ *  screendump: saves what a framebuffer window shows as a PNG file.  The
+ *  file's name in the result is absolute, as the client's current
+ *  directory may not be the emulator's.
+ */
+CTL_HANDLER(cmd_screendump)
+{
+	cJSON *file = cJSON_GetObjectItemCaseSensitive(req, "file");
+	struct machine *m = cur_machine();
+	char *name, path[4096];
+	int64_t n;
+	int w, h, rc;
+
+	if (file != NULL && !cJSON_IsNull(file) &&
+	    (!cJSON_IsString(file) || file->valuestring[0] == '\0'))
+		return fail(err, "bad_arg", "'file' should be a file name");
+	if (!get_int(req, "screen", 0, &n, err))
+		return false;
+	if (n < 0 || n >= m->display_md.n_fb_windows) {
+		if (m->display_md.n_fb_windows == 0)
+			return fail(err, "no_such_screen", "the machine has "
+			    "no framebuffer window (is the display on?)");
+		return fail(err, "no_such_screen", "no screen %" PRIi64
+		    "; there %s %i", n, m->display_md.n_fb_windows == 1?
+		    "is" : "are", m->display_md.n_fb_windows);
+	}
+
+	rc = display_screendump(m, n, cJSON_IsString(file)?
+	    file->valuestring : NULL, &name, &w, &h);
+	if (rc != 0) {
+		fail(err, "io_error", "%s: %s", name != NULL? name : "",
+		    strerror(rc));
+		free(name);
+		return false;
+	}
+
+	if (name[0] == '/' || name[0] == '\\' || (name[0] != '\0' &&
+	    name[1] == ':') || getcwd(path, sizeof(path)) == NULL)
+		snprintf(path, sizeof(path), "%s", name);
+	else
+		snprintf(path + strlen(path), sizeof(path) - strlen(path),
+		    "/%s", name);
+	free(name);
+
+	cJSON_AddStringToObject(result, "file", path);
+	cJSON_AddNumberToObject(result, "screen", n);
+	cJSON_AddStringToObject(result, "name",
+	    m->display_md.fb_windows[n]->name);
+	cJSON_AddNumberToObject(result, "width", w);
+	cJSON_AddNumberToObject(result, "height", h);
+	return true;
+}
+
+
+/*
  *  Subscriptions:
  */
 
@@ -2391,6 +2447,7 @@ static const struct {
 	{ "trace_read",		cmd_trace_read,		"since max" },
 	{ "devices",		cmd_devices,		"" },
 	{ "subscribe",		cmd_subscribe,		"console log" },
+	{ "screendump",		cmd_screendump,		"file screen" },
 	{ NULL,			NULL,			NULL }
 };
 
@@ -2892,6 +2949,7 @@ int control_client_main(int argc, char *argv[])
 		{ "break_del", "bp", true },
 		{ "watch_del", "watch", true },
 		{ "trace_read", "since", true },
+		{ "screendump", "file", false },
 		{ "console_read", "since", true },
 		{ "console_write", "data", false },
 		{ "mem_read", "addr", false },

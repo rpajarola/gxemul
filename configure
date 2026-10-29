@@ -658,6 +658,22 @@ else
 fi
 rm -f _testns.c _testns _testns$EXEEXT
 
+
+#  zlib compresses screenshots (PNG files); without it, they are stored
+#  uncompressed:
+printf "checking for zlib... "
+printf "#include <zlib.h>
+int main(int argc, char *argv[]){return compressBound(argc) == 0;}\n" > _testz.c
+$CC $CFLAGS _testz.c -o _testz -lz 2> /dev/null
+if [ -x _testz$EXEEXT ]; then
+	OTHERLIBS="$OTHERLIBS -lz"
+	printf "#define WITH_ZLIB\n" >> config.h
+	printf "yes\n"
+else
+	printf "no\n"
+fi
+rm -f _testz.c _testz _testz$EXEEXT
+
 #  -lresolv for inet_pton?
 printf "checking whether -lresolv is required for inet_pton... "
 if [ z$WINDOWS = zYES ]; then

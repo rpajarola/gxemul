@@ -108,6 +108,7 @@ the commands below, a plain value for their main parameter:
 <tr><td><tt>break_del</tt></td><td></td><td><tt>bp</tt></td></tr>
 <tr><td><tt>watch_del</tt></td><td></td><td><tt>watch</tt></td></tr>
 <tr><td><tt>trace_read</tt></td><td></td><td><tt>since</tt></td></tr>
+<tr><td><tt>screendump</tt></td><td></td><td><tt>file</tt></td></tr>
 <tr><td><tt>console_read</tt></td><td></td><td><tt>since</tt></td></tr>
 <tr><td><tt>console_write</tt></td><td></td><td><tt>data</tt></td></tr>
 <tr><td><tt>mem_read</tt></td><td></td><td><tt>addr</tt></td></tr>
@@ -497,6 +498,33 @@ printed, else <tt>"debug"</tt>. A line like
 <p>At most 1000 log events wait to be sent; more are counted by
 <tt>log_dropped</tt>.
 
+<p><b>The screen</b>
+
+<p><table border="1" cellspacing="0" cellpadding="4">
+<tr><th>cmd</th><th>parameters</th><th>result</th></tr>
+<tr><td><tt>screendump</tt></td>
+    <td><tt>file</tt> (default: a new file in the emulator's current
+	directory, named after the date and time), <tt>screen</tt> (a
+	framebuffer window, default 0)</td>
+    <td><tt>file</tt> (its absolute path), <tt>screen</tt>,
+	<tt>name</tt> (the window's title), <tt>width</tt>,
+	<tt>height</tt></td></tr>
+</table>
+
+<p><tt>screendump</tt> saves what a framebuffer window shows, including
+the emulated cursor, as a PNG file, also while the machine runs. The
+machine needs its display on (<tt>-X</tt>, or <tt>"enabled": true</tt>
+under <tt>"display"</tt>). To run it without windows, e.g. on a server,
+use SDL's dummy video driver; the framebuffer works as usual, and the
+keyboard is a console which <tt>console_write</tt> types into:
+
+<pre>
+$ <b>SDL_VIDEODRIVER=dummy gxemul --control unix:/tmp/gx.sock -X -e 3max -d ultrix.img &amp;</b>
+$ <b>gxemul --ctl unix:/tmp/gx.sock screendump /tmp/screen.png</b>
+{"id":1, "ok":true, "result":{"file":"/tmp/screen.png", "screen":0,
+ "name":"GXemul: 1024x864x8 PMAG-BA framebuffer", "width":1024, "height":864}, ...}
+</pre>
+
 <p><b>Any debugger command</b>
 
 <p><table border="1" cellspacing="0" cellpadding="4">
@@ -551,7 +579,9 @@ such as <tt>"reg"</tt>, <tt>"dump 0x80001000"</tt>, <tt>"tlbdump"</tt> or
   <li><tt>not_stopped</tt>: the command needs a stopped machine
   <li><tt>no_such_cpu</tt>, <tt>no_such_console</tt>,
 	<tt>no_such_breakpoint</tt>, <tt>no_such_symbol</tt>,
-	<tt>no_such_device</tt>, <tt>no_such_watch</tt>
+	<tt>no_such_device</tt>, <tt>no_such_watch</tt>,
+	<tt>no_such_screen</tt>
+  <li><tt>io_error</tt>: a file could not be written
   <li><tt>mem_fault</tt>: nothing could be read or written at the address
   <li><tt>capture_failed</tt>: the output of <tt>raw</tt> or the
 	disassembler could not be captured

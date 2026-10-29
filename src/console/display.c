@@ -33,6 +33,7 @@
  *  backend (display_sdl.c) to show.
  */
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +47,10 @@
 #include "machine.h"
 #include "misc.h"
 #include "display.h"
+
+#ifdef WITH_ZLIB
+#include <zlib.h>
+#endif
 
 
 #ifndef	WITH_DISPLAY
@@ -357,8 +362,9 @@ void display_key(struct machine *m, int key)
  *  display_screenshot() saves a screenshot of a framebuffer window, and
  *  display_video_start() and display_video_stop() record one into a video
  *  file, both at the size of the window's image, including the emulated
- *  cursor.  Screenshots are PNG files written by ffmpeg, or PPM files
- *  if ffmpeg isn't available.  Recordings are MP4 files written by
+ *  cursor.  Screenshots are PNG files, compressed with zlib if it is
+ *  available, and display_screendump() saves one of any of a machine's
+ *  windows, for the control socket.  Recordings are MP4 files written by
  *  ffmpeg at a constant frame rate, repeating the current image when
  *  nothing changes, so they play back in real time.
  */
@@ -455,59 +461,197 @@ static struct fb_window *capture_fbwin(struct machine *m)
 }
 
 
+/*  PNG files are big-endian, and their chunks end with a CRC-32:  */
+static void png_be32(unsigned char *p, uint32_t v)
+{
+	p[0] = v >> 24;  p[1] = v >> 16;  p[2] = v >> 8;  p[3] = v;
+}
+
+static uint32_t png_crc(uint32_t crc, const unsigned char *p, size_t len)
+{
+	static uint32_t table[256];
+
+	if (table[1] == 0)
+		for (uint32_t n = 0; n < 256; n++) {
+			uint32_t c = n;
+			for (int k = 0; k < 8; k++)
+				c = c & 1 ? 0xedb88320 ^ (c >> 1) : c >> 1;
+			table[n] = c;
+		}
+
+	crc = ~crc;
+	while (len-- > 0)
+		crc = table[(crc ^ *p++) & 0xff] ^ (crc >> 8);
+	return ~crc;
+}
+
+static bool png_chunk(FILE *f, const char *type, const unsigned char *data,
+	size_t len)
+{
+	unsigned char buf[4];
+	uint32_t crc = png_crc(0, (const unsigned char *) type, 4);
+
+	if (len > 0)
+		crc = png_crc(crc, data, len);
+	png_be32(buf, len);
+	if (fwrite(buf, 4, 1, f) != 1 || fwrite(type, 4, 1, f) != 1 ||
+	    (len > 0 && fwrite(data, len, 1, f) != 1))
+		return false;
+	png_be32(buf, crc);
+	return fwrite(buf, 4, 1, f) == 1;
+}
+
+
+/*
+ *  Returns data as a zlib stream, compressed with zlib if it is available,
+ *  or otherwise in stored (uncompressed) blocks.
+ */
+static unsigned char *png_deflate(const unsigned char *data, size_t len,
+	size_t *lenp)
+{
+	unsigned char *z;
+#ifdef WITH_ZLIB
+	uLongf zlen = compressBound(len);
+
+	if ((z = (unsigned char *) malloc(zlen)) == NULL)
+		return NULL;
+	if (compress2(z, &zlen, data, len, Z_BEST_COMPRESSION) != Z_OK) {
+		free(z);
+		return NULL;
+	}
+	*lenp = zlen;
+#else
+	size_t out = 0, offset = 0;
+	uint32_t a = 1, b = 0;
+
+	z = (unsigned char *) malloc(2 + len + 5 * (len / 65535 + 1) + 4);
+	if (z == NULL)
+		return NULL;
+	z[out++] = 0x78;
+	z[out++] = 0x01;
+	do {
+		size_t block = len - offset < 65535 ? len - offset : 65535;
+		z[out++] = offset + block == len;
+		z[out++] = block;
+		z[out++] = block >> 8;
+		z[out++] = ~block;
+		z[out++] = ~block >> 8;
+		memcpy(z + out, data + offset, block);
+		out += block;
+		offset += block;
+	} while (offset < len);
+	for (size_t i = 0; i < len; i++) {
+		a = (a + data[i]) % 65521;
+		b = (b + a) % 65521;
+	}
+	png_be32(z + out, (b << 16) | a);
+	*lenp = out + 4;
+#endif
+	return z;
+}
+
+
+/*  Writes a 24-bit RGB image as a PNG file.  Returns false, with errno set,
+    if it couldn't.  */
+static bool write_png(const char *name, const unsigned char *rgb, int w, int h)
+{
+	static const unsigned char signature[8] =
+	    { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' };
+	size_t row = (size_t) w * 3, rawlen = (1 + row) * h, zlen;
+	unsigned char ihdr[13], *raw, *z;
+
+	/*  Each row is a filter type byte (0, none), then its pixels:  */
+	if ((raw = (unsigned char *) malloc(rawlen)) == NULL)
+		return false;
+	for (int y = 0; y < h; y++) {
+		raw[y * (1 + row)] = 0;
+		memcpy(raw + y * (1 + row) + 1, rgb + y * row, row);
+	}
+	z = png_deflate(raw, rawlen, &zlen);
+	free(raw);
+	if (z == NULL) {
+		errno = ENOMEM;
+		return false;
+	}
+
+	png_be32(ihdr, w);
+	png_be32(ihdr + 4, h);
+	ihdr[8] = 8;		/*  bits per sample  */
+	ihdr[9] = 2;		/*  RGB  */
+	ihdr[10] = ihdr[11] = ihdr[12] = 0;
+
+	FILE *f = fopen(name, "wb");
+	bool ok = f != NULL && fwrite(signature, 8, 1, f) == 1 &&
+	    png_chunk(f, "IHDR", ihdr, sizeof(ihdr)) &&
+	    png_chunk(f, "IDAT", z, zlen) && png_chunk(f, "IEND", NULL, 0);
+	int saved_errno = errno;
+	if (f != NULL && fclose(f) != 0 && ok) {
+		ok = false;
+		saved_errno = errno;
+	}
+	free(z);
+	if (!ok) {
+		if (f != NULL)
+			remove(name);
+		errno = saved_errno != 0 ? saved_errno : EIO;
+	}
+	return ok;
+}
+
+
+/*
+ *  display_screendump():
+ *
+ *  Saves what framebuffer window n of a machine shows as a PNG file,
+ *  file, or if file is NULL, a new file in the current directory.  Sets
+ *  *namep to the file's name (to be freed), and *wp and *hp to the
+ *  image's size.  Returns 0, ENODEV if there is no such window, or an
+ *  errno value for why the file couldn't be written.
+ */
+int display_screendump(struct machine *m, int n, const char *file,
+	char **namep, int *wp, int *hp)
+{
+	struct fb_window *fbwin;
+	unsigned char *rgb;
+
+	*namep = NULL;
+	if (m == NULL || n < 0 || n >= m->display_md.n_fb_windows)
+		return ENODEV;
+	fbwin = m->display_md.fb_windows[n];
+	if ((rgb = capture_rgb(fbwin, wp, hp)) == NULL)
+		return fbwin->xsize <= 0 ? ENODEV : ENOMEM;
+
+	CHECK_ALLOCATION(*namep = file != NULL ? strdup(file) :
+	    capture_name("png"));
+	int rc = write_png(*namep, rgb, *wp, *hp) ? 0 : errno;
+	free(rgb);
+	return rc;
+}
+
+
 /*
  *  display_screenshot():
  *
- *  Saves a screenshot of a machine's framebuffer window.
+ *  Saves a screenshot of a machine's first framebuffer window.
  */
 int display_screenshot(struct machine *m, const char *file)
 {
-	struct fb_window *fbwin = capture_fbwin(m);
-	unsigned char *rgb;
-	int w, h, ok;
+	char *name;
+	int w, h;
 
-	if (fbwin == NULL || (rgb = capture_rgb(fbwin, &w, &h)) == NULL)
-		return -1;
-
-	bool ffmpeg = have_ffmpeg();
-	char *name = file != NULL ? strdup(file) :
-	    capture_name(ffmpeg ? "png" : "ppm");
-	if (strchr(name, QUOTE[0]) != NULL) {
-		printf("file names with quotes are not supported\n");
-		free(rgb);
-		free(name);
-		return -1;
-	}
-
-	if (ffmpeg) {
-		char cmd[1024];
-		snprintf(cmd, sizeof(cmd), "ffmpeg -loglevel error -y"
-		    " -f rawvideo -pixel_format rgb24 -video_size %dx%d -i -"
-		    " -frames:v 1 -update 1 " QUOTE "%s" QUOTE, w, h, name);
-		ignore_sigpipe();
-		FILE *f = popen(cmd, PIPE_WRITE);
-		ok = f != NULL &&
-		    fwrite(rgb, (size_t) w * 3, h, f) == (size_t) h;
-		if (f != NULL && pclose(f) != 0)
-			ok = 0;
-	} else {
-		FILE *f = fopen(name, "wb");
-		ok = f != NULL && fprintf(f, "P6\n%d %d\n255\n", w, h) > 0 &&
-		    fwrite(rgb, (size_t) w * 3, h, f) == (size_t) h;
-		if (f != NULL && fclose(f) != 0)
-			ok = 0;
-	}
-
-	if (ok) {
+	int rc = display_screendump(m, 0, file, &name, &w, &h);
+	if (rc == ENODEV)
+		printf("this machine has no framebuffer window\n");
+	else if (rc == 0) {
 		printf("saved screenshot %s\n", name);
 		display_message(m, "Saved screenshot %s", name);
 	} else {
-		printf("couldn't save screenshot %s\n", name);
+		printf("couldn't save screenshot %s: %s\n", name,
+		    strerror(rc));
 		display_message(m, "Could not save screenshot %s", name);
 	}
-	free(rgb);
 	free(name);
-	return ok ? 0 : -1;
+	return rc == 0 ? 0 : -1;
 }
 
 
