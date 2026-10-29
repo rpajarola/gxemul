@@ -666,7 +666,12 @@ printf "#include <zlib.h>
 int main(int argc, char *argv[]){return compressBound(argc) == 0;}\n" > _testz.c
 $CC $CFLAGS _testz.c -o _testz -lz 2> /dev/null
 if [ -x _testz$EXEEXT ]; then
-	OTHERLIBS="$OTHERLIBS -lz"
+	#  On Windows, statically, so the zip needs no zlib1.dll:
+	if [ z$WINDOWS = zYES ]; then
+		OTHERLIBS="$OTHERLIBS -Wl,-Bstatic -lz -Wl,-Bdynamic"
+	else
+		OTHERLIBS="$OTHERLIBS -lz"
+	fi
 	printf "#define WITH_ZLIB\n" >> config.h
 	printf "yes\n"
 else
