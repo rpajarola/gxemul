@@ -5464,3 +5464,16 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.6  ==============
 
+20261028	A control socket for driving the emulator from programs (e.g.
+		an AI agent): --control unix:PATH or tcp:PORT, with JSON
+		requests and responses, one per line, and events when the
+		machine stops, exits, or writes to its console or log. It
+		runs, steps and stops the machine, reads and writes registers
+		and memory (also while running), disassembles, looks up
+		symbols, sets breakpoints and watches (exceptions, device
+		accesses), keeps a trace, and runs until a breakpoint or
+		console output. gxemul --ctl is a client for it. See
+		doc/control.html.
+
+==============  RELEASE 1.0.7  ==============
+
