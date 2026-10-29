@@ -5488,3 +5488,8 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.8  ==============
 
+20261029	The Windows build links zlib statically (it needed a
+		zlib1.dll that the zip didn't have).
+
+==============  RELEASE 1.0.9  ==============
+
