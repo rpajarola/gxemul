@@ -17,10 +17,12 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 root="$work/root"
 
-PREFIX=/usr/local GXEMUL_VERSION="$VERSION" ./configure
+# Room in the load commands for the bundled libraries' paths (through
+# LDFLAGS, which configure adds the libraries it finds to):
+LDFLAGS="-Wl,-headerpad_max_install_names" PREFIX=/usr/local \
+  GXEMUL_VERSION="$VERSION" ./configure
 make clean
-# Room in the load commands for the bundled libraries' paths:
-make -j"$(sysctl -n hw.ncpu)" OTHERLIBS="-Wl,-headerpad_max_install_names"
+make -j"$(sysctl -n hw.ncpu)"
 make install DESTDIR="$root"
 # (The desktop file and the icon theme's icons are for Linux; on macOS,
 # gxemul sets its icon in the Dock itself.)
