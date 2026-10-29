@@ -28,7 +28,15 @@ if git diff --quiet; then
   echo "update-tap.sh: $formula already at $tag"
   exit 0
 fi
-git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-  commit -qam "$formula ${tag#v}"
-git push -q
+git config user.name "github-actions[bot]"
+git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+git commit -qam "$formula ${tag#v}"
+# Another release's workflow may have pushed to the tap meanwhile (e.g.
+# gxemul's and tme's at the same time): rebase onto it and try again.
+for try in 1 2 3 4 5; do
+  git push -q && break
+  [ "$try" = 5 ] && exit 1
+  sleep $((try * 3))
+  git pull -q --rebase
+done
 echo "update-tap.sh: $formula -> $tag ($sha)"
