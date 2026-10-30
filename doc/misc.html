@@ -52,6 +52,7 @@ SUCH DAMAGE.
   <li><a href="#disk">How to start the emulator with a disk image</a>
   <li><a href="#tape_images">How to start the emulator with tape images</a>
   <li><a href="#media">Changing CD-ROMs and tapes</a>
+  <li><a href="#vnc">Showing the framebuffer with VNC</a>
   <li><a href="#disk_overlays">How to use disk image overlays</a>
   <li><a href="#filexfer">Transfering files to/from the guest OS</a>
   <li><a href="#largeimages">How to extract large gzipped disk images</a>
@@ -340,6 +341,70 @@ prevented that. A new image is opened like the first one (read-only with
 the <tt>r</tt> prefix, or with a new temporary overlay with the
 <tt>R</tt> prefix); other overlays belong to the image, and are closed
 when it is ejected.
+
+
+
+
+
+
+<p><br>
+<a name="vnc"></a>
+<h3>Showing the framebuffer with VNC:</h3>
+
+<p>With <tt>--vnc</tt>, the emulator shows its framebuffer to VNC clients
+(TigerVNC, Remmina, RealVNC, ...) instead of in a window, e.g. to run it
+on a server, or to show it on another computer:
+
+<pre>
+$ <b>gxemul --vnc tcp:5901 -X -e 3max -d ultrix.img</b>
+gxemul: VNC server: tcp:5901
+...
+$ <b>vncviewer localhost:5901</b>
+</pre>
+
+<p>The machine needs its display on (<tt>-X</tt>, or <tt>"enabled":
+true</tt> under <tt>"display"</tt> in its configuration file), and VNC
+shows its first framebuffer window. <tt>--vnc tcp:port</tt> listens only
+on this computer (localhost); to connect from another computer, use an
+SSH tunnel:
+
+<pre>
+$ <b>ssh -L 5901:localhost:5901 server</b>
+</pre>
+
+<p>and connect the VNC client to <tt>localhost:5901</tt>.
+<tt>--vnc tcp:host:port</tt> listens on another address instead (e.g.
+<tt>tcp:0.0.0.0:5901</tt> for all IPv4 addresses, or
+<tt>tcp:[::]:5901</tt> for all IPv4 and IPv6 addresses), for anyone who
+can reach it.
+<tt>--vnc unix:path</tt> listens on a Unix socket, which some clients
+(and SSH, with <tt>-L 5901:/path/to/socket</tt>) can connect to.
+
+<p>Clients need a password if the environment variable
+<tt>GXEMUL_VNC_PASSWORD</tt> is set (macOS's Screen Sharing insists on
+one):
+
+<pre>
+$ <b>GXEMUL_VNC_PASSWORD=sesame gxemul --vnc tcp:0.0.0.0:5901 machine.json</b>
+</pre>
+
+<p>This is VNC's own password scheme, which most clients know: only the
+first 8 characters count, and while the password itself isn't sent, the
+session isn't encrypted, so over the Internet an SSH tunnel is still the
+safer way. After a wrong password, the next client waits a second.
+
+<p>Keys typed in a VNC client go to the machine's console, as in a
+window, and the mouse moves the emulated mouse by as much as the client's
+pointer moves (so the two pointers can drift apart, as when a window
+hasn't grabbed the mouse). Several clients can watch at once. The window
+menus aren't shown in VNC; the debugger's commands, and the
+<a href="control.html">control socket</a>, do the same things.
+
+<p>Updates use the ZRLE encoding (which makes text screens tiny) or Zlib,
+whichever the client prefers, when GXemul was built with zlib, and
+otherwise Raw; the size and title follow the emulated framebuffer's. With
+<tt>GXEMUL_VNC_DEBUG=1</tt>, the emulator prints what it and the clients
+send each other.
 
 
 

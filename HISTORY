@@ -5498,3 +5498,8 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.10  ==============
 
+20261030	--vnc tcp:port (or tcp:host:port, or unix:path) shows the
+		framebuffer to VNC clients instead of in a window: RFB 3.3 to
+		3.8, Raw, Zlib and ZRLE updates, keyboard and mouse input, and a
+		password (VNC Authentication) from GXEMUL_VNC_PASSWORD.
+

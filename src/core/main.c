@@ -39,6 +39,7 @@
 #include "config_ui.h"
 #include "console.h"
 #include "control.h"
+#include "vnc.h"
 #include "cpu.h"
 #include "debugger.h"
 #include "device.h"
@@ -82,6 +83,7 @@ static bool want_ui = false;
 static char *edit_path = NULL;
 static bool edit_no_start = false;
 static char *control_spec = NULL;
+static char *vnc_spec = NULL;
 
 /*  Set by the Reset menu item: start the machine again when it stops.  */
 bool restart_machine = false;
@@ -253,6 +255,12 @@ static void usage(bool longusage)
 	       "            listen for requests from programs; send them with\n"
 	       "            %s --ctl unix:path|tcp:port command [argument]\n"
 	       "            (see doc/control.html)\n", progname);
+	printf("  --vnc tcp:port | tcp:host:port | unix:path\n"
+	       "            show the framebuffer to VNC clients instead of in "
+	       "a window\n"
+	       "            (on localhost only, unless a host is given; with a "
+	       "password\n"
+	       "            if GXEMUL_VNC_PASSWORD is set)\n");
 	printf("\n");
 	printf("If you are selecting a machine type to emulate directly "
 	    "on the command line,\nthen you must specify one or more names"
@@ -823,6 +831,23 @@ int main(int argc, char *argv[])
 			break;
 		}
 
+	/*  --vnc tcp:port, tcp:host:port or unix:path:  */
+	for (i = 1; i < argc; i++)
+		if (strcmp(argv[i], "--vnc") == 0) {
+			if (i + 1 >= argc) {
+				fprintf(stderr, "--vnc needs tcp:port, "
+				    "tcp:host:port or unix:path.\n");
+				return 1;
+			}
+			vnc_spec = argv[i + 1];
+			memmove(&argv[i], &argv[i + 2],
+			    sizeof(char *) * (argc - i - 1));
+			argc -= 2;
+			break;
+		}
+	if (vnc_spec != NULL)
+		vnc_init(vnc_spec);
+
 	/*  --export machine.json folder:  */
 	if (argc >= 2 && strcmp(argv[1], "--export") == 0)
 		return export_machine(argc, argv);
@@ -962,6 +987,16 @@ int main(int argc, char *argv[])
 
 	if (control_spec != NULL)
 		control_init(emul, control_spec);
+
+	if (vnc_spec != NULL) {
+		bool any_display = false;
+		for (i = 0; i < emul->n_machines; i++)
+			any_display |= emul->machines[i]->display_md.in_use;
+		if (!any_display)
+			fprintf(stderr, "gxemul: --vnc: no machine has a "
+			    "framebuffer; use -X, or turn the display on in "
+			    "the machine's settings\n");
+	}
 
 	/*  Run the emulation:  */
 	emul_run(emul);

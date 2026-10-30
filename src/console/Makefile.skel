@@ -8,7 +8,7 @@
 CFLAGS=$(CWARNINGS) $(COPTIM) $(DISPLAYINCLUDE) $(DINCLUDE)
 
 OBJS=config_ui.o console.o display.o display_files.o display_menu.o \
-	display_sdl.o microui.o $(WINRES_OBJS)
+	display_sdl.o microui.o vnc.o $(WINRES_OBJS)
 
 all: $(OBJS)
 

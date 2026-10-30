@@ -30,7 +30,9 @@
  *  Framebuffer devices draw 0x00RRGGBB pixels into fb_window->pixels, and
  *  tell display_update() which part changed.  That part is copied to
  *  fb_window->screen, with the emulated cursor on top, and handed to the
- *  backend (display_sdl.c) to show.
+ *  backend (display_sdl.c) to show, or to the VNC server (vnc.c) when
+ *  there is one, instead.  (Windows without a backend window have a NULL
+ *  fb_window->backend.)
  */
 
 #include <errno.h>
@@ -47,6 +49,7 @@
 #include "machine.h"
 #include "misc.h"
 #include "display.h"
+#include "vnc.h"
 
 #ifdef WITH_ZLIB
 #include <zlib.h>
@@ -114,7 +117,7 @@ struct fb_window *display_fb_init(int xsize, int ysize, const char *name,
 {
 	struct fb_window *win;
 
-	if (!display_backend_available())
+	if (!display_backend_available() && !vnc_active())
 		return NULL;
 
 	CHECK_ALLOCATION(win = (struct fb_window *) calloc(1, sizeof(*win)));
@@ -130,7 +133,7 @@ struct fb_window *display_fb_init(int xsize, int ysize, const char *name,
 		for (int x=0; x<CURSOR_MAXX; x++)
 			win->cursor_pixels[y][x] = N_GRAYCOLORS-1;
 
-	if (!display_backend_open(win)) {
+	if (!vnc_active() && !display_backend_open(win)) {
 		debugmsg(SUBSYS_DISPLAY, "fb_init", VERBOSITY_ERROR,
 		    "couldn't open a window for '%s'", name);
 		exit(1);
@@ -161,7 +164,8 @@ void display_fb_resize(struct fb_window *win, int new_xsize, int new_ysize)
 	}
 
 	alloc_images(win, new_xsize, new_ysize);
-	display_backend_resize(win);
+	if (win->backend != NULL)
+		display_backend_resize(win);
 }
 
 
@@ -174,7 +178,8 @@ void display_set_name(struct fb_window *win, const char *name)
 {
 	free(win->name);
 	CHECK_ALLOCATION(win->name = strdup(name));
-	display_backend_set_title(win);
+	if (win->backend != NULL)
+		display_backend_set_title(win);
 }
 
 
@@ -256,7 +261,9 @@ void display_update(struct fb_window *win, int x1, int y1, int x2, int y2)
 	if (win->shown_cursor_on)
 		draw_cursor(win, x1, y1, x2 + 1, y2 + 1);
 
-	display_backend_update(win, x1, y1, x2 - x1 + 1, y2 - y1 + 1);
+	if (win->backend != NULL)
+		display_backend_update(win, x1, y1, x2 - x1 + 1, y2 - y1 + 1);
+	vnc_update(win, x1, y1, x2 - x1 + 1, y2 - y1 + 1);
 	win->need_flush = true;
 }
 
@@ -314,7 +321,8 @@ void display_flush(struct fb_window *win)
 	if (!win->need_flush)
 		return;
 
-	display_backend_flush(win);
+	if (win->backend != NULL)
+		display_backend_flush(win);
 	win->need_flush = false;
 }
 
@@ -819,6 +827,8 @@ void display_check_event(struct emul *emul)
 {
 	for (int i=0; i<emul->n_machines; i++)
 		display_backend_check_events(emul->machines[i]);
+
+	vnc_poll(emul);
 
 	/*  If a framebuffer is being recorded, send any frames that are due:  */
 	video_tick();

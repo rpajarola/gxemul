@@ -457,6 +457,17 @@ nor
 is used, then all output is confined to the terminal that
 .Nm
 started in.
+.It Fl -vnc Ar tcp:port | tcp:host:port | unix:path
+Show the framebuffer to VNC clients instead of in a window (the first
+framebuffer window, of a machine with its display on). With
+.Ar tcp:port ,
+only clients on this computer can connect; with a host (such as 0.0.0.0),
+anyone who can reach it can. Clients need a password (VNC's own, of at
+most 8 characters) if the environment variable
+.Ev GXEMUL_VNC_PASSWORD
+is set; the session isn't encrypted, so to connect over the Internet, an
+SSH tunnel is safer. Keys typed in a client go to the machine's console,
+and the mouse moves the emulated mouse.
 .El
 .Pp
 Configuration file startup:
