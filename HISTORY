@@ -5493,3 +5493,8 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.9  ==============
 
+20261029	The macOS package links zlib (packaging/build-pkg.sh replaced
+		the libraries configure had found).
+
+==============  RELEASE 1.0.10  ==============
+
