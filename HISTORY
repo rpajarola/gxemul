@@ -5503,3 +5503,5 @@ Changelog for GXemul:
 		3.8, Raw, Zlib and ZRLE updates, keyboard and mouse input, and a
 		password (VNC Authentication) from GXEMUL_VNC_PASSWORD.
 
+==============  RELEASE 1.0.11  ==============
+
