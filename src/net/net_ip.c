@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -744,12 +745,20 @@ static unsigned char *udp_reassemble(struct net *net,
 	int ofs = (((packet[20] & 0x1f) << 8) + packet[21]) * 8;
 	int more = packet[20] & 0x20;
 	int data_len = len - 34, i;
+	int64_t now = time(NULL);
 
 	if (data_len <= 0 || ofs + data_len > 65535 || (more && (data_len & 7)))
 		return NULL;
 
 	for (i = 0; i < N_UDP_REASSEMBLIES; i++) {
 		struct udp_reassembly *t = &net->udp_reassemblies[i];
+
+		/*  Lost fragments; a later datagram with the same IP ID must
+		    not complete this one:  */
+		if (t->in_use && (now < t->first_time ||
+		    now - t->first_time > UDP_REASSEMBLY_SECONDS))
+			t->in_use = 0;
+
 		if (t->in_use && t->ip_id == ip_id &&
 		    memcmp(t->src_ip_address, packet + 26, 4) == 0 &&
 		    memcmp(t->dst_ip_address, packet + 30, 4) == 0) {
@@ -769,6 +778,7 @@ static unsigned char *udp_reassemble(struct net *net,
 			CHECK_ALLOCATION(r->packet = (unsigned char *)
 			    malloc(34 + 65535));
 		r->in_use = 1;
+		r->first_time = now;
 		memcpy(r->src_ip_address, packet + 26, 4);
 		memcpy(r->dst_ip_address, packet + 30, 4);
 		r->ip_id = ip_id;

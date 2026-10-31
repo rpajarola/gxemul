@@ -81,11 +81,15 @@ struct udp_connection {
 };
 
 /*  A UDP datagram from the guest that came in IP fragments, being put
-    together again (as NFS sends 8 KB at a time):  */
+    together again (as NFS sends 8 KB at a time).  The guest sends the
+    fragments one after the other; what is missing after
+    UDP_REASSEMBLY_SECONDS was lost.  */
 #define	N_UDP_REASSEMBLIES	8
+#define	UDP_REASSEMBLY_SECONDS	15
 struct udp_reassembly {
 	int		in_use;
 	int64_t		last_used_timestamp;
+	int64_t		first_time;	/*  time() of the first fragment  */
 	unsigned char	src_ip_address[4];
 	unsigned char	dst_ip_address[4];
 	int		ip_id;
