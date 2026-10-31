@@ -254,7 +254,9 @@ static void usage(bool longusage)
 	printf("  --control unix:path | tcp:port\n"
 	       "            listen for requests from programs; send them with\n"
 	       "            %s --ctl unix:path|tcp:port command [argument]\n"
-	       "            (see doc/control.html)\n", progname);
+	       "            (see doc/control.html); for AI agents, %s --mcp\n"
+	       "            unix:path|tcp:port is an MCP server which uses it\n",
+	    progname, progname);
 	printf("  --vnc tcp:port | tcp:host:port | unix:path\n"
 	       "            show the framebuffer to VNC clients instead of in "
 	       "a window\n"
@@ -774,6 +776,10 @@ int main(int argc, char *argv[])
 	/*  gxemul --ctl ...: a control socket client, see control.c:  */
 	if (argc >= 2 && strcmp(argv[1], "--ctl") == 0)
 		return control_client_main(argc, argv);
+
+	/*  gxemul --mcp ...: an MCP server for AI agents, see mcp.c:  */
+	if (argc >= 2 && strcmp(argv[1], "--mcp") == 0)
+		return mcp_main(argc, argv);
 
 	console_init();
 	cpu_init();

@@ -5524,3 +5524,7 @@ Changelog for GXemul:
 		knows the two parts that read signature registers), the
 		ROM's console is on the HX, and Ultrix 4.5, its X server and
 		DECwindows run at 1280x1024. See doc/machine_decstation.html.
+20261030	gxemul --mcp unix:path|tcp:port is an MCP server for AI
+		agents such as Claude Code: the control socket's commands as
+		tools, which can wait for the machine to stop, and
+		screendump returns the screen as an image.

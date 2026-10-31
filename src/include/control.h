@@ -56,4 +56,14 @@ void control_note_stop(struct machine *m, const char *reason);
 void control_shutdown(void);
 int control_client_main(int argc, char *argv[]);
 
+/*  For clients (the --ctl client, and the MCP server in mcp.c):  */
+struct timeval;
+bool control_command(int i, const char **namep, const char **paramsp);
+int control_client_connect(const char *spec);
+char *control_client_readline(int s, char **bufp, size_t *lenp,
+	struct timeval *deadline, bool *timed_out);
+bool control_send_all(int fd, const char *buf, size_t len);
+
+int mcp_main(int argc, char *argv[]);
+
 #endif	/*  CONTROL_H  */

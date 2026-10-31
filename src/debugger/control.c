@@ -392,7 +392,7 @@ static void disconnect_client(void)
 }
 
 
-static bool send_all(int fd, const char *buf, size_t len)
+bool control_send_all(int fd, const char *buf, size_t len)
 {
 #ifdef MSG_NOSIGNAL
 	int flags = MSG_NOSIGNAL;
@@ -446,7 +446,7 @@ static void send_msg(cJSON *msg)
 		s[len] = '\n';
 		s[len + 1] = '\0';
 
-		if (!send_all(client_fd, s, len + 1))
+		if (!control_send_all(client_fd, s, len + 1))
 			disconnect_client();
 
 		free(s);
@@ -2453,6 +2453,22 @@ static const struct {
 
 
 /*
+ *  control_command():
+ *
+ *  The i'th command's name and parameters (space-separated), for the MCP
+ *  server; false after the last one.
+ */
+bool control_command(int i, const char **namep, const char **paramsp)
+{
+	if (i < 0 || i >= (int) (sizeof(ctl_cmds) / sizeof(ctl_cmds[0])) - 1)
+		return false;
+	*namep = ctl_cmds[i].name;
+	*paramsp = ctl_cmds[i].params;
+	return true;
+}
+
+
+/*
  *  unknown_param():
  *
  *  Returns the first parameter of a request which isn't id, cmd, or one
@@ -2579,7 +2595,7 @@ static void accept_clients(void)
 			const char *busy = "{\"ok\":false,\"error\":{\"code\":"
 			    "\"busy\",\"message\":\"another client is "
 			    "connected\"}}\n";
-			send_all(s, busy, strlen(busy));
+			control_send_all(s, busy, strlen(busy));
 			socket_close(s);
 			continue;
 		}
@@ -2832,7 +2848,7 @@ static int client_usage(void)
 }
 
 
-static int client_connect(const char *spec)
+int control_client_connect(const char *spec)
 {
 	int s;
 
@@ -2877,12 +2893,12 @@ static int client_connect(const char *spec)
 
 
 /*
- *  client_readline():
+ *  control_client_readline():
  *
  *  Reads one line from s into a malloced string. Returns NULL on EOF or
  *  error, and sets *timed_out if the deadline (if any) passed first.
  */
-static char *client_readline(int s, char **bufp, size_t *lenp,
+char *control_client_readline(int s, char **bufp, size_t *lenp,
 	struct timeval *deadline, bool *timed_out)
 {
 	char tmp[4096];
@@ -3044,7 +3060,7 @@ int control_client_main(int argc, char *argv[])
 	if (cJSON_GetObjectItemCaseSensitive(req, "id") == NULL)
 		cJSON_AddNumberToObject(req, "id", 1);
 
-	s = client_connect(spec);
+	s = control_client_connect(spec);
 	if (s < 0) {
 		fprintf(stderr, "gxemul --ctl: can't connect to %s\n", spec);
 		cJSON_Delete(req);
@@ -3056,7 +3072,7 @@ int control_client_main(int argc, char *argv[])
 	size_t reqlen = strlen(reqstr);
 	CHECK_ALLOCATION(reqstr = (char *) realloc(reqstr, reqlen + 2));
 	strlcpy(reqstr + reqlen, "\n", 2);
-	if (!send_all(s, reqstr, reqlen + 1)) {
+	if (!control_send_all(s, reqstr, reqlen + 1)) {
 		fprintf(stderr, "gxemul --ctl: can't send to %s\n", spec);
 		socket_close(s);
 		return 2;
@@ -3066,7 +3082,7 @@ int control_client_main(int argc, char *argv[])
 	/*  The response (events before it are skipped):  */
 	ret = 2;
 	bool got_response = false, wait_for_stop = false;
-	while ((line = client_readline(s, &buf, &buflen,
+	while ((line = control_client_readline(s, &buf, &buflen,
 	    have_deadline? &deadline : NULL, &timed_out)) != NULL) {
 		cJSON *msg = cJSON_Parse(line);
 		cJSON *ok = cJSON_GetObjectItemCaseSensitive(msg, "ok");
@@ -3097,7 +3113,7 @@ int control_client_main(int argc, char *argv[])
 	/*  ... and with --wait, the stop:  */
 	if (got_response && wait_for_stop) {
 		ret = 2;
-		while ((line = client_readline(s, &buf, &buflen,
+		while ((line = control_client_readline(s, &buf, &buflen,
 		    have_deadline? &deadline : NULL, &timed_out)) != NULL) {
 			cJSON *msg = cJSON_Parse(line);
 			cJSON *ev = cJSON_GetObjectItemCaseSensitive(msg,

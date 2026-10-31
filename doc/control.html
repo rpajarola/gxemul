@@ -47,6 +47,7 @@ SUCH DAMAGE.
 <ul>
 	<li><a href="#intro">Introduction</a>
 	<li><a href="#cli">The command line client</a>
+	<li><a href="#mcp">MCP, for AI agents</a>
 	<li><a href="#transport">Transport and framing</a>
 	<li><a href="#messages">Requests, responses and events</a>
 	<li><a href="#state">Running and stopped</a>
@@ -143,6 +144,56 @@ $ <b>gxemul --ctl unix:/tmp/gx.sock raw "unassemble pc-16 pc+16"</b>
 between two of them are not seen by anyone. <tt>status</tt> tells how the
 machine last stopped, and console output is kept by the emulator until it
 is read, so nothing important is lost.
+
+
+
+<p><br>
+<a name="mcp"></a>
+<h4>MCP, for AI agents</h4>
+
+<p><tt>gxemul --mcp <i>socket</i></tt> is an
+<a href="https://modelcontextprotocol.io/">MCP</a> server: it lets an AI
+agent such as Claude Code use the control socket as tools, without a shell
+command for each step. It talks MCP on its standard input and output, and
+uses the control socket of a gxemul started with <tt>--control
+<i>socket</i></tt>:
+
+<pre>
+$ <b>gxemul --control unix:/tmp/gx.sock -e 3max -d ultrix.img &amp;</b>
+$ <b>claude mcp add gxemul -- gxemul --mcp unix:/tmp/gx.sock</b>
+</pre>
+
+<p>Each tool call is a connection of its own, so the emulator can be
+started (or restarted) before or after the agent, and <tt>gxemul --ctl</tt>
+works too, between the calls. The tools are the <a href="#commands">commands</a>
+below, with the same parameters, except:
+
+<ul>
+  <li><tt>status</tt> also has what <tt>hello</tt> returns: the version,
+	the machines with their CPUs, and the consoles.
+  <li><tt>pause</tt>, <tt>step</tt> and <tt>run_until</tt> wait for the
+	machine to stop, and return the <tt>stopped</tt> event as
+	<tt>stopped</tt>, with the instruction at the pc as <tt>at</tt>; so
+	does <tt>continue</tt>, if given <tt>wait</tt>. <tt>wait</tt> is
+	how many seconds to wait (by default 10 for <tt>pause</tt>, 30 for
+	<tt>step</tt>, 60 for <tt>run_until</tt>, or longer than its
+	<tt>timeout_ms</tt>, and 0 for <tt>continue</tt>). If the machine
+	is still running then, the result has <tt>"running": true</tt>; the
+	machine keeps running.
+  <li>The <tt>wait</tt> tool waits (up to <tt>wait</tt> seconds,
+	default 60) for the running machine to stop.
+  <li><tt>screendump</tt> returns the screen as an image. With
+	<tt>file</tt>, it is also kept as that file.
+  <li><tt>console_write</tt> also takes <tt>enter</tt>: true presses
+	Return (a carriage return) after the <tt>data</tt>. Text is typed
+	as it is, so <tt>\r</tt> written as a backslash and an <tt>r</tt>
+	types those two characters.
+  <li>There is no <tt>subscribe</tt>, since there is no connection to
+	send events to between calls.
+</ul>
+
+<p>Every result has <tt>ninstrs</tt>. A failed request is a tool error,
+with the error's code and message.
 
 
 

@@ -4,7 +4,7 @@
 
 CFLAGS=$(CWARNINGS) $(COPTIM) $(DISPLAYINCLUDE) $(DINCLUDE)
 
-OBJS=control.o debugger.o debugger_expr.o
+OBJS=control.o debugger.o debugger_expr.o mcp.o
 
 all: $(OBJS)
 
