@@ -44,26 +44,105 @@
 // #define debug fatal
 
 
+/*  LK201 key codes which aren't in thirdparty/lk201.h:  */
+#define	LK_KEY_FIND		0x8a
+#define	LK_KEY_INSERT		0x8b
+#define	LK_KEY_REMOVE		0x8c
+#define	LK_KEY_SELECT		0x8d
+#define	LK_KEY_PREV		0x8e
+#define	LK_KEY_NEXT		0x8f
+#define	LK_KEY_LEFT		0xa7
+#define	LK_KEY_RIGHT		0xa8
+#define	LK_KEY_DOWN		0xa9
+#define	LK_KEY_UP		0xaa
+
+/*  The keyboard sends at 4800 bps: about 2 ms per byte, or 4 ticks of the
+    serial controllers (every 16384 cycles, at about 33 MHz):  */
+#define	LK201_TICKS_PER_BYTE	4
+
+/*  The farthest one mouse update moves:  */
+#define	LK201_MOUSE_MAX		50
+
+
+/*
+ *  lk201_escape_key():
+ *
+ *  The key of a terminal's escape sequence (what display_key() sends for
+ *  function and editing keys, and an xterm's), given what follows the
+ *  escape: "[A" for Up, "OP" for F1, "[15~" for F5, "[1;5A" for Ctrl+Up
+ *  (as Up), ...  Returns -1 if the sequence isn't complete yet, and 0 if
+ *  it isn't a key's.
+ */
+static int lk201_escape_key(const unsigned char *seq, int len)
+{
+	/*  The keys of a VT220's "[n~" sequences: F1 to F20 (F15 is Help,
+	    F16 is Do) and the editing keys:  */
+	static const struct { int n, key; } tilde[] = {
+		{ 1, LK_KEY_FIND }, { 2, LK_KEY_INSERT }, { 3, LK_KEY_REMOVE },
+		{ 4, LK_KEY_SELECT }, { 5, LK_KEY_PREV }, { 6, LK_KEY_NEXT },
+		{ 11, 0x56 }, { 12, 0x57 }, { 13, 0x58 }, { 14, 0x59 },
+		{ 15, 0x5a }, { 17, 0x64 }, { 18, 0x65 }, { 19, 0x66 },
+		{ 20, 0x67 }, { 21, 0x68 }, { 23, 0x71 }, { 24, 0x72 },
+		{ 25, 0x73 }, { 26, 0x74 }, { 28, 0x7c }, { 29, 0x7d },
+		{ 31, 0x80 }, { 32, 0x81 }, { 33, 0x82 }, { 34, 0x83 },
+		{ 0, 0 } };
+	int final = seq[len - 1], n = 0, i;
+
+	if (len < 2)
+		return -1;
+
+	if (seq[0] == 'O') {
+		/*  F1 to F4:  */
+		if (seq[1] >= 'P' && seq[1] <= 'S')
+			return 0x56 + seq[1] - 'P';
+		return 0;
+	}
+	if (seq[0] != '[')
+		return 0;
+
+	/*  The sequence ends with a byte that isn't a digit or ';':  */
+	if ((final >= '0' && final <= '9') || final == ';')
+		return -1;
+
+	switch (final) {
+	case 'A':	return LK_KEY_UP;
+	case 'B':	return LK_KEY_DOWN;
+	case 'C':	return LK_KEY_RIGHT;
+	case 'D':	return LK_KEY_LEFT;
+	case 'H':	return LK_KEY_FIND;		/*  Home  */
+	case 'F':	return LK_KEY_SELECT;		/*  End  */
+	case '~':
+		for (i = 1; i < len - 1 && seq[i] != ';'; i++)
+			n = n * 10 + seq[i] - '0';
+		for (i = 0; tilde[i].n != 0; i++)
+			if (tilde[i].n == n)
+				return tilde[i].key;
+	}
+	return 0;
+}
+
+
 /*
  *  lk201_send_key():
  *
- *  Adds a press and release of an LK201 key to the rx queue, with Shift
- *  and/or Ctrl held down.
+ *  Sends a key's press and release (with Shift or Control held), and
+ *  returns how many bytes that is.
  */
-static void lk201_send_key(struct lk201_data *d, int key, int shifted,
-	int controlled)
+static int lk201_send_key(struct lk201_data *d, int key, bool shifted,
+	bool controlled)
 {
-	d->add_to_rx_queue(d->add_data, KEY_UP, DCKBD_PORT);
+	int n = 0;
+
+	d->add_to_rx_queue(d->add_data, KEY_UP, DCKBD_PORT), n++;
 	if (shifted)
-		d->add_to_rx_queue(d->add_data, KEY_SHIFT, DCKBD_PORT);
+		d->add_to_rx_queue(d->add_data, KEY_SHIFT, DCKBD_PORT), n++;
 	if (controlled)
-		d->add_to_rx_queue(d->add_data, KEY_CONTROL, DCKBD_PORT);
+		d->add_to_rx_queue(d->add_data, KEY_CONTROL, DCKBD_PORT), n++;
 
-	/*  Send the actual scan code:  */
-	d->add_to_rx_queue(d->add_data, key, DCKBD_PORT);
-
-	/*  Release the key:  */
-	d->add_to_rx_queue(d->add_data, KEY_UP, DCKBD_PORT);
+	/*  The key, and its release:  */
+	d->add_to_rx_queue(d->add_data, key, DCKBD_PORT), n++;
+	d->add_to_rx_queue(d->add_data, KEY_UP, DCKBD_PORT), n++;
+	return n;
 }
 
 
@@ -105,65 +184,14 @@ static int lk201_ascii_key(int ch, int *shifted)
  *  lk201_send_escape():
  *
  *  The LK201 has no Esc key: Ctrl+[ types ESC, in X as on the console.
+ *  Returns how many bytes were added.
  */
-static void lk201_send_escape(struct lk201_data *d)
+static int lk201_send_escape(struct lk201_data *d)
 {
 	int shifted;
+	int key = lk201_ascii_key('[', &shifted);
 
-	lk201_send_key(d, lk201_ascii_key('[', &shifted), shifted, 1);
-}
-
-
-/*
- *  lk201_escape_sequence_key():
- *
- *  Returns the LK201 key for the escape sequence that a key of an xterm
- *  sends (seq is all of it, len bytes), or -1 for other sequences:
- *
- *	ESC [ A..D		the cursor keys
- *	ESC O P..S		F1..F4
- *	ESC [ n ~		a VT220's keys: n = 1..6 are Find, Insert
- *				Here, Remove, Select, Prev Screen and Next
- *				Screen, 15 is F5, and 17..34 are F6..F20
- *	ESC [ H, ESC [ F	Home and End, as Find and Select
- *
- *  (Page Up and Page Down send ESC [ 5 ~ and ESC [ 6 ~, so they are Prev
- *  Screen and Next Screen.)
- */
-static int lk201_escape_sequence_key(const unsigned char *seq, int len)
-{
-	static const struct {
-		int	n;
-		int	key;
-	} tilde_keys[] = {
-		{ 1, 0x8a }, { 2, 0x8b }, { 3, 0x8c }, { 4, 0x8d },
-		{ 5, 0x8e }, { 6, 0x8f }, { 15, 0x5a }, { 17, 0x64 },
-		{ 18, 0x65 }, { 19, 0x66 }, { 20, 0x67 }, { 21, 0x68 },
-		{ 23, 0x71 }, { 24, 0x72 }, { 25, 0x73 }, { 26, 0x74 },
-		{ 28, 0x7c }, { 29, 0x7d }, { 31, 0x80 }, { 32, 0x81 },
-		{ 33, 0x82 }, { 34, 0x83 } };
-	int final = seq[len - 1], n = 0, i;
-
-	if (seq[1] == 'O' && len == 3 && final >= 'P' && final <= 'S')
-		return 0x56 + final - 'P';
-
-	switch (final) {
-	case 'A':  return 0xaa;		/*  Up     */
-	case 'B':  return 0xa9;		/*  Down   */
-	case 'C':  return 0xa8;		/*  Right  */
-	case 'D':  return 0xa7;		/*  Left   */
-	case 'H':  return 0x8a;		/*  Home = Find  */
-	case 'F':  return 0x8d;		/*  End = Select  */
-	case '~':
-		for (i = 2; i < len - 1 && seq[i] != ';'; i++)
-			n = n * 10 + seq[i] - '0';
-		for (i = 0; i < (int)(sizeof(tilde_keys) /
-		    sizeof(tilde_keys[0])); i++)
-			if (tilde_keys[i].n == n)
-				return tilde_keys[i].key;
-	}
-
-	return -1;
+	return lk201_send_key(d, key, shifted, true);
 }
 
 
@@ -171,33 +199,33 @@ static int lk201_escape_sequence_key(const unsigned char *seq, int len)
  *  lk201_convert_ascii_to_keybcode():
  *
  *  Converts ascii console input to LK201 keyboard scan codes, and adds
- *  those scancodes using the add_to_rx_queue() function.  The escape
- *  sequences of an xterm's keys become those keys, and an ESC that doesn't
- *  start one is typed as Ctrl+[ (by lk201_tick(), if nothing follows it).
+ *  those scancodes using the add_to_rx_queue() function. Escape sequences
+ *  for function and editing keys become those keys, other sequences type
+ *  nothing, and an ESC that doesn't start one is typed as Ctrl+[ (by
+ *  lk201_tick(), if nothing follows it). Returns how many bytes were
+ *  added.
  */
-void lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
+int lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 {
 	int key, shifted = 0, controlled = 0;
 
 	if (d->keyb_buf_pos == 1 && ch != '[' && ch != 'O') {
 		/*  The ESC before ch doesn't start an escape sequence:  */
 		d->keyb_buf_pos = 0;
-		lk201_send_escape(d);
+		int n = lk201_send_escape(d);
+		return n + lk201_convert_ascii_to_keybcode(d, ch);
 	}
 
 	if (d->keyb_buf_pos > 0) {
-		/*  Inside an escape sequence, which ends with a byte that
-		    isn't a digit or ';':  */
+		/*  Escape sequence:  */
 		d->keyb_buf[d->keyb_buf_pos++] = ch;
-		if (d->keyb_buf_pos == 2 || (((ch >= '0' && ch <= '9') ||
-		    ch == ';') && d->keyb_buf_pos < (int)sizeof(d->keyb_buf)))
-			return;
 
-		key = lk201_escape_sequence_key(d->keyb_buf, d->keyb_buf_pos);
+		key = lk201_escape_key(d->keyb_buf + 1, d->keyb_buf_pos - 1);
+		if (key < 0 && d->keyb_buf_pos < (int)sizeof(d->keyb_buf))
+			return 0;
+
 		d->keyb_buf_pos = 0;
-		if (key >= 0)
-			lk201_send_key(d, key, 0, 0);
-		return;
+		return key > 0? lk201_send_key(d, key, false, false) : 0;
 	}
 
 	switch (ch) {
@@ -214,7 +242,7 @@ void lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 	case 27:	/*  esc  */
 		d->keyb_buf[0] = 27;
 		d->keyb_buf_pos = 1;
-		return;
+		return 0;
 	default:
 		/*  Other control characters are Ctrl and a key, e.g. Ctrl-A
 		    is Ctrl+a, and Ctrl-] is Ctrl+]:  */
@@ -225,8 +253,11 @@ void lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 		key = lk201_ascii_key(ch, &shifted);
 	}
 
-	if (key >= 0)
-		lk201_send_key(d, key, shifted, controlled);
+	/*  A character that no key types:  */
+	if (key < 0)
+		return 0;
+
+	return lk201_send_key(d, key, shifted, controlled);
 }
 
 
@@ -242,7 +273,7 @@ static int lk201_send_mouse_update_sequence(struct lk201_data *d, int xdelta,
 	if (xdelta == 0 && ydelta == 0 && d->mouse_buttons == mouse_buttons)
 		return 0;
 
-	m = 50;
+	m = LK201_MOUSE_MAX;
 
 	if (xdelta > m)
 		xdelta = m;
@@ -331,11 +362,17 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 	if (d->use_fb)
 		port = DCKBD_PORT;
 
+	/*  Keys are sent one at a time, as fast as the keyboard's serial
+	    line would send them; serial console input as fast as it fits:  */
+	if (d->use_fb && d->keyb_delay > 0)
+		d->keyb_delay --;
 	while (d->space_available_in_queue(d->add_data, port) &&
-	    console_charavail(d->console_handle)) {
+	    console_charavail(d->console_handle) &&
+	    (!d->use_fb || d->keyb_delay == 0)) {
 		unsigned char ch = console_readchar(d->console_handle);
 		if (d->use_fb)
-			lk201_convert_ascii_to_keybcode(d, ch);
+			d->keyb_delay = LK201_TICKS_PER_BYTE *
+			    lk201_convert_ascii_to_keybcode(d, ch);
 		else
 			d->add_to_rx_queue(d->add_data, ch, port);
 	}
@@ -345,11 +382,12 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 	 *  nothing follows is a key of its own (Esc, or Ctrl+[), and a
 	 *  sequence that ends early is dropped:
 	 */
-	if (d->use_fb && d->keyb_buf_pos > 0 &&
+	if (d->use_fb && d->keyb_buf_pos > 0 && d->keyb_delay == 0 &&
 	    !console_charavail(d->console_handle) &&
 	    d->space_available_in_queue(d->add_data, port)) {
 		if (d->keyb_buf_pos == 1)
-			lk201_send_escape(d);
+			d->keyb_delay = LK201_TICKS_PER_BYTE *
+			    lk201_send_escape(d);
 		d->keyb_buf_pos = 0;
 	}
 
@@ -357,10 +395,26 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 	if (!d->use_fb)
 		return;
 
+	/*  The mouse also sends at 4800 bps, 3 bytes per update:  */
+	if (d->mouse_delay > 0) {
+		d->mouse_delay --;
+		return;
+	}
+
 	int dx, dy, mouse_buttons, mouse_fb_nr;
 	console_getmouse(&dx, &dy, &mouse_buttons, &mouse_fb_nr);
 
-	lk201_send_mouse_update_sequence(d, dx, dy, mouse_buttons, mouse_fb_nr);
+	/*  An update moves at most this far; the rest comes next:  */
+	int cx = dx < -LK201_MOUSE_MAX? -LK201_MOUSE_MAX :
+	    dx > LK201_MOUSE_MAX? LK201_MOUSE_MAX : dx;
+	int cy = dy < -LK201_MOUSE_MAX? -LK201_MOUSE_MAX :
+	    dy > LK201_MOUSE_MAX? LK201_MOUSE_MAX : dy;
+	if (cx != dx || cy != dy)
+		console_mouse_coordinate_update(dx - cx, dy - cy, mouse_fb_nr);
+
+	if (lk201_send_mouse_update_sequence(d, cx, cy, mouse_buttons,
+	    mouse_fb_nr))
+		d->mouse_delay = 3 * LK201_TICKS_PER_BYTE;
 }
 
 

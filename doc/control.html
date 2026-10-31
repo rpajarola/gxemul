@@ -182,10 +182,12 @@ below, with the same parameters, except:
 	machine keeps running.
   <li>The <tt>wait</tt> tool waits (up to <tt>wait</tt> seconds,
 	default 60) for the running machine to stop.
+  <li><tt>mouse</tt> returns once the guest has read all of it.
   <li><tt>screendump</tt> returns the screen as an image. With
 	<tt>file</tt>, it is also kept as that file.
-  <li><tt>console_write</tt> also takes <tt>enter</tt>: true presses
-	Return (a carriage return) after the <tt>data</tt>. Text is typed
+  <li><tt>console_write</tt> and <tt>keyboard</tt> also take
+	<tt>enter</tt>: true presses Return (a carriage return) after the
+	<tt>data</tt>, <tt>text</tt> or <tt>keys</tt>. Text is typed
 	as it is, so <tt>\r</tt> written as a backslash and an <tt>r</tt>
 	types those two characters.
   <li>There is no <tt>subscribe</tt>, since there is no connection to
@@ -580,6 +582,59 @@ $ <b>gxemul --ctl unix:/tmp/gx.sock screendump /tmp/screen.png</b>
 windows either, and a person can watch the screen (and type) with a VNC
 client at the same time; see <a href="misc.html#vnc">VNC</a>.
 
+<p><b>The keyboard and the mouse</b>
+
+<p><table border="1" cellspacing="0" cellpadding="4">
+<tr><th>cmd</th><th>parameters</th><th>result</th></tr>
+<tr><td><tt>keyboard</tt></td>
+    <td><tt>text</tt>, or <tt>keys</tt></td>
+    <td><tt>typed</tt>: how many characters or keys</td></tr>
+<tr><td><tt>mouse</tt></td>
+    <td><tt>x</tt> and <tt>y</tt>, or <tt>dx</tt> and <tt>dy</tt>;
+	<tt>button</tt> (<tt>"left"</tt>, <tt>"middle"</tt> or
+	<tt>"right"</tt>) and <tt>action</tt> (<tt>"click"</tt>, the
+	default, <tt>"double"</tt>, <tt>"down"</tt> or <tt>"up"</tt>);
+	<tt>screen</tt> (default 0)</td>
+    <td><tt>pending</tt>: the steps the guest hasn't read yet;
+	<tt>x</tt>, <tt>y</tt>: where the pointer goes, if known;
+	<tt>stuck</tt>, if the guest stopped reading the mouse</td></tr>
+</table>
+
+<p><tt>keyboard</tt> types on the display's keyboard, as a VNC client or
+the SDL window does: the characters of <tt>text</tt> (Latin-1), or the
+<tt>keys</tt>, named as X11 keysyms: <tt>"a"</tt>, <tt>"space"</tt>,
+<tt>"Return"</tt>, <tt>"BackSpace"</tt>, <tt>"Tab"</tt>,
+<tt>"Escape"</tt>, <tt>"Delete"</tt>, <tt>"Insert"</tt>,
+<tt>"Home"</tt>, <tt>"End"</tt>, <tt>"Page_Up"</tt>,
+<tt>"Page_Down"</tt>, <tt>"Up"</tt>, <tt>"Down"</tt>, <tt>"Left"</tt>,
+<tt>"Right"</tt>, <tt>"F1"</tt> to <tt>"F12"</tt>, ... Control or
+Shift and a key are joined by <tt>+</tt>, as in
+<tt>"Control_L+c"</tt>. The keyboard is the machine's main console, so
+with a serial console instead of a display, this types there. On a
+DECstation's LK201, the function and editing keys are the LK201's (Page
+Up and Page Down are Prev Screen and Next Screen, Home and End are Find
+and Select, Escape is Ctrl+[), and keys are typed one at a time, about as
+fast as a real LK201 sends them.
+
+<p><tt>mouse</tt> moves the display's mouse, and presses its buttons,
+as the guest sees them, while the machine runs. The emulated mouse only
+moves by amounts, so a move to the position <tt>x</tt>, <tt>y</tt> (in
+the screen's pixels, as in <tt>screendump</tt>) first pushes the
+pointer into the top left corner, and then moves it to the position in
+steps of a few pixels, which pointer acceleration leaves alone; it ends
+where asked unless the guest scales the mouse's movements. A move
+comes before the button's action. Each step waits until the guest has
+read the one before, so the reply comes at once, and <tt>pending</tt>
+tells how many steps are still to go; <tt>mouse</tt> without
+parameters asks again. To drag, press a button with <tt>"down"</tt>,
+move, and release it with <tt>"up"</tt>; while a button is held, a move
+goes from where the pointer is instead of the corner.
+
+<pre>
+$ <b>gxemul --ctl unix:/tmp/gx.sock keyboard '{"keys":["F1"]}'</b>
+$ <b>gxemul --ctl unix:/tmp/gx.sock mouse '{"x":607,"y":475,"button":"left"}'</b>
+</pre>
+
 <p><b>Any debugger command</b>
 
 <p><table border="1" cellspacing="0" cellpadding="4">
@@ -632,6 +687,7 @@ such as <tt>"reg"</tt>, <tt>"dump 0x80001000"</tt>, <tt>"tlbdump"</tt> or
   <li><tt>unknown_cmd</tt>
   <li><tt>bad_arg</tt>: a parameter is missing, unknown, or can't be used
   <li><tt>not_stopped</tt>: the command needs a stopped machine
+  <li><tt>stopped</tt>: the command needs a running machine
   <li><tt>no_such_cpu</tt>, <tt>no_such_console</tt>,
 	<tt>no_such_breakpoint</tt>, <tt>no_such_symbol</tt>,
 	<tt>no_such_device</tt>, <tt>no_such_watch</tt>,

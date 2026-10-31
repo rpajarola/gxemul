@@ -5531,10 +5531,28 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.12  ==============
 
-20261030	The LK201 keyboard: an ESC that doesn't start an escape
-		sequence is typed as Ctrl+[ (the LK201 has no Esc key), so Esc
-		and Ctrl+[ leave vi's insert mode; the ESC was dropped.
-		Ctrl+\, Ctrl+], Ctrl+^ and Ctrl+_ are typed too, and the
-		host's F1..F12, Home, End, Page Up and Page Down are the
-		LK201's F1..F12, Find, Select, Prev Screen and Next Screen,
-		instead of stray characters.
+20261030	The control socket's keyboard command types text, or keys by
+		their X11 keysym names (F1 to F12, the cursor and editing
+		keys, Control_L+c, ...), on the display's keyboard, and its
+		mouse command moves the display's mouse to a position on the
+		screen, and clicks, double-clicks or drags. Both are MCP tools
+		too. The LK201 types F1 to F12, Insert, Home, End, Page Up and
+		Page Down (also from the SDL window and VNC; before, only the
+		arrow keys came through), and Escape as F11; its keys and
+		mouse are sent about as fast as a real LK201's 4800 bps line
+		allows, one key at a time. The R2000 and R3000 have only their
+		coprocessor 0 registers (regs, print), and the value in the
+		disassembly of mtc0 is 32 bits on a 32-bit CPU, and only shown
+		at the pc. The MCP run_until tool says that insns is checked
+		every few milliseconds.
+
+==============  RELEASE 1.0.13  ==============
+
+20261031	The LK201 keyboard: Esc (an ESC that doesn't start an escape
+		sequence) is typed as Ctrl+[ instead of F11 (the LK201 has no
+		Esc key; Ctrl+[ gives ESC in X and on the Ultrix console), so
+		Esc and Ctrl+[ leave vi's insert mode. Ctrl+\, Ctrl+], Ctrl+^
+		and Ctrl+_ are typed too, F15 to F20 (F15 is Help, F16 is Do)
+		as well, a cursor key with Shift or Ctrl (as in xterm) is the
+		cursor key, and other escape sequences type nothing instead of
+		their characters. (Antoni Sawicki)
