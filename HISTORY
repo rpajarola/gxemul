@@ -5552,3 +5552,7 @@ Changelog for GXemul:
 		every read of register A or C, so Sprite's clock (which counts
 		seconds only on UF) runs again, instead of standing still for
 		about 9 seconds at a time.
+		LANCE: received frames are filtered by address (own address,
+		broadcast, the multicast filter, promiscuous mode) for every
+		network backend, not only tap devices; with L2TP, all of the
+		LAN's multicast traffic reached the guest.
