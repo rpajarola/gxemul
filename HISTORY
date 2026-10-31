@@ -5545,3 +5545,6 @@ Changelog for GXemul:
 		disassembly of mtc0 is 32 bits on a 32-bit CPU, and only shown
 		at the pc. The MCP run_until tool says that insns is checked
 		every few milliseconds.
+
+==============  RELEASE 1.0.13  ==============
+
