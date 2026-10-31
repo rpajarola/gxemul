@@ -137,7 +137,6 @@ struct le_data {
 	uint32_t	tdra;	/*  transmit descriptor ring address  */
 	int		tlen;	/*  nr ot tx descriptors  */
 
-	int		allmulti;/* receive all multicast packets */
 
 	/*  Current rx and tx descriptor indices:  */
 	int		rxp;
@@ -317,11 +316,6 @@ static void le_chip_init(struct le_data *d)
 	d->ladrf[1] = le_read_16bit(d, d->init_block_addr + 10);
 	d->ladrf[2] = le_read_16bit(d, d->init_block_addr + 12);
 	d->ladrf[3] = le_read_16bit(d, d->init_block_addr + 14);
-	if (d->ladrf[0] == 0xffff && d->ladrf[1] == 0xffff &&
-	    d->ladrf[2] == 0xffff && d->ladrf[3] == 0xffff)
-		d->allmulti = 1;
-	else
-		d->allmulti = 0;
 
 	d->rdra = le_read_16bit(d, d->init_block_addr + 16);
 	d->rdra += ((le_read_16bit(d, d->init_block_addr + 18) & 0xff) << 16);
@@ -716,41 +710,14 @@ static void le_rx(struct net *net, struct le_data *d)
 static int
 le_rx_drop_packet(struct net *net, struct le_data *d)
 {
-	/* Only implement filtering if using a tap device. */
-	if (net->tapdev == NULL)
-		return 0;
-
 	/*
-	 * The network layer has already checked for our MAC address
-	 * or promiscuous mode.  We just need to check the multicast
-	 * filter or broadcast.
+	 * Not every network backend filters by our MAC address (L2TP
+	 * passes on all the frames it receives, and tap/pcap all multicast
+	 * frames), so check the whole address here: our own address,
+	 * broadcasts, multicast addresses in the logical address filter,
+	 * or anything in promiscuous mode.
 	 */
-
-	/* If the packet is not multicast, we know it should be received. */
-	if (! net_ether_multicast(d->rx_packet))
-		return 0;
-
-	/*
-	 * Optimization -- if the guest has set all of the filter
-	 * bits, then we can skip additional checks.
-	 */
-	if (d->allmulti)
-		return 0;
-
-	/* Check for broadcast. */
-	if (net_ether_broadcast(d->rx_packet))
-		return 0;
-
-	/*
-	 * Check the multicast address filter.  We pass the address
-	 * through the little-endian Ethernet CRC generator.  The
-	 * high-order 6 bits are the index into the 64-bit filter.
-	 * The upper 2 bits select the 16-bit filter word, and the
-	 * remaining 4 select the bit in the word.
-	 */
-	uint32_t crc = net_ether_crc32_le(d->rx_packet, 6);
-	crc >>= 26;
-	if (d->ladrf[crc >> 4] & (1 << (crc & 0xf)))
+	if (d->rx_packet_len >= 6 && le_address_match(d, d->rx_packet))
 		return 0;
 
 	/* Not for us; drop the packet. */

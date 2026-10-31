@@ -477,6 +477,56 @@ Unfortunately, at the end of <a href="https://raw.githubusercontent.com/OSPreser
 <p>Once you are logged in as root, running <b><tt>xinit</tt></b> will
 start the X11 environment.
 
+<p><a name="spritenet"></a><b>Networking:</b> The emulated Ethernet
+works, but the disk image needs a few changes before Sprite can use it.
+Sprite has no <tt>ifconfig</tt>: the kernel only sends and receives raw
+Ethernet frames (and its own RPC), TCP/IP is a user-level daemon,
+<tt>/sprite/daemons/ipServer</tt>, and ARP requests are answered by
+another daemon, <tt>/sprite/daemons/arpd</tt>. Both read the hosts and
+their addresses from <tt>/etc/spritehosts</tt>, and <tt>ipServer</tt>
+also reads <tt>/etc/ipServer.config</tt>. Its log is
+<tt>/hosts/<i>hostname</i>/ip.out</tt>.
+
+<p>Log in as root, and:
+<ol>
+  <li>Fix the gateway line in <tt>/etc/ipServer.config</tt>. The setup
+	script writes the gateway's Ethernet address before its IP
+	address, but <tt>ipServer</tt> wants <i>name IP Ethernet</i>,
+	for example:<pre>
+	Start_Gateways
+	gateway		10.0.0.254	60:50:40:30:20:10
+	End_Gateways
+</pre>
+  <li>The network device files in the disk image have unit number 0,
+	which matches no protocol, so every write to them fails with
+	"<tt>Rte_OutputPacket: invalid argument</tt>" in <tt>ip.out</tt>
+	and nothing is received. Make them again (device type 8; the unit
+	is 0x4000 plus the protocol: 1 for ARP, 2 for RARP, 3 for IP):<pre>
+	<b>rm /dev/etherIP /dev/etherARP /dev/etherRARP</b>
+	<b>fsmakedev -d 8 -u 16387 /dev/etherIP</b>
+	<b>fsmakedev -d 8 -u 16385 /dev/etherARP</b>
+	<b>fsmakedev -d 8 -u 16386 /dev/etherRARP</b>
+	<b>restartIPServer</b>
+</pre>
+  <li>Start <tt>arpd</tt>, so that other hosts can find Sprite's
+	Ethernet address (the Sprite kernel doesn't answer ARP requests
+	for its IP address itself), and add the same line to
+	<tt>/boot/bootcmds</tt> to start it at every boot:<pre>
+	<b>/sprite/daemons/arpd</b>
+</pre>
+</ol>
+
+<p><tt>ipServer</tt> never sends ARP requests either. It only knows the
+Ethernet addresses of the hosts in <tt>/etc/spritehosts</tt>, and sends
+everything else to the gateway's Ethernet address. When a reply comes
+back, it learns the sender's address from it, so hosts on the same
+network usually work if the gateway forwards the first packet. Hosts
+that are used often can be added to <tt>/etc/spritehosts</tt>, in the
+same format as the line for Sprite itself, followed by
+<b><tt>restartIPServer</tt></b>. (<tt>netroute</tt> uses the same file
+for Sprite's own RPC, so give other hosts Sprite IDs that no Sprite
+machine uses.)
+
 
 
 
