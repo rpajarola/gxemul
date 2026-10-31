@@ -5556,3 +5556,11 @@ Changelog for GXemul:
 		broadcast, the multicast filter, promiscuous mode) for every
 		network backend, not only tap devices; with L2TP, all of the
 		LAN's multicast traffic reached the guest.
+20261031	The LK201 keyboard: Esc (an ESC that doesn't start an escape
+		sequence) is typed as Ctrl+[ instead of F11 (the LK201 has no
+		Esc key; Ctrl+[ gives ESC in X and on the Ultrix console), so
+		Esc and Ctrl+[ leave vi's insert mode. Ctrl+\, Ctrl+], Ctrl+^
+		and Ctrl+_ are typed too, F15 to F20 (F15 is Help, F16 is Do)
+		as well, a cursor key with Shift or Ctrl (as in xterm) is the
+		cursor key, and other escape sequences type nothing instead of
+		their characters. (Antoni Sawicki)

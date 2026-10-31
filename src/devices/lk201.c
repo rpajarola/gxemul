@@ -45,7 +45,6 @@
 
 
 /*  LK201 key codes which aren't in thirdparty/lk201.h:  */
-#define	LK_KEY_F11		0x71	/*  Escape, in Ultrix  */
 #define	LK_KEY_FIND		0x8a
 #define	LK_KEY_INSERT		0x8b
 #define	LK_KEY_REMOVE		0x8c
@@ -69,20 +68,25 @@
  *  lk201_escape_key():
  *
  *  The key of a terminal's escape sequence (what display_key() sends for
- *  function and editing keys), given what follows the escape: "[A" for Up,
- *  "OP" for F1, "[15~" for F5, ...  Returns -1 if the sequence isn't
- *  complete yet, and 0 if it isn't one.
+ *  function and editing keys, and an xterm's), given what follows the
+ *  escape: "[A" for Up, "OP" for F1, "[15~" for F5, "[1;5A" for Ctrl+Up
+ *  (as Up), ...  Returns -1 if the sequence isn't complete yet, and 0 if
+ *  it isn't a key's.
  */
 static int lk201_escape_key(const unsigned char *seq, int len)
 {
-	/*  F1 to F14, by the number of their "[n~" sequence:  */
+	/*  The keys of a VT220's "[n~" sequences: F1 to F20 (F15 is Help,
+	    F16 is Do) and the editing keys:  */
 	static const struct { int n, key; } tilde[] = {
 		{ 1, LK_KEY_FIND }, { 2, LK_KEY_INSERT }, { 3, LK_KEY_REMOVE },
 		{ 4, LK_KEY_SELECT }, { 5, LK_KEY_PREV }, { 6, LK_KEY_NEXT },
 		{ 11, 0x56 }, { 12, 0x57 }, { 13, 0x58 }, { 14, 0x59 },
 		{ 15, 0x5a }, { 17, 0x64 }, { 18, 0x65 }, { 19, 0x66 },
 		{ 20, 0x67 }, { 21, 0x68 }, { 23, 0x71 }, { 24, 0x72 },
-		{ 25, 0x73 }, { 26, 0x74 }, { 0, 0 } };
+		{ 25, 0x73 }, { 26, 0x74 }, { 28, 0x7c }, { 29, 0x7d },
+		{ 31, 0x80 }, { 32, 0x81 }, { 33, 0x82 }, { 34, 0x83 },
+		{ 0, 0 } };
+	int final = seq[len - 1], n = 0, i;
 
 	if (len < 2)
 		return -1;
@@ -96,28 +100,24 @@ static int lk201_escape_key(const unsigned char *seq, int len)
 	if (seq[0] != '[')
 		return 0;
 
-	switch (seq[1]) {
+	/*  The sequence ends with a byte that isn't a digit or ';':  */
+	if ((final >= '0' && final <= '9') || final == ';')
+		return -1;
+
+	switch (final) {
 	case 'A':	return LK_KEY_UP;
 	case 'B':	return LK_KEY_DOWN;
 	case 'C':	return LK_KEY_RIGHT;
 	case 'D':	return LK_KEY_LEFT;
 	case 'H':	return LK_KEY_FIND;		/*  Home  */
 	case 'F':	return LK_KEY_SELECT;		/*  End  */
+	case '~':
+		for (i = 1; i < len - 1 && seq[i] != ';'; i++)
+			n = n * 10 + seq[i] - '0';
+		for (i = 0; tilde[i].n != 0; i++)
+			if (tilde[i].n == n)
+				return tilde[i].key;
 	}
-
-	/*  [n~  */
-	int n = 0, i;
-	for (i = 1; i < len && seq[i] >= '0' && seq[i] <= '9'; i++)
-		n = n * 10 + seq[i] - '0';
-	if (i == 1 || i > 3)
-		return 0;
-	if (i == len)
-		return -1;
-	if (seq[i] != '~')
-		return 0;
-	for (i = 0; tilde[i].n != 0; i++)
-		if (tilde[i].n == n)
-			return tilde[i].key;
 	return 0;
 }
 
@@ -146,27 +146,52 @@ static int lk201_send_key(struct lk201_data *d, int key, bool shifted,
 }
 
 
-int lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch);
+/*
+ *  lk201_ascii_key():
+ *
+ *  Returns the LK201 key that types ch (*shifted tells if it needs Shift),
+ *  or -1 if there is none.
+ */
+static int lk201_ascii_key(int ch, int *shifted)
+{
+	int i;
+
+	*shifted = 0;
+	for (i=0; i<256; i++) {
+		/*  Skip numeric digits, so that the normal
+			digits are used instead.  */
+		if (i >= 0x92 && i<=0xa0)
+			continue;
+
+		if (unshiftedAscii[i] == ch)
+			return i;
+	}
+
+	/*  unshift ch:  */
+	if (ch >= 'A' && ch <= 'Z')
+		ch = ch + ('a' - 'A');
+	for (i=0; i<256; i++)
+		if (shiftedAscii[i] == ch) {
+			*shifted = 1;
+			return i;
+		}
+
+	return -1;
+}
 
 
 /*
- *  lk201_flush_escape():
+ *  lk201_send_escape():
  *
- *  An escape, and what followed it, which isn't a key's sequence: Escape
- *  (F11), and then the characters. Returns how many bytes were added.
+ *  The LK201 has no Esc key: Ctrl+[ types ESC, in X as on the console.
+ *  Returns how many bytes were added.
  */
-static int lk201_flush_escape(struct lk201_data *d)
+static int lk201_send_escape(struct lk201_data *d)
 {
-	unsigned char seq[sizeof(d->keyb_buf)];
-	int len = d->keyb_buf_pos, n;
+	int shifted;
+	int key = lk201_ascii_key('[', &shifted);
 
-	memcpy(seq, d->keyb_buf, len);
-	d->keyb_buf_pos = 0;
-
-	n = lk201_send_key(d, LK_KEY_F11, false, false);
-	for (int i = 1; i < len; i++)
-		n += lk201_convert_ascii_to_keybcode(d, seq[i]);
-	return n;
+	return lk201_send_key(d, key, shifted, true);
 }
 
 
@@ -175,81 +200,64 @@ static int lk201_flush_escape(struct lk201_data *d)
  *
  *  Converts ascii console input to LK201 keyboard scan codes, and adds
  *  those scancodes using the add_to_rx_queue() function. Escape sequences
- *  for function and editing keys become those keys. Returns how many
- *  bytes were added.
+ *  for function and editing keys become those keys, other sequences type
+ *  nothing, and an ESC that doesn't start one is typed as Ctrl+[ (by
+ *  lk201_tick(), if nothing follows it). Returns how many bytes were
+ *  added.
  */
 int lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 {
-	int i, found=-1, shifted = 0, controlled = 0;
+	int key, shifted = 0, controlled = 0;
+
+	if (d->keyb_buf_pos == 1 && ch != '[' && ch != 'O') {
+		/*  The ESC before ch doesn't start an escape sequence:  */
+		d->keyb_buf_pos = 0;
+		int n = lk201_send_escape(d);
+		return n + lk201_convert_ascii_to_keybcode(d, ch);
+	}
 
 	if (d->keyb_buf_pos > 0) {
 		/*  Escape sequence:  */
 		d->keyb_buf[d->keyb_buf_pos++] = ch;
 
-		int key = lk201_escape_key(d->keyb_buf + 1,
-		    d->keyb_buf_pos - 1);
+		key = lk201_escape_key(d->keyb_buf + 1, d->keyb_buf_pos - 1);
 		if (key < 0 && d->keyb_buf_pos < (int)sizeof(d->keyb_buf))
 			return 0;
 
-		if (key > 0) {
-			d->keyb_buf_pos = 0;
-			return lk201_send_key(d, key, false, false);
-		}
-		return lk201_flush_escape(d);
+		d->keyb_buf_pos = 0;
+		return key > 0? lk201_send_key(d, key, false, false) : 0;
 	}
 
 	switch (ch) {
 	case '\b':
-		found = 0xbc;
+		key = 0xbc;
 		break;
 	case '\n':
 	case '\r':
-		found = 0xbd;
+		key = 0xbd;
 		break;
 	case '\t':
-		found = 0xbe;
+		key = 0xbe;
 		break;
 	case 27:	/*  esc  */
 		d->keyb_buf[0] = 27;
 		d->keyb_buf_pos = 1;
 		return 0;
 	default:
-		if (ch >= 1 && ch <= 26) {
-			ch = 'a' + ch - 1;
+		/*  Other control characters are Ctrl and a key, e.g. Ctrl-A
+		    is Ctrl+a, and Ctrl-] is Ctrl+]:  */
+		if (ch < 32) {
+			ch = ch >= 1 && ch <= 26 ? 'a' + ch - 1 : ch + '@';
 			controlled = 1;
 		}
-
-		shifted = 0;
-		for (i=0; i<256; i++) {
-			/*  Skip numeric digits, so that the normal
-				digits are used instead.  */
-			if (i >= 0x92 && i<=0xa0)
-				continue;
-
-			if (unshiftedAscii[i] == ch) {
-				found = i;
-				break;
-			}
-		}
-
-		if (found == -1) {
-			/*  unshift ch:  */
-			if (ch >= 'A' && ch <= 'Z')
-				ch = ch + ('a' - 'A');
-			for (i=0; i<256; i++)
-				if (shiftedAscii[i] == ch) {
-					found = i;
-					shifted = 1;
-					break;
-				}
-		}
+		key = lk201_ascii_key(ch, &shifted);
 	}
 
 	/*  A character that no key types:  */
-	if (found == -1)
+	if (key < 0)
 		return 0;
 
-	return lk201_send_key(d, found, shifted, controlled);
+	return lk201_send_key(d, key, shifted, controlled);
 }
 
 
@@ -369,11 +377,19 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 			d->add_to_rx_queue(d->add_data, ch, port);
 	}
 
-	/*  An escape with nothing after it is the Escape key:  */
+	/*
+	 *  A key sends all of its escape sequence at once, so an ESC that
+	 *  nothing follows is a key of its own (Esc, or Ctrl+[), and a
+	 *  sequence that ends early is dropped:
+	 */
 	if (d->use_fb && d->keyb_buf_pos > 0 && d->keyb_delay == 0 &&
 	    !console_charavail(d->console_handle) &&
-	    d->space_available_in_queue(d->add_data, port))
-		d->keyb_delay = LK201_TICKS_PER_BYTE * lk201_flush_escape(d);
+	    d->space_available_in_queue(d->add_data, port)) {
+		if (d->keyb_buf_pos == 1)
+			d->keyb_delay = LK201_TICKS_PER_BYTE *
+			    lk201_send_escape(d);
+		d->keyb_buf_pos = 0;
+	}
 
 	/*  Don't do mouse updates if we're running in serial console mode:  */
 	if (!d->use_fb)
