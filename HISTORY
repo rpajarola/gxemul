@@ -5548,3 +5548,7 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.13  ==============
 
+20261031	MC146818: the update-ended flag (UF) is no longer cleared on
+		every read of register A or C, so Sprite's clock (which counts
+		seconds only on UF) runs again, instead of standing still for
+		about 9 seconds at a time.
