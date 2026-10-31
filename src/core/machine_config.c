@@ -1492,7 +1492,8 @@ int machine_config_slots(const struct machine_config *c,
 	case MACHINE_DEC_3MAXPLUS_5000:
 		for (i = 0; i < cards && i < 3; i++) {
 			slots[n].slot = i;
-			slots[n++].device = "PMAG-BA framebuffer";
+			slots[n++].device =
+			    "PMAG-BA framebuffer, or HX with a PMAGB-BA ROM";
 		}
 		if (subtype == MACHINE_DEC_3MAX_5000) {
 			slots[n].slot = 5;
@@ -1505,7 +1506,8 @@ int machine_config_slots(const struct machine_config *c,
 		/*  The first card is the built-in one, in slot 2:  */
 		for (i = 1; i < cards && i < 3; i++) {
 			slots[n].slot = i - 1;
-			slots[n++].device = "PMAG-BA framebuffer";
+			slots[n++].device =
+			    "PMAG-BA framebuffer, or HX with a PMAGB-BA ROM";
 		}
 		slots[n].slot = 2;
 		slots[n++].device = "PMAG-DV framebuffer (built in)";
@@ -2355,12 +2357,14 @@ void machine_config_export_free(struct mc_export *e)
  *	    need a real R3000 data cache, and 3/rtc/time real-time I/O timing.
  *	PMAG-BA V5.3a (color frame buffer option ROM):  0/curs and 0/ptrn
  *	    read the Bt459's signature registers, which aren't computed.
+ *	PMAGB-BA V1.1 (HX frame buffer option ROM):  the Signature Analysis
+ *	    and Line Signature Mode parts of 0/patt and 0/line, likewise.
  *
  *  With "skip_failing_tests", a copy of such a ROM image is loaded instead,
  *  in which the first two instructions of these tests' functions are
- *  "jr ra; move v0,zero", so that they pass at once.  A ROM is recognized
- *  by its name and version strings, and the tests' first instructions
- *  (other versions are left alone).
+ *  "jr ra; move v0,zero" (or "li v0,1", where 1 means passed), so that they
+ *  pass at once.  A ROM is recognized by its name and version strings, and
+ *  the tests' first instructions (other versions are left alone).
  */
 struct rom_test {
 	uint32_t	addr;		/*  where the ROM runs the function  */
@@ -2369,16 +2373,20 @@ struct rom_test {
 static const struct {
 	const char	*name, *version;
 	uint32_t	base;		/*  ROM offset of the code at 0xa0020000  */
+	uint32_t	passed;		/*  what a test returns if it passed  */
 	struct rom_test	tests[4];
 } failing_tests[] = {
-	{ "KN02-BA", "V5.7j", 0x194a4, { { 0xa00212a0, 0x27bdffb8 },
+	{ "KN02-BA", "V5.7j", 0x194a4, 0, { { 0xa00212a0, 0x27bdffb8 },
 	    { 0xa0021650, 0x27bdffd8 }, { 0xa0021ef0, 0x27bdffc8 } } },
-	{ "PMAG-BA", "V5.3a", 0x1594, { { 0xa00204c0, 0x3c0ea002 },
+	{ "PMAG-BA", "V5.3a", 0x1594, 0, { { 0xa00204c0, 0x3c0ea002 },
 	    { 0xa0021b80, 0x3c02a002 } } },
+	{ "PMAGB-BA", "V1.1", 0xcfc4, 1, { { 0xa0023f88, 0x27bdff80 },
+	    { 0xa00283e0, 0x27bdff80 } } },
 };
 
 #define	JR_RA		0x03e00008
 #define	MOVE_V0_ZERO	0x00001021
+#define	LI_V0		0x24020000	/*  addiu v0,zero,imm  */
 
 static bool contains(const unsigned char *buf, size_t len, const char *s)
 {
@@ -2445,7 +2453,9 @@ static char *rom_without_failing_tests(const char *path)
 			w = get_le32(buf + off);
 			if (w == failing_tests[r].tests[t].first) {
 				put_le32(buf + off, JR_RA);
-				put_le32(buf + off + 4, MOVE_V0_ZERO);
+				put_le32(buf + off + 4, failing_tests[r].passed?
+				    LI_V0 | failing_tests[r].passed :
+				    MOVE_V0_ZERO);
 				patched ++;
 			} else if (w != JR_RA)
 				break;		/*  another version  */

@@ -5510,3 +5510,17 @@ Changelog for GXemul:
 		they store, as a real bus does. (In a device that applies a
 		raster operation to what is written, the bytes that were
 		written back changed.)
+20261030	The HX (PMAGB-BA) framebuffer, 1280x1024 with 8 bits per
+		pixel: a TURBOchannel slot whose option ROM image is a
+		PMAGB-BA's (pmagb-ba-rom.img in MAME's ds5k133 set) has an
+		HX instead of a PMAG-BA. Its SFB ASIC is emulated: the
+		simple, stipple, line and copy modes, the raster operations,
+		the plane and pixel masks, the video registers, and the
+		vertical retrace interrupt. The option ROM is at offset 0 of
+		the slot (0x3c0000, where the other cards have it, is VRAM on
+		the HX). The HX's Bt459 gives its ID in the low byte, and its
+		cursor comparator takes every choice of inputs. With a real
+		system ROM, the HX ROM's self-tests pass (skip_failing_tests
+		knows the two parts that read signature registers), the
+		ROM's console is on the HX, and Ultrix 4.5, its X server and
+		DECwindows run at 1280x1024. See doc/machine_decstation.html.

@@ -61,6 +61,9 @@ struct bt459_data {
 	int		planes;
 	int		type;
 
+	/*  The vertical retrace interrupt, unless someone else (the
+	    PMAGB-BA's SFB ASIC) has it:  */
+	int		has_irq;
 	struct interrupt irq;
 	int		interrupts_enable;
 	int		interrupt_time;
@@ -253,10 +256,13 @@ static void bt459_update_cursor_position(struct bt459_data *d,
  *  bt459_comparator():
  *
  *  The test register's analog comparator compares the DAC outputs to each
- *  other, or to a 150 mV reference. The result is latched at the left edge
- *  of the 64x64 cursor, on each of its scan lines; this uses the last one.
- *  Returns 1 if the result (bit D3) is set, 0 if not. If the cursor is not
- *  on the screen, the previous result is kept.
+ *  other, or to a 150 mV reference: its noninverting input is the red (D7)
+ *  or green (D6) output, and its inverting input the blue output (D5) or
+ *  the reference (D4). An input with nothing selected is at 0 V. The
+ *  result is latched at the left edge of the 64x64 cursor, on each of its
+ *  scan lines; this uses the last one. Returns 1 if the result (bit D3) is
+ *  set, 0 if not. If the cursor is not on the screen, the previous result
+ *  is kept.
  */
 static int bt459_comparator(struct bt459_data *d)
 {
@@ -266,7 +272,15 @@ static int bt459_comparator(struct bt459_data *d)
 	int pedestal = d->bt459_reg[BT459_REG_CMD2] & 0x40;
 	int c, ccr = d->bt459_reg[BT459_REG_CCR];
 	unsigned char *rgb;
-	int level[3], i;
+	int level[3], plus, minus, i;
+
+	/*
+	 *  On the PMAGB-BA, the result is that of a pixel to the left of the
+	 *  cursor, as if through a pipeline delay of four load cycles. (The
+	 *  option ROM's patt test needs one at least 9 pixels to the left.)
+	 */
+	if (d->type == BT459_BBA)
+		x -= 16;
 
 	if (d->planes != 8 || x < 0 || y < 0 || x >= fb->visible_xsize ||
 	    y >= fb->visible_ysize)
@@ -297,20 +311,9 @@ static int bt459_comparator(struct bt459_data *d)
 	if (d->bt459_reg[BT459_REG_CMD2] & 0x80)
 		level[1] += 286;
 
-	switch (sel) {
-	case 0xa:	/*  red compared to blue  */
-		d->comparator_result = level[0] > level[2];
-		break;
-	case 0x9:	/*  red compared to 150 mV  */
-		d->comparator_result = level[0] > 150;
-		break;
-	case 0x6:	/*  green compared to blue  */
-		d->comparator_result = level[1] > level[2];
-		break;
-	case 0x5:	/*  green compared to 150 mV  */
-		d->comparator_result = level[1] > 150;
-		break;
-	}
+	plus = sel & 8? level[0] : sel & 4? level[1] : 0;
+	minus = sel & 2? level[2] : sel & 1? 150 : 0;
+	d->comparator_result = plus > minus;
 
 	return d->comparator_result;
 }
@@ -343,7 +346,7 @@ DEVICE_TICK(bt459)
 	 *  or after another tick has passed.  (This is to prevent
 	 *  lockups from unhandled interrupts.)
 	 */
-	if (d->type != BT459_PX && d->interrupts_enable) {
+	if (d->has_irq && d->type != BT459_PX && d->interrupts_enable) {
 		d->interrupt_time --;
 		if (d->interrupt_time < 0) {
 			d->interrupt_time = d->interrupt_time_reset_value;
@@ -369,7 +372,8 @@ DEVICE_ACCESS(bt459_irq)
 
 	d->interrupts_enable = 1;
 
-	INTERRUPT_DEASSERT(d->irq);
+	if (d->has_irq)
+		INTERRUPT_DEASSERT(d->irq);
 
 	if (writeflag == MEM_READ)
 		memory_writemax64(cpu, data, len, odata);
@@ -386,8 +390,8 @@ DEVICE_ACCESS(bt459)
 
 	idata = memory_readmax64(cpu, data, len);
 
-	/*  The PMAG-BA does not decode the higher address bits:  */
-	if (d->type == BT459_BA)
+	/*  The PMAG-BA and PMAGB-BA do not decode the higher address bits:  */
+	if (d->type == BT459_BA || d->type == BT459_BBA)
 		relative_addr &= 0xc;
 
 #ifdef BT459_DEBUG
@@ -401,12 +405,16 @@ DEVICE_ACCESS(bt459)
 	 *  accessing a normal BT459 register, or the irq register,
 	 *  or by simply "missing" it.
 	 */
-	INTERRUPT_DEASSERT(d->irq);
+	if (d->has_irq)
+		INTERRUPT_DEASSERT(d->irq);
 
 	/*  ID register is read-only, should always be 0x4a or 0x4a4a4a:  */
 	if (d->planes == 24)
 		d->bt459_reg[BT459_REG_ID] = 0x4a4a4a;
-	else {
+	else if (d->type == BT459_BBA) {
+		/*  The PMAGB-BA option ROM reads it from the low byte:  */
+		d->bt459_reg[BT459_REG_ID] = 0x4a;
+	} else {
 		/*
 		 *  TODO:  Is it really 0x4a, or 0x4a0000?
 		 *  Ultrix panics with a "bad VDAC ID" message if 0x4a
@@ -537,7 +545,8 @@ DEVICE_ACCESS(bt459)
 			}
 
 			/*  Perhaps this hack is not necessary:  */
-			if (btaddr == BT459_REG_ID && len==1)
+			if (btaddr == BT459_REG_ID && len==1 &&
+			    d->type != BT459_BBA)
 				odata = (odata >> 16) & 255;
 
 			if (!quiet_mode)
@@ -636,7 +645,10 @@ void dev_bt459_init(struct machine *machine, struct memory *mem,
 	CHECK_ALLOCATION(d = (struct bt459_data *) malloc(sizeof(struct bt459_data)));
 	memset(d, 0, sizeof(struct bt459_data));
 
-	INTERRUPT_CONNECT(irq_path, d->irq);
+	if (irq_path != NULL) {
+		INTERRUPT_CONNECT(irq_path, d->irq);
+		d->has_irq = 1;
+	}
 
 	d->vfb_data     = vfb_data;
 	d->rgb_palette  = vfb_data->rgb_palette;
@@ -679,7 +691,8 @@ void dev_bt459_init(struct machine *machine, struct memory *mem,
 	/*
 	 *  The PMAG-BA option ROM's diagnostics expect vertical retrace
 	 *  interrupts at the real rate. The PMAG-BA also mirrors the four
-	 *  BT459 ports throughout the 1 MB at baseaddr.
+	 *  BT459 ports throughout the 1 MB at baseaddr, and the PMAGB-BA
+	 *  throughout 256 KB.
 	 */
 	if (d->type == BT459_BA) {
 		d->interrupt_time_reset_value = machine->emulated_hz /
@@ -689,7 +702,7 @@ void dev_bt459_init(struct machine *machine, struct memory *mem,
 	}
 
 	memory_device_register(mem, "bt459", baseaddr, d->type == BT459_BA?
-	    0x100000 : DEV_BT459_LENGTH,
+	    0x100000 : d->type == BT459_BBA? 0x40000 : DEV_BT459_LENGTH,
 	    dev_bt459_access, (void *)d, DM_DEFAULT, NULL);
 
 	if (baseaddr_irq != 0)

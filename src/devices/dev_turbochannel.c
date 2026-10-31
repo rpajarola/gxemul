@@ -37,8 +37,6 @@
 #include "memory.h"
 #include "misc.h"
 
-#include "thirdparty/sfbreg.h"
-
 
 #define	DEVICE_MAX_NAMELEN		9
 #define	CARD_NAME_BUFLEN		9
@@ -61,7 +59,8 @@ struct turbochannel_data {
 	char		card_firmware_type[CARD_FIRMWARE_BUFLEN];
 };
 
-/*  Where the option ROM is located within a slot:  */
+/*  Where the option ROM is located within a slot (but the PMAGB-BA's is
+    at offset 0):  */
 #define	TC_OPTION_ROM_OFFSET	0x3c0000
 
 /*
@@ -100,14 +99,47 @@ DEVICE_ACCESS(turbochannel_rom)
 
 
 /*
+ *  turbochannel_rom_card():
+ *
+ *  Reads the module name (e.g. "PMAGB-BA") from the header of an option
+ *  ROM image into name, without trailing spaces. Returns 0 if the file
+ *  isn't an option ROM image.
+ */
+static int turbochannel_rom_card(const char *filename, char *name)
+{
+	/*  The header is at 0x3e0 in the slot, i.e. at 0xf8 in the image:
+	    width, stride, size, slot size, test pattern, firmware version,
+	    vendor, module name, and firmware type.  */
+	unsigned char header[0x24];
+	FILE *f = fopen(filename, "rb");
+	int i, ok;
+
+	if (f == NULL)
+		return 0;
+	ok = fseek(f, 0xf8, SEEK_SET) == 0 &&
+	    fread(header, 1, sizeof(header), f) == sizeof(header);
+	fclose(f);
+
+	if (!ok || memcmp(header + 4, "\x55\x00\xaa\xff", 4) != 0)
+		return 0;
+
+	memcpy(name, header + 0x18, 8);
+	for (i = 8; i > 0 && name[i - 1] == ' '; i--)
+		;
+	name[i] = '\0';
+	return i > 0;
+}
+
+
+/*
  *  turbochannel_load_rom():
  *
- *  Loads an option ROM image for a slot, and maps it at the slot's option
- *  ROM address. Returns the length of the mapped range, in bytes.
+ *  Loads an option ROM image for a slot, and maps it at rom_offset in the
+ *  slot. Returns the length of the mapped range, in bytes.
  */
 static uint64_t turbochannel_load_rom(struct memory *mem, int slot_nr,
-	uint64_t baseaddr, uint64_t endaddr, const char *device_name,
-	const char *filename)
+	uint64_t baseaddr, uint64_t endaddr, uint64_t rom_offset,
+	const char *device_name, const char *filename)
 {
 	struct turbochannel_rom_data *rd;
 	uint64_t maplen;
@@ -128,10 +160,10 @@ static uint64_t turbochannel_load_rom(struct memory *mem, int slot_nr,
 
 	maplen = (uint64_t) filelen * 4;
 	if (filelen <= 0 ||
-	    baseaddr + TC_OPTION_ROM_OFFSET + maplen - 1 > endaddr) {
+	    baseaddr + rom_offset + maplen - 1 > endaddr) {
 		fprintf(stderr, "%s: a TURBOchannel option ROM image must"
 		    " be between 1 and %i bytes\n", filename,
-		    (int) ((endaddr + 1 - baseaddr - TC_OPTION_ROM_OFFSET) / 4));
+		    (int) ((endaddr + 1 - baseaddr - rom_offset) / 4));
 		exit(1);
 	}
 
@@ -153,7 +185,7 @@ static uint64_t turbochannel_load_rom(struct memory *mem, int slot_nr,
 	CHECK_ALLOCATION(name = (char *) malloc(nlen));
 	snprintf(name, nlen, "turbochannel [%s] option ROM", device_name);
 
-	memory_device_register(mem, name, baseaddr + TC_OPTION_ROM_OFFSET,
+	memory_device_register(mem, name, baseaddr + rom_offset,
 	    maplen, dev_turbochannel_rom_access, rd, DM_DEFAULT, NULL);
 
 	debug("turbochannel: slot %i option ROM: %s (%li bytes)\n",
@@ -280,11 +312,30 @@ void dev_turbochannel_init(struct machine *machine, struct memory *mem,
 	struct vfb_data *fb;
 	struct turbochannel_data *d;
 	int rom_offset=0x3c0000, rom_length=DEV_TURBOCHANNEL_LEN, rom_skip=0;
-	char *name2;
+	uint64_t option_rom_offset = TC_OPTION_ROM_OFFSET;
+	char *name2, rom_card[CARD_NAME_BUFLEN];
 	size_t nlen;
 
 	if (device_name == NULL)
 		return;
+
+	/*
+	 *  A slot's option ROM image says which card is in the slot, e.g.
+	 *  a PMAGB-BA instead of the default PMAG-BA framebuffer.
+	 */
+	if (slot_nr >= 0 && slot_nr < MACHINE_MAX_TC_SLOTS &&
+	    machine->tc_rom_filename[slot_nr] != NULL &&
+	    turbochannel_rom_card(machine->tc_rom_filename[slot_nr],
+	    rom_card) && strcmp(rom_card, device_name) != 0) {
+		static const char *cards[] = { "PMAD-AA", "PMAZ-AA",
+		    "PMAG-AA", "PMAG-BA", "PMAGB-BA", "PMAG-CA", "PMAG-DA",
+		    "PMAG-FA", "PMAG-JA", "PMAG-RO", NULL };
+		int i;
+
+		for (i = 0; cards[i] != NULL; i++)
+			if (strcmp(rom_card, cards[i]) == 0)
+				device_name = cards[i];
+	}
 
 	if (strlen(device_name) > 8) {
 		fprintf(stderr, "dev_turbochannel_init(): bad device_name\n");
@@ -359,15 +410,11 @@ void dev_turbochannel_init(struct machine *machine, struct memory *mem,
 		rom_length = 0x080000;
 	} else if (strcmp(device_name, "PMAGB-BA")==0) {
 		/*  sfb in NetBSD  */
-		/*  TODO: This is not working with Ultrix yet.  */
-		fb = dev_fb_init(machine, mem, baseaddr + SFB_OFFSET_VRAM,
-		    VFB_GENERIC, 1280,1024, 1280,1024,8, device_name);
-		dev_sfb_init(machine, mem, baseaddr + SFB_ASIC_OFFSET, fb);
-		/*  TODO: the CLEAR doesn't get through, as the address
-			range is already in use by the asic  */
-		dev_bt459_init(machine, mem, baseaddr + SFB_OFFSET_BT459,
-		    baseaddr + SFB_CLEAR, fb, 8, irq_path, BT459_BBA);
-		rom_offset = 0x0;	/*  ? TODO  */
+		dev_sfb_init(machine, mem, baseaddr, irq_path);
+		/*  The option ROM is at offset 0, as the VRAM is at
+		    0x200000-0x3fffff.  */
+		rom_offset = 0;
+		option_rom_offset = 0;
 	} else if (strcmp(device_name, "PMAG-CA")==0) {
 		/*  px in NetBSD  */
 		dev_px_init(machine, mem, baseaddr, DEV_PX_TYPE_PX, irq_path);
@@ -422,9 +469,9 @@ void dev_turbochannel_init(struct machine *machine, struct memory *mem,
 	 */
 	if (slot_nr >= 0 && slot_nr < MACHINE_MAX_TC_SLOTS &&
 	    machine->tc_rom_filename[slot_nr] != NULL) {
-		uint64_t rom_start = TC_OPTION_ROM_OFFSET;
+		uint64_t rom_start = option_rom_offset;
 		uint64_t rom_end = rom_start + turbochannel_load_rom(mem,
-		    slot_nr, baseaddr, endaddr, device_name,
+		    slot_nr, baseaddr, endaddr, option_rom_offset, device_name,
 		    machine->tc_rom_filename[slot_nr]);
 		uint64_t fake_start = rom_offset + rom_skip;
 		uint64_t fake_end = rom_offset + rom_length;
