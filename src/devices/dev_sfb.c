@@ -648,7 +648,10 @@ DEVICE_ACCESS(sfb)
 
 /*
  *  The general purpose outputs: GP0 selects one of two video oscillators
- *  (there is one, here), and GP1 resets the Bt459.
+ *  (there is one, here). What GP1 drives is not known: NetBSD calls it
+ *  the Bt459 reset, but the Bt459 has no reset input, and its registers
+ *  have no reset values. The HX ROM writes GP1 0 and then 1 before it
+ *  programs the Bt459, and Ultrix doesn't use it, so it is only stored.
  */
 DEVICE_ACCESS(sfb_gp)
 {
