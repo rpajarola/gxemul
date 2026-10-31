@@ -5505,3 +5505,8 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.11  ==============
 
+20261030	MIPS swl, swr, sdl and sdr read the whole word and wrote it
+		back with the new bytes; they now write only the bytes that
+		they store, as a real bus does. (In a device that applies a
+		raster operation to what is written, the bytes that were
+		written back changed.)

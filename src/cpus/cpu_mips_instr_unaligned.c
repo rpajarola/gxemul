@@ -35,7 +35,6 @@
  *  pre-Dyntrans emulation mode. It should be rewritten.
  */
 
-#include "cop0.h"
 #include "cpu.h"
 #include "memory.h"
 #include "misc.h"
@@ -80,26 +79,7 @@ void mips_unaligned_loadstore(struct cpu *cpu, struct mips_instr_call *ic,
 
 	if (store) {
 		/*  Store:  */
-		uint64_t oldpc = cpu->pc;
-
-		/*
-		 *  NOTE (this is ugly): The memory_rw()
-		 *  call generates a TLBL exception, if there
-		 *  is a tlb refill exception. However, since
-		 *  this is a Store, the exception is converted
-		 *  to a TLBS:
-		 */
-		ok = cpu->memory_rw(cpu, cpu->mem, aligned_addr,
-		    &aligned_word[0], wlen, MEM_READ, CACHE_DATA);
-		if (!ok) {
-			if (cpu->pc != oldpc) {
-				cpu->cd.mips.coproc[0]->reg[COP0_CAUSE] &=
-				    ~CAUSE_EXCCODE_MASK;
-				cpu->cd.mips.coproc[0]->reg[COP0_CAUSE] |=
-				    (EXCEPTION_TLBS << CAUSE_EXCCODE_SHIFT);
-			}
-			return;
-		}
+		int first = wlen, last = -1, ofs;
 
 		for (i=0; i<wlen; i++) {
 			tmpaddr = addr + i*dir;
@@ -112,15 +92,26 @@ void mips_unaligned_loadstore(struct cpu *cpu, struct mips_instr_call *ic,
 			    tmpaddr, reg_ofs, (long long)result_value);  */
 
 			/*  Store one byte:  */
-			aligned_word[tmpaddr & (wlen-1)] =
-			    (result_value >> (reg_ofs * 8)) & 255;
+			ofs = tmpaddr & (wlen-1);
+			aligned_word[ofs] = (result_value >> (reg_ofs * 8)) & 255;
+			if (ofs < first)
+				first = ofs;
+			if (ofs > last)
+				last = ofs;
 
 			reg_ofs += reg_dir;
 		}
 
+		/*
+		 *  Only the bytes that are stored are written, in one access,
+		 *  as on a real bus (with byte enables). Reading the rest of
+		 *  the word and writing it back would not leave it as it is
+		 *  in a device, e.g. a framebuffer that applies a raster
+		 *  operation to what is written.
+		 */
 		ok = cpu->memory_rw(cpu, cpu->mem,
-		    aligned_addr, &aligned_word[0], wlen,
-		    MEM_WRITE, CACHE_DATA);
+		    aligned_addr + first, &aligned_word[first],
+		    last - first + 1, MEM_WRITE, CACHE_DATA);
 
 		return;
 	}
