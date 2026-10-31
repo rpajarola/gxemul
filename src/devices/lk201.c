@@ -108,9 +108,10 @@ static int lk201_ascii_key(int ch, int *shifted)
  */
 static void lk201_send_escape(struct lk201_data *d)
 {
-	int shifted;
+	int shifted, key;
 
-	lk201_send_key(d, lk201_ascii_key('[', &shifted), shifted, 1);
+	key = lk201_ascii_key('[', &shifted);
+	lk201_send_key(d, key, shifted, 1);
 }
 
 
