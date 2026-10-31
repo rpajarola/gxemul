@@ -355,12 +355,103 @@ void display_key(struct machine *m, int key)
 		case DISPLAY_KEY_END:		strlcpy(seq, "\033[F", sizeof(seq)); break;
 		case DISPLAY_KEY_PAGE_UP:	strlcpy(seq, "\033[5~", sizeof(seq)); break;
 		case DISPLAY_KEY_PAGE_DOWN:	strlcpy(seq, "\033[6~", sizeof(seq)); break;
+		case DISPLAY_KEY_INSERT:	strlcpy(seq, "\033[2~", sizeof(seq)); break;
 		default:			return;
 		}
 	}
 
 	for (const char *c = seq; *c != '\0'; c++)
 		console_makeavail(m->main_console_handle, *c);
+}
+
+
+/*  X11 keysyms:  */
+#define	XK_BackSpace	0xff08
+#define	XK_Tab		0xff09
+#define	XK_Return	0xff0d
+#define	XK_Escape	0xff1b
+#define	XK_Home		0xff50
+#define	XK_Left		0xff51
+#define	XK_Up		0xff52
+#define	XK_Right	0xff53
+#define	XK_Down		0xff54
+#define	XK_Prior	0xff55
+#define	XK_Next		0xff56
+#define	XK_End		0xff57
+#define	XK_Insert	0xff63
+#define	XK_KP_Enter	0xff8d
+#define	XK_KP_Home	0xff95
+#define	XK_KP_Left	0xff96
+#define	XK_KP_Up	0xff97
+#define	XK_KP_Right	0xff98
+#define	XK_KP_Down	0xff99
+#define	XK_KP_Prior	0xff9a
+#define	XK_KP_Next	0xff9b
+#define	XK_KP_End	0xff9c
+#define	XK_KP_Insert	0xff9e
+#define	XK_KP_Delete	0xff9f
+#define	XK_KP_Multiply	0xffaa
+#define	XK_KP_9		0xffb9
+#define	XK_F1		0xffbe
+#define	XK_F12		0xffc9
+#define	XK_Delete	0xffff
+
+
+/*
+ *  display_keysym():
+ *
+ *  Types the key with an X11 keysym (as VNC clients send them) on the
+ *  machine's main console, with Control held if ctrl is set: a character,
+ *  or the escape sequence of a function or editing key. Returns false if
+ *  the key types nothing.
+ */
+bool display_keysym(struct machine *m, uint32_t key, bool ctrl)
+{
+	int ch = -1;
+
+	/*  Unicode keysyms, for Latin-1:  */
+	if (key >= 0x01000000 && key < 0x01000100)
+		key -= 0x01000000;
+
+	switch (key) {
+	case XK_Return:
+	case XK_KP_Enter:	ch = '\r'; break;
+	case XK_BackSpace:	ch = '\b'; break;
+	case XK_Tab:		ch = '\t'; break;
+	case XK_Escape:		ch = 27; break;
+	case XK_Delete:
+	case XK_KP_Delete:	ch = 127; break;
+
+	case XK_Up:	case XK_KP_Up:	  display_key(m, DISPLAY_KEY_UP); break;
+	case XK_Down:	case XK_KP_Down:  display_key(m, DISPLAY_KEY_DOWN); break;
+	case XK_Left:	case XK_KP_Left:  display_key(m, DISPLAY_KEY_LEFT); break;
+	case XK_Right:	case XK_KP_Right: display_key(m, DISPLAY_KEY_RIGHT); break;
+	case XK_Home:	case XK_KP_Home:  display_key(m, DISPLAY_KEY_HOME); break;
+	case XK_End:	case XK_KP_End:	  display_key(m, DISPLAY_KEY_END); break;
+	case XK_Prior:	case XK_KP_Prior: display_key(m, DISPLAY_KEY_PAGE_UP); break;
+	case XK_Next:	case XK_KP_Next:  display_key(m, DISPLAY_KEY_PAGE_DOWN); break;
+	case XK_Insert:	case XK_KP_Insert: display_key(m, DISPLAY_KEY_INSERT); break;
+
+	default:
+		if (key >= XK_F1 && key <= XK_F12)
+			display_key(m, DISPLAY_KEY_F1 + key - XK_F1);
+		else if (key >= XK_KP_Multiply && key <= XK_KP_9)
+			/*  * + , - . / and 0..9 on the numeric keypad:  */
+			ch = key - XK_KP_Multiply + '*';
+		else if ((key >= 0x20 && key < 0x7f) ||
+		    (key >= 0xa0 && key < 0x100)) {
+			ch = key;
+			/*  Ctrl+letter etc. give control characters:  */
+			if (ctrl && ((key >= 'a' && key <= 'z') ||
+			    (key >= '@' && key <= '_') || key == ' '))
+				ch = key & 0x1f;
+		} else
+			return false;
+	}
+
+	if (ch >= 0)
+		console_makeavail(m->main_console_handle, ch);
+	return true;
 }
 
 

@@ -313,9 +313,18 @@ int mips_cpu_new(struct cpu *cpu, struct memory *mem, struct machine *machine,
 	for (i=0; i<N_MIPS_GPRS; i++)
 		CPU_SETTINGS_ADD_REGISTER64(regnames[i], cpu->cd.mips.gpr[i]);
 	/*  TODO: Write via special handler function!  */
-	for (i=0; i<N_MIPS_COPROC_REGS; i++)
+	for (i=0; i<N_MIPS_COPROC_REGS; i++) {
+		/*  R2000/R3000 have only these coprocessor 0 registers:  */
+		if (cpu->cd.mips.cpu_type.exc_model == EXC3K &&
+		    i != COP0_INDEX && i != COP0_RANDOM &&
+		    i != COP0_ENTRYLO0 && i != COP0_CONTEXT &&
+		    i != COP0_BADVADDR && i != COP0_ENTRYHI &&
+		    i != COP0_STATUS && i != COP0_CAUSE && i != COP0_EPC &&
+		    i != COP0_PRID)
+			continue;
 		CPU_SETTINGS_ADD_REGISTER64(cop0_names[i],
 		    cpu->cd.mips.coproc[0]->reg[i]);
+	}
 
 	return 1;
 }

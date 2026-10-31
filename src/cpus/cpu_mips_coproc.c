@@ -2264,7 +2264,11 @@ void coproc_function(struct cpu *cpu, struct mips_coproc *cp, int cpnr,
 				debug("r%i", rd);
 			if (function & 7)
 				debug(",%i", (int)(function & 7));
-			debug(" [%016llx]", (long long)tmpvalue);
+			/*  The value, if this is the instruction at the pc:  */
+			if (running && cpu->is_32bit)
+				debug(" [%08" PRIx32"]", (uint32_t) tmpvalue);
+			else if (running)
+				debug(" [%016" PRIx64"]", (uint64_t) tmpvalue);
 			debug("\n");
 			return;
 		}

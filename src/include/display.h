@@ -99,7 +99,8 @@ enum display_key {
 	DISPLAY_KEY_HOME,
 	DISPLAY_KEY_END,
 	DISPLAY_KEY_PAGE_UP,
-	DISPLAY_KEY_PAGE_DOWN
+	DISPLAY_KEY_PAGE_DOWN,
+	DISPLAY_KEY_INSERT
 };
 
 
@@ -193,6 +194,7 @@ void display_update_cursor(struct fb_window *win);
 void display_flush(struct fb_window *win);
 void display_check_event(struct emul *emul);
 void display_key(struct machine *m, int key);
+bool display_keysym(struct machine *m, uint32_t keysym, bool ctrl);
 int display_screenshot(struct machine *, const char *file);
 int display_screendump(struct machine *, int n, const char *file,
 	char **namep, int *wp, int *hp);

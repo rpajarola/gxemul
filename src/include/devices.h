@@ -527,10 +527,12 @@ struct lk201_data {
                 
         unsigned char           keyb_buf[8];
         int                     keyb_buf_pos;
+	int			keyb_delay;	/*  ticks until the next key  */
                         
         int                     mouse_mode;
         int                     mouse_revision;         /*  0..15  */  
         int                     mouse_buttons;
+	int			mouse_delay;	/*  ticks until the next update  */
 };
 void lk201_tick(struct machine *, struct lk201_data *); 
 void lk201_tx_data(struct lk201_data *, int port, int idata);

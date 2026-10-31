@@ -2416,6 +2416,377 @@ CTL_HANDLER(cmd_subscribe)
 }
 
 
+/*
+ *  The keyboard: keys typed on the display's keyboard, which is the
+ *  machine's main console (for the LK201, see lk201.c), as from a VNC
+ *  client.
+ */
+
+/*  Keys by their X11 keysym names:  */
+static const struct {
+	const char	*name;
+	uint32_t	keysym;
+} key_names[] = {
+	{ "BackSpace", 0xff08 }, { "Tab", 0xff09 }, { "Return", 0xff0d },
+	{ "Escape", 0xff1b }, { "Home", 0xff50 }, { "Left", 0xff51 },
+	{ "Up", 0xff52 }, { "Right", 0xff53 }, { "Down", 0xff54 },
+	{ "Prior", 0xff55 }, { "Page_Up", 0xff55 }, { "Next", 0xff56 },
+	{ "Page_Down", 0xff56 }, { "End", 0xff57 }, { "Insert", 0xff63 },
+	{ "KP_Enter", 0xff8d }, { "Delete", 0xffff }, { "space", ' ' },
+	{ "F1", 0xffbe }, { "F2", 0xffbf }, { "F3", 0xffc0 },
+	{ "F4", 0xffc1 }, { "F5", 0xffc2 }, { "F6", 0xffc3 },
+	{ "F7", 0xffc4 }, { "F8", 0xffc5 }, { "F9", 0xffc6 },
+	{ "F10", 0xffc7 }, { "F11", 0xffc8 }, { "F12", 0xffc9 },
+	{ NULL, 0 }
+};
+
+
+/*
+ *  type_key():
+ *
+ *  Types one key, such as "a", "Return", "F1" or "Control_L+c" (keys
+ *  joined by + are modifiers, Control or Shift, and a key).
+ */
+static bool type_key(struct machine *m, const char *spec, struct ctl_error *err)
+{
+	static const char unshifted[] = "`1234567890-=[]\\;',./";
+	static const char shifted[] = "~!@#$%^&*()_+{}|:\"<>?";
+	bool ctrl = false, shift = false;
+	const char *p = spec, *plus;
+	char name[40];
+	uint32_t keysym = 0;
+
+	for (;;) {
+		plus = strchr(p, '+');
+		/*  "+" itself, or "Shift_L++":  */
+		if (plus == p && p[1] == '\0')
+			plus = NULL;
+		size_t len = plus != NULL? (size_t) (plus - p) : strlen(p);
+		if (len == 0 || len >= sizeof(name))
+			return fail(err, "bad_arg", "not a key: '%s'", spec);
+		memcpy(name, p, len);
+		name[len] = '\0';
+
+		if (plus == NULL)
+			break;
+		if (strncmp(name, "Control", 7) == 0)
+			ctrl = true;
+		else if (strncmp(name, "Shift", 5) == 0)
+			shift = true;
+		else
+			return fail(err, "bad_arg", "'%s' in '%s' isn't Control "
+			    "or Shift", name, spec);
+		p = plus + 1;
+	}
+
+	if (strlen(name) == 1)
+		keysym = (unsigned char) name[0];
+	else
+		for (int i = 0; key_names[i].name != NULL; i++)
+			if (strcmp(key_names[i].name, name) == 0)
+				keysym = key_names[i].keysym;
+	if (keysym == 0)
+		return fail(err, "bad_arg", "unknown key '%s' (keys are named "
+		    "as X11 keysyms, such as \"a\", \"Return\" or \"F1\")",
+		    name);
+
+	/*  Shift, as on a US keyboard:  */
+	if (shift && keysym >= 'a' && keysym <= 'z')
+		keysym -= 'a' - 'A';
+	else if (shift && keysym < 0x80 && strchr(unshifted, keysym) != NULL)
+		keysym = shifted[strchr(unshifted, keysym) - unshifted];
+
+	if (!display_keysym(m, keysym, ctrl))
+		return fail(err, "bad_arg", "'%s' types nothing", spec);
+	return true;
+}
+
+
+CTL_HANDLER(cmd_keyboard)
+{
+	cJSON *text = cJSON_GetObjectItemCaseSensitive(req, "text");
+	cJSON *keys = cJSON_GetObjectItemCaseSensitive(req, "keys");
+	struct machine *m = cur_machine();
+	int typed = 0, room = console_input_room(m->main_console_handle);
+
+	if ((text == NULL) == (keys == NULL))
+		return fail(err, "bad_arg", "give 'text' or 'keys'");
+
+	if (text != NULL) {
+		if (!cJSON_IsString(text))
+			return fail(err, "bad_arg", "'text' should be a string");
+
+		/*  UTF-8, typed as Latin-1:  */
+		const unsigned char *p = (const unsigned char *) text->valuestring;
+		while (*p != '\0') {
+			int c = *p++;
+			if (c >= 0xc2 && c <= 0xc3 && (*p & 0xc0) == 0x80)
+				c = ((c & 0x1f) << 6) | (*p++ & 0x3f);
+			else if (c >= 0x80)
+				return fail(err, "bad_arg", "only Latin-1 "
+				    "characters can be typed");
+			if (typed >= room)
+				return fail(err, "busy", "the keyboard's input is "
+				    "full after %i characters", typed);
+			display_keysym(m, c, false);
+			typed ++;
+		}
+	} else {
+		cJSON *k;
+		if (!cJSON_IsArray(keys))
+			return fail(err, "bad_arg", "'keys' should be a list of "
+			    "keys, such as [\"Return\", \"F1\", \"Control_L+c\"]");
+		cJSON_ArrayForEach(k, keys) {
+			if (!cJSON_IsString(k))
+				return fail(err, "bad_arg", "'keys' should be a "
+				    "list of keys, such as [\"Return\", \"F1\"]");
+			if (typed + 8 > room)
+				return fail(err, "busy", "the keyboard's input is "
+				    "full after %i keys", typed);
+			if (!type_key(m, k->valuestring, err))
+				return false;
+			typed ++;
+		}
+	}
+
+	cJSON_AddNumberToObject(result, "typed", typed);
+	return true;
+}
+
+
+/*
+ *  The mouse: moves and button presses, one step at a time, each after
+ *  the guest has read the one before (see mouse_run()). A move to a
+ *  position first pushes the pointer to the top left corner, and then
+ *  goes there in small steps, which pointer acceleration leaves alone.
+ */
+#define	MOUSE_STEP		3	/*  pixels per step  */
+#define	MOUSE_HOME_STEP		50
+#define	MOUSE_STEP_TIMEOUT_US	2000000
+
+/*  As a person would: a pause before a button's action, and a button
+    held this long in a click:  */
+#define	MOUSE_SETTLE_US		50000
+#define	MOUSE_HOLD_US		100000
+
+struct mouse_step {
+	int		dx, dy;
+	int		button;		/*  1..3, or 0 for a move  */
+	bool		pressed;
+	int		wait_us;	/*  > 0: a pause  */
+};
+
+static struct mouse_step *mouse_steps = NULL;
+static int mouse_n_steps = 0, mouse_next_step = 0;
+static uint64_t mouse_read_mark;
+static bool mouse_waiting = false, mouse_stuck = false;
+static int64_t mouse_step_at;
+static int mouse_fb = 0;
+
+/*  Where the steps leave the pointer, if known, and the buttons held:  */
+static bool mouse_pos_known = false;
+static int mouse_x, mouse_y, mouse_buttons_held = 0;
+
+
+static void mouse_add(int dx, int dy, int button, bool pressed)
+{
+	CHECK_ALLOCATION(mouse_steps = (struct mouse_step *) realloc(
+	    mouse_steps, sizeof(struct mouse_step) * (mouse_n_steps + 1)));
+	mouse_steps[mouse_n_steps].dx = dx;
+	mouse_steps[mouse_n_steps].dy = dy;
+	mouse_steps[mouse_n_steps].button = button;
+	mouse_steps[mouse_n_steps].pressed = pressed;
+	mouse_steps[mouse_n_steps].wait_us = 0;
+	mouse_n_steps ++;
+}
+
+
+static void mouse_add_wait(int us)
+{
+	mouse_add(0, 0, 0, false);
+	mouse_steps[mouse_n_steps - 1].wait_us = us;
+}
+
+
+/*  A move by dx, dy, in small steps:  */
+static void mouse_add_move(int dx, int dy)
+{
+	int adx = dx < 0? -dx : dx, ady = dy < 0? -dy : dy;
+	int n = ((adx > ady? adx : ady) + MOUSE_STEP - 1) / MOUSE_STEP;
+
+	for (int i = 1; i <= n; i++)
+		mouse_add(dx * i / n - dx * (i - 1) / n,
+		    dy * i / n - dy * (i - 1) / n, 0, false);
+}
+
+
+/*
+ *  mouse_run():
+ *
+ *  Called by control_poll(): does the next mouse step, once the guest
+ *  has read the one before, while the machine runs.
+ */
+static void mouse_run(void)
+{
+	if (mouse_n_steps == 0 || debugger_is_stopped())
+		return;
+
+	/*  Until the step before is done:  */
+	if (mouse_waiting) {
+		struct mouse_step *prev = &mouse_steps[mouse_next_step - 1];
+		if (prev->wait_us > 0) {
+			if (now_us() - mouse_step_at < prev->wait_us)
+				return;
+		} else if (console_mouse_reads() == mouse_read_mark) {
+			/*  A guest which doesn't read the mouse:  */
+			if (now_us() - mouse_step_at > MOUSE_STEP_TIMEOUT_US) {
+				mouse_stuck = true;
+				mouse_next_step = mouse_n_steps = 0;
+				mouse_waiting = false;
+				mouse_pos_known = false;
+			}
+			return;
+		}
+		mouse_waiting = false;
+	}
+
+	if (mouse_next_step >= mouse_n_steps) {
+		mouse_next_step = mouse_n_steps = 0;
+		return;
+	}
+
+	struct mouse_step *st = &mouse_steps[mouse_next_step++];
+	if (st->wait_us > 0)
+		;
+	else if (st->button != 0)
+		console_mouse_button(st->button, st->pressed);
+	else
+		console_mouse_coordinate_update(st->dx, st->dy, mouse_fb);
+	mouse_read_mark = console_mouse_reads();
+	mouse_waiting = true;
+	mouse_step_at = now_us();
+}
+
+
+CTL_HANDLER(cmd_mouse)
+{
+	static const char *button_names[] = { "left", "middle", "right" };
+	cJSON *button = cJSON_GetObjectItemCaseSensitive(req, "button");
+	cJSON *action = cJSON_GetObjectItemCaseSensitive(req, "action");
+	struct machine *m = cur_machine();
+	int64_t x, y, dx, dy, screen;
+	int b = 0;
+	bool has_pos;
+
+	if (!get_int(req, "x", -1, &x, err) || !get_int(req, "y", -1, &y, err)
+	    || !get_int(req, "dx", 0, &dx, err) ||
+	    !get_int(req, "dy", 0, &dy, err) ||
+	    !get_int(req, "screen", 0, &screen, err))
+		return false;
+
+	has_pos = x >= 0 || y >= 0;
+	if (has_pos && (x < 0 || y < 0))
+		return fail(err, "bad_arg", "give both 'x' and 'y'");
+	if (has_pos && (dx != 0 || dy != 0))
+		return fail(err, "bad_arg", "give 'x' and 'y', or 'dx' and "
+		    "'dy', not both");
+	if (screen < 0 || screen >= m->display_md.n_fb_windows)
+		return fail(err, "no_such_screen", "no screen %" PRIi64,
+		    screen);
+	if (has_pos && (x >= m->display_md.fb_windows[screen]->xsize ||
+	    y >= m->display_md.fb_windows[screen]->ysize))
+		return fail(err, "bad_arg", "(%" PRIi64 ", %" PRIi64 ") is "
+		    "outside the screen, which is %ix%i", x, y,
+		    m->display_md.fb_windows[screen]->xsize,
+		    m->display_md.fb_windows[screen]->ysize);
+
+	if (button != NULL) {
+		for (b = 0; b < 3; b++)
+			if (cJSON_IsString(button) && strcmp(
+			    button->valuestring, button_names[b]) == 0)
+				break;
+		if (b == 3)
+			return fail(err, "bad_arg", "'button' should be "
+			    "\"left\", \"middle\" or \"right\"");
+		b ++;
+	}
+	const char *act = cJSON_IsString(action)? action->valuestring :
+	    "click";
+	if (action != NULL && (!cJSON_IsString(action) || (strcmp(act,
+	    "click") != 0 && strcmp(act, "double") != 0 && strcmp(act,
+	    "down") != 0 && strcmp(act, "up") != 0)))
+		return fail(err, "bad_arg", "'action' should be \"click\", "
+		    "\"double\", \"down\" or \"up\"");
+	if (action != NULL && b == 0)
+		return fail(err, "bad_arg", "'action' needs a 'button'");
+
+	bool anything = has_pos || dx != 0 || dy != 0 || b != 0;
+	if (anything && debugger_is_stopped())
+		return fail(err, "stopped", "the machine is stopped, so its "
+		    "guest can't read the mouse; continue it first");
+
+	if (anything)
+		mouse_stuck = false;
+	mouse_fb = screen;
+
+	if (has_pos) {
+		if (mouse_buttons_held != 0 && mouse_pos_known)
+			/*  Dragging: from where the pointer is.  */
+			mouse_add_move(x - mouse_x, y - mouse_y);
+		else if (mouse_buttons_held != 0)
+			return fail(err, "bad_arg", "a button is held, and "
+			    "where the pointer is isn't known");
+		else {
+			int w = m->display_md.fb_windows[screen]->xsize;
+			int h = m->display_md.fb_windows[screen]->ysize;
+			int n = ((w > h? w : h) * 2) / MOUSE_HOME_STEP + 1;
+			for (int i = 0; i < n; i++)
+				mouse_add(-MOUSE_HOME_STEP, -MOUSE_HOME_STEP,
+				    0, false);
+			mouse_add_move(x, y);
+		}
+		mouse_x = x;
+		mouse_y = y;
+		mouse_pos_known = true;
+	} else if (dx != 0 || dy != 0) {
+		mouse_add_move(dx, dy);
+		mouse_x += dx;
+		mouse_y += dy;
+	}
+
+	if (b != 0) {
+		int mask = 1 << (b - 1);
+		mouse_add_wait(MOUSE_SETTLE_US);
+		if (strcmp(act, "click") == 0 || strcmp(act, "double") == 0) {
+			mouse_add(0, 0, b, true);
+			mouse_add_wait(MOUSE_HOLD_US);
+			mouse_add(0, 0, b, false);
+			if (strcmp(act, "double") == 0) {
+				mouse_add_wait(MOUSE_HOLD_US);
+				mouse_add(0, 0, b, true);
+				mouse_add_wait(MOUSE_HOLD_US);
+				mouse_add(0, 0, b, false);
+			}
+		} else {
+			bool down = strcmp(act, "down") == 0;
+			mouse_add(0, 0, b, down);
+			mouse_buttons_held = down? mouse_buttons_held | mask :
+			    mouse_buttons_held & ~mask;
+		}
+	}
+
+	cJSON_AddNumberToObject(result, "pending",
+	    mouse_n_steps - mouse_next_step + (mouse_waiting? 1 : 0));
+	if (mouse_stuck)
+		cJSON_AddBoolToObject(result, "stuck", true);
+	if (mouse_pos_known) {
+		cJSON_AddNumberToObject(result, "x", mouse_x);
+		cJSON_AddNumberToObject(result, "y", mouse_y);
+	}
+	return true;
+}
+
+
 /*  The commands, and the parameters they take:  */
 static const struct {
 	const char	*name;
@@ -2448,6 +2819,8 @@ static const struct {
 	{ "devices",		cmd_devices,		"" },
 	{ "subscribe",		cmd_subscribe,		"console log" },
 	{ "screendump",		cmd_screendump,		"file screen" },
+	{ "keyboard",		cmd_keyboard,		"text keys" },
+	{ "mouse",		cmd_mouse,		"x y dx dy button action screen" },
 	{ NULL,			NULL,			NULL }
 };
 
@@ -2674,6 +3047,7 @@ void control_poll(bool force)
 	    is turned away as busy:  */
 	in_poll = true;
 	run_until_check();
+	mouse_run();
 	flush_subscriptions();
 	read_client();
 	accept_clients();

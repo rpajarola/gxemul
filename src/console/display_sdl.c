@@ -1292,6 +1292,7 @@ static void key_down(struct fb_window *win, const SDL_Keysym *keysym)
 	case SDLK_HOME:		display_key(m, DISPLAY_KEY_HOME); break;
 	case SDLK_END:		display_key(m, DISPLAY_KEY_END); break;
 	case SDLK_PAGEUP:	display_key(m, DISPLAY_KEY_PAGE_UP); break;
+	case SDLK_INSERT:	display_key(m, DISPLAY_KEY_INSERT); break;
 	case SDLK_PAGEDOWN:	display_key(m, DISPLAY_KEY_PAGE_DOWN); break;
 	case SDLK_KP_8:	if (!numlock) display_key(m, DISPLAY_KEY_UP); break;
 	case SDLK_KP_2:	if (!numlock) display_key(m, DISPLAY_KEY_DOWN); break;

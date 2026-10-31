@@ -154,7 +154,10 @@ static const struct mcp_tool {
 	  "\"pc\": {\"type\": \"string\", \"description\": \"Stop when this "
 	  "address is reached. " ADDR "\"}, "
 	  "\"insns\": {\"type\": \"integer\", \"description\": \"Stop after "
-	  "this many more instructions.\"}, "
+	  "about this many more instructions. Like the console patterns and "
+	  "timeout_ms, this is checked every few milliseconds, so the machine "
+	  "stops some 100000 instructions later; step runs an exact "
+	  "number.\"}, "
 	  "\"timeout_ms\": {\"type\": \"integer\", \"description\": \"Stop "
 	  "after this many milliseconds.\"}, "
 	  WAIT_PARAM("60, or longer than timeout_ms"), "" },
@@ -281,6 +284,44 @@ static const struct mcp_tool {
 	  "\"string\", \"description\": \"Also keep the image as this PNG "
 	  "file.\"}", "" },
 
+	{ "keyboard", "keyboard", TOOL_PLAIN, 0,
+	  "Types on the display's keyboard (such as a DECstation's LK201), as "
+	  "if from the host's keyboard: the characters of text, or keys. "
+	  "Text is typed as it is: a backslash is a backslash. For Return, "
+	  "set enter; Tab, BackSpace and Escape are the characters "
+	  "themselves (in JSON, \"\\t\", \"\\b\", \"\\u001b\"). The "
+	  "keys are typed about as fast as a real keyboard sends them. With "
+	  "a serial console instead of a display, this types on that "
+	  "console.",
+	  "\"text\": {\"type\": \"string\", \"description\": \"What to "
+	  "type (Latin-1).\"}, \"keys\": {\"type\": \"array\", \"items\": "
+	  "{\"type\": \"string\"}, \"description\": \"Instead of text: "
+	  "keys named as X11 keysyms (\\\"Return\\\", \\\"F1\\\" to "
+	  "\\\"F12\\\", \\\"Up\\\", \\\"Page_Down\\\", "
+	  "\\\"Insert\\\", \\\"a\\\", \\\"space\\\"), each pressed "
+	  "and released; Control or Shift joined by +, such as "
+	  "\\\"Control_L+c\\\" or \\\"Shift_L+a\\\".\"}, \"enter\": "
+	  "{\"type\": \"boolean\", \"description\": \"Press Return after "
+	  "text or keys.\"}", "" },
+
+	{ "mouse", "mouse", TOOL_PLAIN, 0,
+	  "Moves the display's mouse, and presses its buttons, as the guest "
+	  "sees it (the machine must be running). Positions are in the "
+	  "screen's pixels, as in screendump: a move to x, y first pushes "
+	  "the pointer into the top left corner, then moves it there in "
+	  "small steps, so it ends where asked unless the guest scales mouse "
+	  "movements. The move comes before the button. Returns once the "
+	  "guest has read it all; screendump shows where the pointer is.",
+	  "\"x\": {\"type\": \"integer\"}, \"y\": {\"type\": \"integer\"}, "
+	  "\"dx\": {\"type\": \"integer\", \"description\": \"Instead of "
+	  "x and y: a move by this much.\"}, \"dy\": {\"type\": "
+	  "\"integer\"}, \"button\": {\"enum\": [\"left\", \"middle\", "
+	  "\"right\"]}, \"action\": {\"enum\": [\"click\", \"double\", "
+	  "\"down\", \"up\"], \"description\": \"What the button does "
+	  "(default click); down, a move, and up drag.\"}, \"screen\": "
+	  "{\"type\": \"integer\", \"description\": \"The framebuffer "
+	  "window (default 0).\"}", "" },
+
 	{ "raw", "raw", TOOL_PLAIN, 0,
 	  "Runs any debugger command, as if typed at the GXemul> prompt, "
 	  "and returns what it printed; e.g. \"tlbdump\", \"device list\", "
@@ -310,7 +351,8 @@ static const char instructions[] =
 	"pause it first. pause, step and run_until wait for the machine to "
 	"stop and say how it stopped; so does continue, with wait. The "
 	"serial consoles are read with console_read and typed into with "
-	"console_write; screendump shows the screen. raw runs any debugger "
+	"console_write; screendump shows the screen, and keyboard and mouse "
+	"type and point on it. raw runs any debugger "
 	"command. Every result has ninstrs, the number of instructions the "
 	"machine has run.";
 
@@ -660,6 +702,79 @@ static void tmp_png(char *buf, size_t len)
 
 
 /*
+ *  add_enter():
+ *
+ *  For enter: a Return after console_write's data, or keyboard's text or
+ *  keys.
+ */
+static void add_enter(cJSON *req, const char *cmd)
+{
+	cJSON *enter = cJSON_DetachItemFromObjectCaseSensitive(req, "enter");
+	bool keyboard = strcmp(cmd, "keyboard") == 0;
+	cJSON *keys = cJSON_GetObjectItemCaseSensitive(req, "keys");
+
+	if (!cJSON_IsTrue(enter)) {
+		cJSON_Delete(enter);
+		return;
+	}
+	cJSON_Delete(enter);
+
+	if (keyboard && cJSON_IsArray(keys)) {
+		cJSON_AddItemToArray(keys, cJSON_CreateString("Return"));
+		return;
+	}
+
+	const char *key = keyboard? "text" : "data";
+	cJSON *data = cJSON_GetObjectItemCaseSensitive(req, key);
+	cJSON *enc = cJSON_GetObjectItemCaseSensitive(req, "encoding");
+	bool hex = cJSON_IsString(enc) && strcmp(enc->valuestring, "hex") == 0;
+	const char *d = cJSON_IsString(data)? data->valuestring : "";
+	char *s;
+
+	CHECK_ALLOCATION(s = (char *) malloc(strlen(d) + 3));
+	snprintf(s, strlen(d) + 3, "%s%s", d, hex? "0d" : "\r");
+	cJSON_DeleteItemFromObjectCaseSensitive(req, key);
+	cJSON_AddStringToObject(req, key, s);
+	free(s);
+}
+
+
+/*
+ *  wait_mouse():
+ *
+ *  Waits until the guest has read all of the mouse's steps, and puts the
+ *  last answer in out.
+ */
+static cJSON *wait_mouse(struct conn *c, cJSON *out, double *ninstrsp)
+{
+	struct timeval deadline, now;
+
+	deadline_in(&deadline, MCP_RESPONSE_TIMEOUT_SEC);
+	for (;;) {
+		cJSON *pending = cJSON_GetObjectItemCaseSensitive(out,
+		    "pending");
+		if (!cJSON_IsNumber(pending) || pending->valuedouble == 0 ||
+		    cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(out,
+		    "stuck")))
+			return out;
+
+		gettimeofday(&now, NULL);
+		if (now.tv_sec > deadline.tv_sec)
+			return out;
+#ifdef _WIN32
+		Sleep(50);
+#else
+		usleep(50000);
+#endif
+		cJSON_Delete(out);
+		out = conn_cmd(c, "mouse", ninstrsp);
+		if (out == NULL)
+			return NULL;
+	}
+}
+
+
+/*
  *  call_tool():
  *
  *  Runs a tool, and returns its result (content, and isError).
@@ -683,26 +798,10 @@ static cJSON *call_tool(const struct mcp_tool *t, const char *cmd,
 	if (t != NULL && (t->kind == TOOL_RUN || t->kind == TOOL_WAIT))
 		cJSON_DeleteItemFromObjectCaseSensitive(req, "wait");
 
-	/*  console_write's enter: a Return after the data:  */
-	cJSON *enter = cJSON_GetObjectItemCaseSensitive(req, "enter");
-	if (t != NULL && cmd != NULL && strcmp(cmd, "console_write") == 0 &&
-	    enter != NULL) {
-		bool press = cJSON_IsTrue(enter);
-		cJSON *data = cJSON_GetObjectItemCaseSensitive(req, "data");
-		cJSON *enc = cJSON_GetObjectItemCaseSensitive(req, "encoding");
-		bool hex = cJSON_IsString(enc) &&
-		    strcmp(enc->valuestring, "hex") == 0;
-		const char *d = cJSON_IsString(data)? data->valuestring : "";
-		char *s;
-
-		CHECK_ALLOCATION(s = (char *) malloc(strlen(d) + 3));
-		snprintf(s, strlen(d) + 3, "%s%s", d, !press? "" :
-		    hex? "0d" : "\r");
-		cJSON_DeleteItemFromObjectCaseSensitive(req, "enter");
-		cJSON_DeleteItemFromObjectCaseSensitive(req, "data");
-		cJSON_AddStringToObject(req, "data", s);
-		free(s);
-	}
+	/*  console_write's and keyboard's enter: a Return after the rest:  */
+	if (cmd != NULL && (strcmp(cmd, "console_write") == 0 ||
+	    strcmp(cmd, "keyboard") == 0))
+		add_enter(req, cmd);
 
 	bool own_file = false;
 	if (t != NULL && t->kind == TOOL_SCREENDUMP &&
@@ -750,6 +849,17 @@ static cJSON *call_tool(const struct mcp_tool *t, const char *cmd,
 	} else {
 		cJSON_AddStringToObject(req, "cmd", cmd);
 		out = conn_request(&c, req, &ninstrs);
+		if (out != NULL && strcmp(cmd, "mouse") == 0) {
+			out = wait_mouse(&c, out, &ninstrs);
+			if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(out,
+			    "stuck"))) {
+				cJSON_Delete(out);
+				out = NULL;
+				snprintf(c.error, sizeof(c.error), "the guest "
+				    "doesn't read the mouse (has it got one, "
+				    "and has its driver started?)");
+			}
+		}
 
 		if (out != NULL && t != NULL && t->kind == TOOL_RUN) {
 			cJSON *already = cJSON_GetObjectItemCaseSensitive(out,
