@@ -782,6 +782,12 @@ static unsigned char *udp_reassemble(struct net *net,
 	/*  The first fragment has the UDP header, after the IP header:  */
 	if (ofs == 0)
 		memcpy(r->packet, packet, 34);
+	if (r->data_len >= 0 &&
+	    (ofs + data_len > r->data_len ||
+	     (!more && ofs + data_len != r->data_len))) {
+		r->in_use = 0;
+		return NULL;
+	}
 	memcpy(r->packet + 34 + ofs, packet + 34, data_len);
 	for (i = ofs / 8; i < (ofs + data_len + 7) / 8; i++)
 		r->have[i / 8] |= 1 << (i & 7);
