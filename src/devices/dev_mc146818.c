@@ -548,17 +548,17 @@ DEVICE_ACCESS(mc146818)
 #endif
 
 	/*
-	 *  Sprite seems to wants UF interrupt status, once every second, or
-	 *  it hangs forever during bootup.  (These do not cause interrupts,
-	 *  but it is good enough... Sprite polls this, iirc.)
-	 *
 	 *  Linux on at least sgimips and evbmips (Malta) wants the UIP bit
 	 *  in REGA to be updated once a second.
+	 *
+	 *  (UF is not touched here: the tick function sets it once a second.
+	 *  Sprite counts its seconds only on UF, so clearing it on every
+	 *  REGA/REGC access, and setting it only every uip_threshold seconds,
+	 *  made Sprite's clock stand still between them.)
 	 */
 	if (relative_addr == MC_REGA*4 || relative_addr == MC_REGC*4) {
 		timet = time(NULL);
 		tmp = gmtime(&timet);
-		d->reg[MC_REGC * 4] &= ~MC_REGC_UF;
 		if (tmp->tm_sec != d->previous_second) {
 			d->n_seconds_elapsed ++;
 			d->previous_second = tmp->tm_sec;
@@ -568,7 +568,6 @@ DEVICE_ACCESS(mc146818)
 
 			d->reg[MC_REGA * 4] |= MC_REGA_UIP;
 
-			d->reg[MC_REGC * 4] |= MC_REGC_UF;
 			d->reg[MC_REGC * 4] |= MC_REGC_IRQF;
 
 			/*  For some reason, some Linux/DECstation KN04
@@ -866,9 +865,6 @@ void dev_mc146818_init(struct machine *machine, struct memory *mem,
 	 *  it looses speed. This hack gives Linux the impression that the cpu
 	 *  is uip_threshold times faster than the slow clock it would
 	 *  otherwise detect.
-	 *
-	 *  TODO:  Find out if this messes up Sprite emulation; if so, then
-	 *         this hack has to be removed.
 	 */
 	d->uip_threshold = 8;
 

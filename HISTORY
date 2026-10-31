@@ -5531,9 +5531,49 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.12  ==============
 
-20261030	UDP through the simulated gateway: a datagram that the guest
+20261030	The control socket's keyboard command types text, or keys by
+		their X11 keysym names (F1 to F12, the cursor and editing
+		keys, Control_L+c, ...), on the display's keyboard, and its
+		mouse command moves the display's mouse to a position on the
+		screen, and clicks, double-clicks or drags. Both are MCP tools
+		too. The LK201 types F1 to F12, Insert, Home, End, Page Up and
+		Page Down (also from the SDL window and VNC; before, only the
+		arrow keys came through), and Escape as F11; its keys and
+		mouse are sent about as fast as a real LK201's 4800 bps line
+		allows, one key at a time. The R2000 and R3000 have only their
+		coprocessor 0 registers (regs, print), and the value in the
+		disassembly of mtc0 is 32 bits on a 32-bit CPU, and only shown
+		at the pc. The MCP run_until tool says that insns is checked
+		every few milliseconds.
+
+==============  RELEASE 1.0.13  ==============
+
+20261031	MC146818: the update-ended flag (UF) is no longer cleared on
+		every read of register A or C, so Sprite's clock (which counts
+		seconds only on UF) runs again, instead of standing still for
+		about 9 seconds at a time.
+		LANCE: received frames are filtered by address (own address,
+		broadcast, the multicast filter, promiscuous mode) for every
+		network backend, not only tap devices; with L2TP, all of the
+		LAN's multicast traffic reached the guest.
+20261031	The LK201 keyboard: Esc (an ESC that doesn't start an escape
+		sequence) is typed as Ctrl+[ instead of F11 (the LK201 has no
+		Esc key; Ctrl+[ gives ESC in X and on the Ultrix console), so
+		Esc and Ctrl+[ leave vi's insert mode. Ctrl+\, Ctrl+], Ctrl+^
+		and Ctrl+_ are typed too, F15 to F20 (F15 is Help, F16 is Do)
+		as well, a cursor key with Shift or Ctrl (as in xterm) is the
+		cursor key, and other escape sequences type nothing instead of
+		their characters. (Antoni Sawicki)
+20261031	The LK201 keyboard waits 100 ms for the rest of an escape
+		sequence, so a key whose bytes arrive split (from stdin or
+		telnet) is still that key, instead of Esc and characters.
+20261031	start_paused ("Start paused, in the debugger") starts in the
+		debugger, as -V does. It used to pause the CPUs instead, so
+		continue stopped again at once (or, without -V, the emulator
+		exited right away).
+20261031	UDP through the simulated gateway: a datagram that the guest
 		sends in IP fragments is put together (NFS's 8 KB writes were
 		dropped, with "fragmented UDP packet, TODO"), and one sent
 		from a reserved port leaves the host from a reserved port
 		too, where the host lets a user bind one, for NFS servers
-		that require it. See doc/networking.html.
+		that require it. See doc/networking.html. (Antoni Sawicki)

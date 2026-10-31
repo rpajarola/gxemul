@@ -916,6 +916,9 @@ void console_flush(void)
 }
 
 
+static uint64_t console_mouse_n_reads = 0;
+
+
 /*
  *  console_mouse_coordinate_update():
  *
@@ -965,6 +968,19 @@ void console_getmouse(int *dx, int *dy, int *buttons, int *fb_nr)
 
 	console_mouse_dx = 0;
 	console_mouse_dy = 0;
+	console_mouse_n_reads ++;
+}
+
+
+/*
+ *  console_mouse_reads():
+ *
+ *  How many times the mouse has been read (by console_getmouse()), so that
+ *  a program moving it can wait until a movement has been seen.
+ */
+uint64_t console_mouse_reads(void)
+{
+	return console_mouse_n_reads;
 }
 
 

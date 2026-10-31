@@ -1016,93 +1016,19 @@ static void send_challenge(struct vnc_client *c)
  *  Input:
  */
 
-/*  X11 keysyms:  */
-#define	XK_BackSpace	0xff08
-#define	XK_Tab		0xff09
-#define	XK_Return	0xff0d
-#define	XK_Escape	0xff1b
-#define	XK_Home		0xff50
-#define	XK_Left		0xff51
-#define	XK_Up		0xff52
-#define	XK_Right	0xff53
-#define	XK_Down		0xff54
-#define	XK_Prior	0xff55
-#define	XK_Next		0xff56
-#define	XK_End		0xff57
-#define	XK_KP_Enter	0xff8d
-#define	XK_KP_Home	0xff95
-#define	XK_KP_Left	0xff96
-#define	XK_KP_Up	0xff97
-#define	XK_KP_Right	0xff98
-#define	XK_KP_Down	0xff99
-#define	XK_KP_Prior	0xff9a
-#define	XK_KP_Next	0xff9b
-#define	XK_KP_End	0xff9c
-#define	XK_KP_Delete	0xff9f
-#define	XK_KP_Multiply	0xffaa
-#define	XK_KP_Divide	0xffaf
-#define	XK_KP_0		0xffb0
-#define	XK_KP_9		0xffb9
-#define	XK_F1		0xffbe
-#define	XK_F12		0xffc9
+/*  X11 keysyms (the others are in display.c):  */
 #define	XK_Control_L	0xffe3
 #define	XK_Control_R	0xffe4
-#define	XK_Delete	0xffff
 
 
 static void key_event(struct vnc_client *c, bool down, uint32_t key)
 {
-	struct machine *m = c->win->machine;
-	int ch = -1;
-
 	if (key == XK_Control_L)
 		c->ctrl_l = down;
 	if (key == XK_Control_R)
 		c->ctrl_r = down;
-	if (!down)
-		return;
-
-	/*  Unicode keysyms, for Latin-1:  */
-	if (key >= 0x01000000 && key < 0x01000100)
-		key -= 0x01000000;
-
-	switch (key) {
-	case XK_Return:
-	case XK_KP_Enter:	ch = '\r'; break;
-	case XK_BackSpace:	ch = '\b'; break;
-	case XK_Tab:		ch = '\t'; break;
-	case XK_Escape:		ch = 27; break;
-	case XK_Delete:
-	case XK_KP_Delete:	ch = 127; break;
-
-	case XK_Up:	case XK_KP_Up:	  display_key(m, DISPLAY_KEY_UP); break;
-	case XK_Down:	case XK_KP_Down:  display_key(m, DISPLAY_KEY_DOWN); break;
-	case XK_Left:	case XK_KP_Left:  display_key(m, DISPLAY_KEY_LEFT); break;
-	case XK_Right:	case XK_KP_Right: display_key(m, DISPLAY_KEY_RIGHT); break;
-	case XK_Home:	case XK_KP_Home:  display_key(m, DISPLAY_KEY_HOME); break;
-	case XK_End:	case XK_KP_End:	  display_key(m, DISPLAY_KEY_END); break;
-	case XK_Prior:	case XK_KP_Prior: display_key(m, DISPLAY_KEY_PAGE_UP); break;
-	case XK_Next:	case XK_KP_Next:  display_key(m, DISPLAY_KEY_PAGE_DOWN); break;
-
-	default:
-		if (key >= XK_F1 && key <= XK_F12)
-			display_key(m, DISPLAY_KEY_F1 + key - XK_F1);
-		else if (key >= XK_KP_Multiply && key <= XK_KP_9)
-			/*  * + , - . / and 0..9 on the numeric keypad:  */
-			ch = key - XK_KP_Multiply + '*';
-		else if ((key >= 0x20 && key < 0x7f) ||
-		    (key >= 0xa0 && key < 0x100)) {
-			ch = key;
-			/*  Ctrl+letter etc. give control characters:  */
-			if ((c->ctrl_l || c->ctrl_r) && ((key >= 'a' &&
-			    key <= 'z') || (key >= '@' && key <= '_') ||
-			    key == ' '))
-				ch = key & 0x1f;
-		}
-	}
-
-	if (ch >= 0)
-		console_makeavail(m->main_console_handle, ch);
+	if (down)
+		display_keysym(c->win->machine, key, c->ctrl_l || c->ctrl_r);
 }
 
 
