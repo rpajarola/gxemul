@@ -5571,3 +5571,7 @@ Changelog for GXemul:
 		debugger, as -V does. It used to pause the CPUs instead, so
 		continue stopped again at once (or, without -V, the emulator
 		exited right away).
+20261031	The LK201 keyboard no longer drops keys typed right after Esc:
+		what starts with ESC but isn't a key's escape sequence is
+		typed as Ctrl+[ and its characters, so typing Esc and then O
+		in vi within 100 ms opens a line again. (Antoni Sawicki)
