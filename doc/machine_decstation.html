@@ -78,7 +78,8 @@ copy of the PROM from your own machine, then you can try to
 <a href="#PROM">run that in the emulator</a>.
 The 5000/200's own PROM can also be run, with dumps of the
 <a href="#PROM200">option ROMs</a> of its SCSI controller and Ethernet
-interface.
+interface. With a real PROM, an <a href="#HX">HX framebuffer</a>
+(1280x1024) can be used instead of the default one.
 
 
 
@@ -864,8 +865,10 @@ on framebuffer would be nice.)</font>
 <p>Some of the tests fail only because GXemul doesn't emulate what they
 check: on the KN02-BA V5.7j, <tt>3/cache/seg</tt> and
 <tt>3/cache/isol</tt> (a real R3000 data cache) and <tt>3/rtc/time</tt>
-(real-time I/O timing), and on the PMAG-BA V5.3a,
-<tt>0/curs</tt> and <tt>0/ptrn</tt> (the Bt459's signature registers).
+(real-time I/O timing), on the PMAG-BA V5.3a,
+<tt>0/curs</tt> and <tt>0/ptrn</tt> (the Bt459's signature registers),
+and on the PMAGB-BA V1.1, two parts of <tt>0/patt</tt> and
+<tt>0/line</tt> (the <a href="#HX">HX</a>'s signature registers).
 With <tt>"skip_failing_tests": true</tt> in the
 <a href="configfiles.html#config">machine.json</a> ("Skip the self-tests
 that fail only in gxemul" on the Firmware page of the configuration
@@ -949,6 +952,49 @@ an option card can be dumped the same way, and loaded in its slot.
 <tt>t 5/cntl</tt>, <tt>t 5/sram</tt>). Some of the PROM's own tests of
 the system module (slot 7: caches, serial lines, and memory ECC) fail,
 as those are not emulated in that detail.
+</p>
+
+
+<p><br>
+<a name="HX"><h3>HX (PMAGB-BA) framebuffer, 1280x1024:</h3></a>
+
+<p>A framebuffer in a TURBOchannel slot is a PMAG-BA (CX), with 1024x864
+pixels at 8 bits per pixel. When the slot is given the option ROM image of
+a PMAGB-BA (HX), it is an HX instead, with 1280x1024 pixels at 8 bits per
+pixel. Its SFB ("smart frame buffer") chip draws for the X server: fills,
+stipples, lines and copies, with raster operations and plane masks. There
+is no built-in ROM image for the HX, so it needs a real system ROM too
+(<tt>"prom_emulation": false</tt>). The HX's ROM V1.1 is in MAME's
+<tt>ds5k133</tt> ROM set as <tt>pmagb-ba-rom.img</tt>, together with the
+5000/1xx system ROM; with <tt>ds5k133.zip</tt> in a
+<a href="configfiles.html#files">ROM folder</a>, the names alone are
+enough:
+
+<pre>
+{
+  "gxemul": 1,
+  "name": "DECstation 5000/133 with an HX",
+  "machine": { "type": "decstation", "model": "3min", "memory_mb": 128 },
+  "boot": { "prom_emulation": false, "rom": "ds5000-133_005eb.bin" },
+  "drives": [ { "file": "ultrix.dsk", "kind": "disk", "id": 0 } ],
+  "slots": { "0": "pmagb-ba-rom.img" }
+}
+</pre>
+
+<p>On a 5000/200, add <tt>"0": "pmagb-ba-rom.img"</tt> to the slots of the
+<a href="#PROM200">example above</a>. In the configuration window, the
+image goes in slot 0, on the Firmware page.
+
+<p>The system ROM finds the card (<tt>cnfg</tt> shows
+<tt>0: PMAGB-BA DEC V1.1 TCF0 (HX -- d=8 )</tt>), and its console is on
+the HX's screen. Ultrix 4.5 (with the <tt>fb</tt> device, as in
+<tt>genvmunix</tt>), its X server and DECwindows run at 1280x1024, on
+the 5000/200 and on the 5000/1xx.
+
+<p>Two parts of the HX ROM's self-tests read signature registers that
+GXemul doesn't compute: the Signature Analysis of <tt>0/patt</tt> and the
+Line Signature Mode of <tt>0/line</tt>. <tt>"skip_failing_tests":
+true</tt> (see <a href="#PROM">above</a>) makes them pass.
 </p>
 
 <p><br>

@@ -12,10 +12,16 @@
 #	    0/curs, 0/ptrn		read the Bt459's signature registers,
 #					which gxemul does not compute
 #
+#	PMAGB-BA V1.1 (option ROM of the HX frame buffer):
+#	    0/patt/sig, 0/line/sig	the Signature Analysis and Line
+#					Signature Mode parts of 0/patt and
+#					0/line, likewise
+#
 #  Usage:
 #
 #	python3 patch_rom_tests.py decstation5000_133.bin kn02ba-notests.bin
 #	python3 patch_rom_tests.py PMAG-BA_V5.3a.bin pmag-ba-notests.bin
+#	python3 patch_rom_tests.py PMAGB-BA_V1.1.bin pmagb-ba-notests.bin
 #
 #  and use the copies instead of the originals, e.g. in a config file:
 #
@@ -30,7 +36,8 @@
 #
 #  How a test is patched:  the first two instructions of its function
 #  become "jr ra; move v0,zero", so it returns 0 (passed) at once, both at
-#  power-on and when run with "t".  Nothing else changes.
+#  power-on and when run with "t", or "jr ra; li v0,1" where 1 means
+#  passed.  Nothing else changes.
 #
 #  How the functions were found:  the ROMs copy their test code to RAM and
 #  run it there, linked at 0xa0020000.  The KN02-BA PROM's test table has
@@ -40,14 +47,20 @@
 #  0x194a4.  The PMAG-BA ROM's table has entries of the function, the name
 #  and the usage string (e.g. "curs" at 0xa00204c0), and its code linked at
 #  0xa0020000 starts at ROM offset 0x1594.  All of these functions return 0
-#  when the test passes.
+#  when the test passes.  The PMAGB-BA ROM's patt and line tests run lists
+#  of parts, which return 1 when they pass: Signature Analysis (part 11 of
+#  patt) at 0xa0023f88 and Line Signature Mode (part 15 of line) at
+#  0xa00283e0, and its code linked at 0xa0020000 starts at ROM offset
+#  0xcfc4.
 #
 
 import argparse
 import struct
 import sys
 
-JR_RA_MOVE_V0_ZERO = struct.pack('<II', 0x03e00008, 0x00001021)
+JR_RA = 0x03e00008
+MOVE_V0_ZERO = 0x00001021
+LI_V0 = 0x24020000		# addiu v0,zero,imm
 
 ROMS = [
     {
@@ -68,6 +81,16 @@ ROMS = [
         'tests': [
             ('0/curs', 0xa00204c0, 0x3c0ea002),
             ('0/ptrn', 0xa0021b80, 0x3c02a002),
+        ],
+    },
+    {
+        'name': 'PMAGB-BA V1.1',
+        'id': (b'PMAGB-BA', b'V1.1'),
+        'base': 0xcfc4,
+        'passed': 1,		# what the functions return if they passed
+        'tests': [
+            ('0/patt/sig', 0xa0023f88, 0x27bdff80),
+            ('0/line/sig', 0xa00283e0, 0x27bdff80),
         ],
     },
 ]
@@ -122,7 +145,9 @@ def main():
         if args.test and name not in args.test:
             continue
         off = rom['base'] + addr - 0xa0020000
-        image[off:off + 8] = JR_RA_MOVE_V0_ZERO
+        passed = rom.get('passed', 0)
+        image[off:off + 8] = struct.pack('<II', JR_RA,
+            LI_V0 | passed if passed else MOVE_V0_ZERO)
         print('%s: %s (0x%08x, ROM offset 0x%x) now passes' %
             (rom['name'], name, addr, off))
 

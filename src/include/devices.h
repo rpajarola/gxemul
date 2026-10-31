@@ -393,7 +393,7 @@ void *dev_scc_init(struct machine *machine, struct memory *mem,
 int dev_sfb_access(struct cpu *cpu, struct memory *mem, uint64_t relative_addr,
 	unsigned char *data, size_t len, int writeflag, void *);
 void dev_sfb_init(struct machine *machine, struct memory *mem,
-	uint64_t baseaddr, struct vfb_data *vfb_data);
+	uint64_t baseaddr, const char *irq_path);
 
 /*  dev_sgi_gbe.c:  */
 #define	DEV_SGI_GBE_LENGTH		0x1000000
