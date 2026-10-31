@@ -5567,3 +5567,7 @@ Changelog for GXemul:
 20261031	The LK201 keyboard waits 100 ms for the rest of an escape
 		sequence, so a key whose bytes arrive split (from stdin or
 		telnet) is still that key, instead of Esc and characters.
+20261031	start_paused ("Start paused, in the debugger") starts in the
+		debugger, as -V does. It used to pause the CPUs instead, so
+		continue stopped again at once (or, without -V, the emulator
+		exited right away).

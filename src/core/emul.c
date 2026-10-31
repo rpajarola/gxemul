@@ -669,10 +669,16 @@ bool emul_machine_setup(struct machine *m, int n_load, char **load_names,
 	/*  Startup the bootstrap CPU:  */
 	cpu->running = true;
 
-	/*  ... or pause all CPUs, if start_paused is set:  */
+	/*
+	 *  ... and start in the debugger, as with -V, if start_paused is set.
+	 *  (Pausing the CPUs instead, as this used to do, left nothing that
+	 *  continue would run: the emulator stopped again at once, or exited
+	 *  without -V.)
+	 */
 	if (m->start_paused) {
-		for (i=0; i<m->ncpus; i++)
-			m->cpus[i]->running = false;
+		single_step = true;
+		debugger_set_stop_reason("startup");
+		debugger_enter_at_end_of_run = true;
 	}
 
 	/*  Parse and add breakpoints:  */
