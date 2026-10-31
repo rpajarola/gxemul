@@ -5531,3 +5531,10 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.12  ==============
 
+20261030	The LK201 keyboard: an ESC that doesn't start an escape
+		sequence is typed as Ctrl+[ (the LK201 has no Esc key), so Esc
+		and Ctrl+[ leave vi's insert mode; the ESC was dropped.
+		Ctrl+\, Ctrl+], Ctrl+^ and Ctrl+_ are typed too, and the
+		host's F1..F12, Home, End, Page Up and Page Down are the
+		LK201's F1..F12, Find, Select, Prev Screen and Next Screen,
+		instead of stray characters.
