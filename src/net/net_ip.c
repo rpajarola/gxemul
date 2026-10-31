@@ -730,6 +730,108 @@ ret:
 
 
 /*
+ *  udp_reassemble():
+ *
+ *  Collects an IP fragment of a UDP datagram from the guest. When it was the
+ *  last missing piece, returns the whole datagram as one packet (in a buffer
+ *  that is used again later), with its length in *lenp; else NULL.
+ */
+static unsigned char *udp_reassemble(struct net *net,
+	const unsigned char *packet, int len, int *lenp)
+{
+	struct udp_reassembly *r = NULL, *oldest = NULL;
+	int ip_id = (packet[18] << 8) + packet[19];
+	int ofs = (((packet[20] & 0x1f) << 8) + packet[21]) * 8;
+	int more = packet[20] & 0x20;
+	int data_len = len - 34, i;
+
+	if (data_len <= 0 || ofs + data_len > 65535 || (more && (data_len & 7)))
+		return NULL;
+
+	for (i = 0; i < N_UDP_REASSEMBLIES; i++) {
+		struct udp_reassembly *t = &net->udp_reassemblies[i];
+		if (t->in_use && t->ip_id == ip_id &&
+		    memcmp(t->src_ip_address, packet + 26, 4) == 0 &&
+		    memcmp(t->dst_ip_address, packet + 30, 4) == 0) {
+			r = t;
+			break;
+		}
+		if (oldest == NULL || !t->in_use || (oldest->in_use &&
+		    t->last_used_timestamp < oldest->last_used_timestamp))
+			oldest = t;
+	}
+
+	if (r == NULL) {
+		/*  A new datagram, instead of the oldest unfinished one
+		    (whose missing fragments are probably lost):  */
+		r = oldest;
+		if (r->packet == NULL)
+			CHECK_ALLOCATION(r->packet = (unsigned char *)
+			    malloc(34 + 65535));
+		r->in_use = 1;
+		memcpy(r->src_ip_address, packet + 26, 4);
+		memcpy(r->dst_ip_address, packet + 30, 4);
+		r->ip_id = ip_id;
+		r->data_len = -1;
+		memset(r->have, 0, sizeof(r->have));
+	}
+
+	net->timestamp ++;
+	r->last_used_timestamp = net->timestamp;
+
+	/*  The first fragment has the UDP header, after the IP header:  */
+	if (ofs == 0)
+		memcpy(r->packet, packet, 34);
+	memcpy(r->packet + 34 + ofs, packet + 34, data_len);
+	for (i = ofs / 8; i < (ofs + data_len + 7) / 8; i++)
+		r->have[i / 8] |= 1 << (i & 7);
+	if (!more)
+		r->data_len = ofs + data_len;
+
+	if (r->data_len < 0)
+		return NULL;
+	for (i = 0; i < (r->data_len + 7) / 8; i++)
+		if (!(r->have[i / 8] & (1 << (i & 7))))
+			return NULL;
+
+	/*  All there: one packet, with the first fragment's headers.  */
+	r->in_use = 0;
+	r->packet[16] = (20 + r->data_len) >> 8;
+	r->packet[17] = (20 + r->data_len) & 0xff;
+	r->packet[20] = r->packet[21] = 0;
+	*lenp = 34 + r->data_len;
+	return r->packet;
+}
+
+
+/*
+ *  udp_bind_reserved():
+ *
+ *  Binds a UDP socket to a reserved port of the host (below 1024), port if
+ *  it is free, as NFS servers and others trust only clients that send from
+ *  one.  Where only root may bind those (Linux), the socket is left as it
+ *  was.
+ */
+static void udp_bind_reserved(int s, int port)
+{
+	struct sockaddr_in sin;
+	int i;
+
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	for (i = 0; i < 512; i++) {
+		sin.sin_port = htons(i == 0 ? port : 1024 - i);
+		if (bind(s, (struct sockaddr *) &sin, sizeof(sin)) == 0)
+			return;
+#ifndef _WIN32
+		if (errno != EADDRINUSE)
+			return;
+#endif
+	}
+}
+
+
+/*
  *  net_ip_udp():
  *
  *  Handle a UDP packet.
@@ -745,6 +847,11 @@ ret:
  *
  *	srcport=fffc dstport=0035 length=0028 chksum=76b6
  *	43e20100000100000000000003667470066e6574627364036f726700001c0001
+ *
+ *  The data is sent from a socket of the host, which is kept for replies
+ *  as a "connection". A datagram that came in IP fragments is put together
+ *  first (udp_reassemble()), and one sent from a reserved port (as NFS's
+ *  and mount's are) is sent from one of the host too (udp_bind_reserved()).
  */
 static void net_ip_udp(struct net *net, struct nic_data *nic,
 	unsigned char *packet, int len)
@@ -753,10 +860,11 @@ static void net_ip_udp(struct net *net, struct nic_data *nic,
 	ssize_t res;
 	struct sockaddr_in remote_ip;
 
-	if ((packet[20] & 0x3f) != 0) {
-		fatal("[ net_ip_udp(): WARNING! fragmented UDP "
-		    "packet, TODO ]\n");
-		return;
+	/*  More fragments, or a fragment offset:  */
+	if ((packet[20] & 0x3f) != 0 || packet[21] != 0) {
+		packet = udp_reassemble(net, packet, len, &len);
+		if (packet == NULL)
+			return;
 	}
 
 	srcport = (packet[34] << 8) + packet[35];
@@ -832,6 +940,16 @@ static void net_ip_udp(struct net *net, struct nic_data *nic,
 		}
 
 		debug(" {socket=%i}", net->udp_connections[con_id].socket);
+
+		if (srcport < 1024)
+			udp_bind_reserved(net->udp_connections[con_id].socket,
+			    srcport);
+
+		/*  Room for the largest datagram (macOS sends at most 9216
+		    bytes by default):  */
+		i = 65535;
+		setsockopt(net->udp_connections[con_id].socket, SOL_SOCKET,
+		    SO_SNDBUF, (const char *) &i, sizeof(i));
 
 		net->udp_connections[con_id].in_use = 1;
 

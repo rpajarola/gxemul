@@ -71,7 +71,6 @@ struct udp_connection {
 	unsigned char	inside_ip_address[4];
 	int		inside_udp_port;
 
-	/*  TODO: Fragment support for outgoing packets!  */
 	int		fake_ns;
 
 	/*  Outside:  */
@@ -79,6 +78,20 @@ struct udp_connection {
 	int		socket;
 	unsigned char	outside_ip_address[4];
 	int		outside_udp_port;
+};
+
+/*  A UDP datagram from the guest that came in IP fragments, being put
+    together again (as NFS sends 8 KB at a time):  */
+#define	N_UDP_REASSEMBLIES	8
+struct udp_reassembly {
+	int		in_use;
+	int64_t		last_used_timestamp;
+	unsigned char	src_ip_address[4];
+	unsigned char	dst_ip_address[4];
+	int		ip_id;
+	int		data_len;	/*  -1 until the last fragment is in  */
+	unsigned char	*packet;	/*  the headers, then the data  */
+	unsigned char	have[65536 / 64];	/*  which 8-byte blocks are in  */
 };
 
 struct tcp_connection {
@@ -159,6 +172,7 @@ struct net {
 	struct ethernet_packet_link *last_ethernet_packet;
 
 	struct udp_connection udp_connections[MAX_UDP_CONNECTIONS];
+	struct udp_reassembly udp_reassemblies[N_UDP_REASSEMBLIES];
 	struct tcp_connection tcp_connections[MAX_TCP_CONNECTIONS];
 
 	/*  Distributed network:  */
