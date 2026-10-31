@@ -5571,3 +5571,9 @@ Changelog for GXemul:
 		debugger, as -V does. It used to pause the CPUs instead, so
 		continue stopped again at once (or, without -V, the emulator
 		exited right away).
+20261031	UDP through the simulated gateway: a datagram that the guest
+		sends in IP fragments is put together (NFS's 8 KB writes were
+		dropped, with "fragmented UDP packet, TODO"), and one sent
+		from a reserved port leaves the host from a reserved port
+		too, where the host lets a user bind one, for NFS servers
+		that require it. See doc/networking.html. (Antoni Sawicki)

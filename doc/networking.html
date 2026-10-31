@@ -93,6 +93,16 @@ implemented this way, you might want to read the <a
 href="technical.html#net"> networking section in the technical 
 documentation</a>.)
 
+<p>UDP through the NAT-like layer takes datagrams of any size: those that
+the guest sends in IP fragments are put together first (NFS clients send
+8&nbsp;KB at a time), and those to the guest are sent in fragments. A
+datagram that the guest sends from a reserved port (below 1024, as NFS
+clients and <tt>mount</tt> do) leaves the host from a reserved port too,
+so that NFS servers that only trust those (Linux's <tt>secure</tt>
+exports, the default) accept it. This needs a host that lets any user
+bind such ports, as macOS and Windows do; Linux lets only root (or a
+program with <tt>CAP_NET_BIND_SERVICE</tt>) do it.
+
 <p>The UDP mode is used to connect multiple instances of GXemul in
 an easy way, but it provides no security of any kind.
 
