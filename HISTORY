@@ -5528,3 +5528,6 @@ Changelog for GXemul:
 		agents such as Claude Code: the control socket's commands as
 		tools, which can wait for the machine to stop, and
 		screendump returns the screen as an image.
+
+==============  RELEASE 1.0.12  ==============
+
