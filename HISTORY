@@ -5564,3 +5564,6 @@ Changelog for GXemul:
 		as well, a cursor key with Shift or Ctrl (as in xterm) is the
 		cursor key, and other escape sequences type nothing instead of
 		their characters. (Antoni Sawicki)
+20261031	The LK201 keyboard waits 100 ms for the rest of an escape
+		sequence, so a key whose bytes arrive split (from stdin or
+		telnet) is still that key, instead of Esc and characters.

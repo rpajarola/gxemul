@@ -528,6 +528,7 @@ struct lk201_data {
         unsigned char           keyb_buf[8];
         int                     keyb_buf_pos;
 	int			keyb_delay;	/*  ticks until the next key  */
+	uint64_t		keyb_esc_usec;	/*  when keyb_buf last grew  */
                         
         int                     mouse_mode;
         int                     mouse_revision;         /*  0..15  */  

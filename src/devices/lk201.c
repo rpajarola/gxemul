@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "console.h"
 #include "devices.h"
@@ -59,6 +60,10 @@
 /*  The keyboard sends at 4800 bps: about 2 ms per byte, or 4 ticks of the
     serial controllers (every 16384 cycles, at about 33 MHz):  */
 #define	LK201_TICKS_PER_BYTE	4
+
+/*  How long the rest of an escape sequence may take to arrive (stdin and
+    telnet input can split a key's bytes); after that, a lone ESC is Esc:  */
+#define	LK201_ESCAPE_USEC	100000
 
 /*  The farthest one mouse update moves:  */
 #define	LK201_MOUSE_MAX		50
@@ -327,6 +332,20 @@ static int lk201_send_mouse_update_sequence(struct lk201_data *d, int xdelta,
 
 
 /*
+ *  lk201_usec():
+ *
+ *  The time, in microseconds.
+ */
+static uint64_t lk201_usec(void)
+{
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
+	return (uint64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+}
+
+
+/*
  *  lk201_tick():
  *
  *  This function should be called "every now and then".
@@ -370,21 +389,23 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 	    console_charavail(d->console_handle) &&
 	    (!d->use_fb || d->keyb_delay == 0)) {
 		unsigned char ch = console_readchar(d->console_handle);
-		if (d->use_fb)
+		if (d->use_fb) {
 			d->keyb_delay = LK201_TICKS_PER_BYTE *
 			    lk201_convert_ascii_to_keybcode(d, ch);
-		else
+			if (d->keyb_buf_pos > 0)
+				d->keyb_esc_usec = lk201_usec();
+		} else
 			d->add_to_rx_queue(d->add_data, ch, port);
 	}
 
 	/*
-	 *  A key sends all of its escape sequence at once, so an ESC that
-	 *  nothing follows is a key of its own (Esc, or Ctrl+[), and a
-	 *  sequence that ends early is dropped:
+	 *  An ESC that nothing follows for a while is a key of its own (Esc,
+	 *  or Ctrl+[), and a sequence that stops early is dropped:
 	 */
 	if (d->use_fb && d->keyb_buf_pos > 0 && d->keyb_delay == 0 &&
 	    !console_charavail(d->console_handle) &&
-	    d->space_available_in_queue(d->add_data, port)) {
+	    d->space_available_in_queue(d->add_data, port) &&
+	    lk201_usec() - d->keyb_esc_usec >= LK201_ESCAPE_USEC) {
 		if (d->keyb_buf_pos == 1)
 			d->keyb_delay = LK201_TICKS_PER_BYTE *
 			    lk201_send_escape(d);
