@@ -299,8 +299,9 @@ static const struct mcp_tool {
 	  "keys named as X11 keysyms (\\\"Return\\\", \\\"F1\\\" to "
 	  "\\\"F12\\\", \\\"Up\\\", \\\"Page_Down\\\", "
 	  "\\\"Insert\\\", \\\"a\\\", \\\"space\\\"), each pressed "
-	  "and released; Control or Shift joined by +, such as "
-	  "\\\"Control_L+c\\\" or \\\"Shift_L+a\\\".\"}, \"enter\": "
+	  "and released; Control, Shift or Alt joined by +, such as "
+	  "\\\"Control_L+c\\\", \\\"Shift_L+Tab\\\" or "
+	  "\\\"Control_L+Alt_L+Delete\\\".\"}, \"enter\": "
 	  "{\"type\": \"boolean\", \"description\": \"Press Return after "
 	  "text or keys.\"}", "" },
 

@@ -128,6 +128,10 @@ struct console_handle {
 	int		outputonly;
 	int		warning_printed;
 
+	/*  The keyboard that reads the input takes keys with modifiers
+	    (console_set_keys_with_modifiers()):  */
+	int		keys_with_modifiers;
+
 	struct machine	*machine;
 	char		*machine_name;
 	char		*name;
@@ -1157,6 +1161,34 @@ int console_change_inputability(int handle, int inputability)
 	}
 
 	return 1;
+}
+
+
+/*
+ *  console_set_keys_with_modifiers():
+ *
+ *  Says that the input of a console handle is read by an emulated keyboard
+ *  (the LK201) that types keys with the modifiers held, as display_key()
+ *  and display_char() send them:  xterm's escape sequences with a modifier
+ *  parameter.  The keys go to other handles without their modifiers.
+ */
+void console_set_keys_with_modifiers(int handle)
+{
+	if (handle >= 0 && handle < n_console_handles)
+		console_handles[handle].keys_with_modifiers = 1;
+}
+
+
+/*
+ *  console_keys_with_modifiers():
+ *
+ *  Returns 1 if the input of a console handle takes keys with modifiers
+ *  (see console_set_keys_with_modifiers()), 0 otherwise.
+ */
+int console_keys_with_modifiers(int handle)
+{
+	return handle >= 0 && handle < n_console_handles &&
+	    console_handles[handle].keys_with_modifiers;
 }
 
 

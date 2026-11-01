@@ -5593,3 +5593,12 @@ Changelog for GXemul:
 		and bootwrite use only the low 32 bits of their arguments, the
 		part of a register that a 32-bit CPU keeps up to date.
 		(Antoni Sawicki)
+20261101	Keys with modifiers: Shift, Ctrl and the left Alt key are held
+		with the key on the LK201, Alt as the Compose key, from the
+		SDL window, VNC and the control socket (sent as xterm sends
+		them, which lk201.c reads), so Alt+F, Alt+F4, Shift+Tab and
+		Ctrl+Alt+Delete work in Windows NT. Delete is Remove (it typed
+		<X], as Backspace does), and with Num Lock off the keypad's 0
+		and . are Insert and Delete. The right Alt key (often AltGr)
+		types characters, and other keyboards get the keys without
+		their modifiers, as before. (Antoni Sawicki)

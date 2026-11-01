@@ -332,40 +332,94 @@ void display_flush(struct fb_window *win)
  *
  *  Sends a key (enum display_key) to a machine's console, as the escape
  *  sequence an xterm sends:  F1..F4 send ESC O P..S, F5..F12 send
- *  ESC [ n ~, and the cursor keys ESC [ A..D.
+ *  ESC [ n ~, the cursor keys ESC [ A..D, Home and End ESC [ H and F,
+ *  and Insert, Delete, Page Up and Page Down ESC [ 2, 3, 5 and 6 ~.  With
+ *  modifiers (DISPLAY_MOD_*), the sequence has the parameter 1 + mods:
+ *  ESC [ n ; m ~, and ESC [ 1 ; m before the final letter of the others.
+ *
+ *  The modifiers, and Delete's sequence, are only for a keyboard that takes
+ *  keys with modifiers (console_keys_with_modifiers(), the LK201).  Other
+ *  consoles get the key without its modifiers, and Delete as DEL (127).
  */
-void display_key(struct machine *m, int key)
+void display_key(struct machine *m, int key, int mods)
 {
 	static const char *f5_f12[] = { "15", "17", "18", "19",
 	    "20", "21", "23", "24" };
-	char seq[8];
+	const char *n = NULL;
+	char seq[24], final;
+
+	if (!console_keys_with_modifiers(m->main_console_handle)) {
+		mods = 0;
+		if (key == DISPLAY_KEY_DELETE) {
+			console_makeavail(m->main_console_handle, 127);
+			return;
+		}
+	}
 
 	if (key >= DISPLAY_KEY_F1 && key < DISPLAY_KEY_F1 + 4)
-		snprintf(seq, sizeof(seq), "\033O%c", 'P' + key - DISPLAY_KEY_F1);
-	else if (key >= DISPLAY_KEY_F1 + 4 && key < DISPLAY_KEY_F1 + 12)
-		snprintf(seq, sizeof(seq), "\033[%s~",
-		    f5_f12[key - DISPLAY_KEY_F1 - 4]);
-	else {
+		final = 'P' + key - DISPLAY_KEY_F1;
+	else if (key >= DISPLAY_KEY_F1 + 4 && key < DISPLAY_KEY_F1 + 12) {
+		n = f5_f12[key - DISPLAY_KEY_F1 - 4];
+		final = '~';
+	} else {
 		switch (key) {
-		case DISPLAY_KEY_UP:		strlcpy(seq, "\033[A", sizeof(seq)); break;
-		case DISPLAY_KEY_DOWN:		strlcpy(seq, "\033[B", sizeof(seq)); break;
-		case DISPLAY_KEY_RIGHT:		strlcpy(seq, "\033[C", sizeof(seq)); break;
-		case DISPLAY_KEY_LEFT:		strlcpy(seq, "\033[D", sizeof(seq)); break;
-		case DISPLAY_KEY_HOME:		strlcpy(seq, "\033[H", sizeof(seq)); break;
-		case DISPLAY_KEY_END:		strlcpy(seq, "\033[F", sizeof(seq)); break;
-		case DISPLAY_KEY_PAGE_UP:	strlcpy(seq, "\033[5~", sizeof(seq)); break;
-		case DISPLAY_KEY_PAGE_DOWN:	strlcpy(seq, "\033[6~", sizeof(seq)); break;
-		case DISPLAY_KEY_INSERT:	strlcpy(seq, "\033[2~", sizeof(seq)); break;
+		case DISPLAY_KEY_UP:		final = 'A'; break;
+		case DISPLAY_KEY_DOWN:		final = 'B'; break;
+		case DISPLAY_KEY_RIGHT:		final = 'C'; break;
+		case DISPLAY_KEY_LEFT:		final = 'D'; break;
+		case DISPLAY_KEY_HOME:		final = 'H'; break;
+		case DISPLAY_KEY_END:		final = 'F'; break;
+		case DISPLAY_KEY_INSERT:	n = "2"; final = '~'; break;
+		case DISPLAY_KEY_DELETE:	n = "3"; final = '~'; break;
+		case DISPLAY_KEY_PAGE_UP:	n = "5"; final = '~'; break;
+		case DISPLAY_KEY_PAGE_DOWN:	n = "6"; final = '~'; break;
 		default:			return;
 		}
 	}
+
+	if (mods != 0)
+		snprintf(seq, sizeof(seq), "\033[%s;%d%c",
+		    n != NULL ? n : "1", 1 + mods, final);
+	else if (n != NULL)
+		snprintf(seq, sizeof(seq), "\033[%s~", n);
+	else if (key < DISPLAY_KEY_F1 + 4)
+		snprintf(seq, sizeof(seq), "\033O%c", final);
+	else
+		snprintf(seq, sizeof(seq), "\033[%c", final);
 
 	for (const char *c = seq; *c != '\0'; c++)
 		console_makeavail(m->main_console_handle, *c);
 }
 
 
+/*
+ *  display_char():
+ *
+ *  Types a character (Latin-1, or a control character such as '\r' or
+ *  '\t') on a machine's console with modifiers (DISPLAY_MOD_*) held:  as it
+ *  is without any, and otherwise as xterm's modifyOtherKeys sends it,
+ *  ESC [ 27 ; m ; c ~ with the parameter m 1 + mods and c the character's
+ *  code, e.g. ESC [ 27 ; 3 ; 102 ~ for Alt+f.  A console whose keyboard
+ *  doesn't take keys with modifiers (see display_key()) gets the character
+ *  as it is.
+ */
+void display_char(struct machine *m, int ch, int mods)
+{
+	char seq[24];
+
+	if (mods == 0 || !console_keys_with_modifiers(m->main_console_handle)) {
+		console_makeavail(m->main_console_handle, ch);
+		return;
+	}
+
+	snprintf(seq, sizeof(seq), "\033[27;%d;%d~", 1 + mods, ch);
+	for (const char *c = seq; *c != '\0'; c++)
+		console_makeavail(m->main_console_handle, *c);
+}
+
+
 /*  X11 keysyms:  */
+#define	XK_ISO_Left_Tab	0xfe20
 #define	XK_BackSpace	0xff08
 #define	XK_Tab		0xff09
 #define	XK_Return	0xff0d
@@ -401,11 +455,11 @@ void display_key(struct machine *m, int key)
  *  display_keysym():
  *
  *  Types the key with an X11 keysym (as VNC clients send them) on the
- *  machine's main console, with Control held if ctrl is set: a character,
- *  or the escape sequence of a function or editing key. Returns false if
- *  the key types nothing.
+ *  machine's main console, with the modifiers of mods (DISPLAY_MOD_*)
+ *  held: a character, or the escape sequence of a function or editing key.
+ *  Returns false if the key types nothing.
  */
-bool display_keysym(struct machine *m, uint32_t key, bool ctrl)
+bool display_keysym(struct machine *m, uint32_t key, int mods)
 {
 	int ch = -1;
 
@@ -417,40 +471,45 @@ bool display_keysym(struct machine *m, uint32_t key, bool ctrl)
 	case XK_Return:
 	case XK_KP_Enter:	ch = '\r'; break;
 	case XK_BackSpace:	ch = '\b'; break;
+	case XK_ISO_Left_Tab:	ch = '\t'; mods |= DISPLAY_MOD_SHIFT; break;
 	case XK_Tab:		ch = '\t'; break;
 	case XK_Escape:		ch = 27; break;
-	case XK_Delete:
-	case XK_KP_Delete:	ch = 127; break;
+	case XK_Delete:	case XK_KP_Delete: display_key(m, DISPLAY_KEY_DELETE, mods); break;
 
-	case XK_Up:	case XK_KP_Up:	  display_key(m, DISPLAY_KEY_UP); break;
-	case XK_Down:	case XK_KP_Down:  display_key(m, DISPLAY_KEY_DOWN); break;
-	case XK_Left:	case XK_KP_Left:  display_key(m, DISPLAY_KEY_LEFT); break;
-	case XK_Right:	case XK_KP_Right: display_key(m, DISPLAY_KEY_RIGHT); break;
-	case XK_Home:	case XK_KP_Home:  display_key(m, DISPLAY_KEY_HOME); break;
-	case XK_End:	case XK_KP_End:	  display_key(m, DISPLAY_KEY_END); break;
-	case XK_Prior:	case XK_KP_Prior: display_key(m, DISPLAY_KEY_PAGE_UP); break;
-	case XK_Next:	case XK_KP_Next:  display_key(m, DISPLAY_KEY_PAGE_DOWN); break;
-	case XK_Insert:	case XK_KP_Insert: display_key(m, DISPLAY_KEY_INSERT); break;
+	case XK_Up:	case XK_KP_Up:	  display_key(m, DISPLAY_KEY_UP, mods); break;
+	case XK_Down:	case XK_KP_Down:  display_key(m, DISPLAY_KEY_DOWN, mods); break;
+	case XK_Left:	case XK_KP_Left:  display_key(m, DISPLAY_KEY_LEFT, mods); break;
+	case XK_Right:	case XK_KP_Right: display_key(m, DISPLAY_KEY_RIGHT, mods); break;
+	case XK_Home:	case XK_KP_Home:  display_key(m, DISPLAY_KEY_HOME, mods); break;
+	case XK_End:	case XK_KP_End:	  display_key(m, DISPLAY_KEY_END, mods); break;
+	case XK_Prior:	case XK_KP_Prior: display_key(m, DISPLAY_KEY_PAGE_UP, mods); break;
+	case XK_Next:	case XK_KP_Next:  display_key(m, DISPLAY_KEY_PAGE_DOWN, mods); break;
+	case XK_Insert:	case XK_KP_Insert: display_key(m, DISPLAY_KEY_INSERT, mods); break;
 
 	default:
 		if (key >= XK_F1 && key <= XK_F12)
-			display_key(m, DISPLAY_KEY_F1 + key - XK_F1);
+			display_key(m, DISPLAY_KEY_F1 + key - XK_F1, mods);
 		else if (key >= XK_KP_Multiply && key <= XK_KP_9)
 			/*  * + , - . / and 0..9 on the numeric keypad:  */
 			ch = key - XK_KP_Multiply + '*';
 		else if ((key >= 0x20 && key < 0x7f) ||
 		    (key >= 0xa0 && key < 0x100)) {
+			/*  (Shift is in the character already.)  */
 			ch = key;
+			mods &= ~DISPLAY_MOD_SHIFT;
 			/*  Ctrl+letter etc. give control characters:  */
-			if (ctrl && ((key >= 'a' && key <= 'z') ||
-			    (key >= '@' && key <= '_') || key == ' '))
+			if ((mods & DISPLAY_MOD_CTRL) && ((key >= 'a' &&
+			    key <= 'z') || (key >= '@' && key <= '_') ||
+			    key == ' ')) {
 				ch = key & 0x1f;
+				mods &= ~DISPLAY_MOD_CTRL;
+			}
 		} else
 			return false;
 	}
 
 	if (ch >= 0)
-		console_makeavail(m->main_console_handle, ch);
+		display_char(m, ch, mods);
 	return true;
 }
 

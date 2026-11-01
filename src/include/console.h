@@ -58,6 +58,8 @@ int console_start_slave(struct machine *, const char *consolename, int use_for_i
 int console_start_slave_inputonly(struct machine *, const char *consolename,
 	int use_for_input);
 int console_change_inputability(int handle, int inputability);
+void console_set_keys_with_modifiers(int handle);
+int console_keys_with_modifiers(int handle);
 void console_init_main(struct emul *);
 void console_debug_dump(struct machine *);
 void console_allow_slaves(int);

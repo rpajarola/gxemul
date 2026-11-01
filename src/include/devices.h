@@ -525,7 +525,7 @@ struct lk201_data {
         void                    (*add_to_rx_queue)(void *,int,int);
 	void			*add_data;
                 
-        unsigned char           keyb_buf[8];
+        unsigned char           keyb_buf[16];
         int                     keyb_buf_pos;
 	int			keyb_delay;	/*  ticks until the next key  */
 	uint64_t		keyb_esc_usec;	/*  when keyb_buf last grew  */
