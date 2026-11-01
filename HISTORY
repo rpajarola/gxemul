@@ -5581,3 +5581,9 @@ Changelog for GXemul:
 		from a reserved port leaves the host from a reserved port
 		too, where the host lets a user bind one, for NFS servers
 		that require it. See doc/networking.html. (Antoni Sawicki)
+20261101	R3000: an interrupt that rfe enables (pending and unmasked) is
+		taken before the next instruction, as on a real R3000, instead
+		of up to 8191 instructions later (when the next dyntrans run
+		starts). Windows NT requests an APC interrupt when it returns
+		to user mode with a user APC pending, so a new thread ran user
+		code before the APC that initializes it. (Antoni Sawicki)

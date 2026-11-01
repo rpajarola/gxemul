@@ -231,6 +231,9 @@ struct mips_cpu {
 	/*  The R2010/R3010 FPU's interrupt (MIPS I):  */
 	struct interrupt irq_fpu;
 
+	/*  An rfe in the delay slot of a jr enabled a pending interrupt:  */
+	int		rfe_interrupt;
+
 	/*  Read-Modify-Write (LL/SC):  */
 	int		rmw;		/*  1 = currently active  */
 	uint64_t	rmw_len;	/*  Length of rmw modification  */
