@@ -177,141 +177,89 @@ console is the serial line, in the terminal GXemul runs in.
 <p><br>
 <a name="openbsdpmaxinstall"><h3>OpenBSD/pmax:</h3></a>
 
-<p>Installing <a href="http://www.openbsd.org/pmax.html">OpenBSD/pmax</a> is
-a bit harder than installing NetBSD/pmax. You should first read the <a
-href="#netbsdpmaxinstall">section above</a> on how to install NetBSD/pmax,
-before continuing here. If you have never installed OpenBSD on any
-architecture, then you need a great deal of patience to do this. If, on
-the other hand you are used to installing older versions of OpenBSD, then
-this should be no problem for you.
+<p>OpenBSD/pmax died at release 2.8 of OpenBSD, so this will not give you
+an up-to-date OpenBSD system. It installs on the 5000/200 with the
+machine's <a href="#setup">real ROMs</a>, from the release's
+<i>simpleroot</i> (a small root file system with the installer, on a disk
+of its own) and a CD image of the release's files. This was tested with
+the files from
+<a href="https://ftp.eu.openbsd.org/pub/OpenBSD/2.8/pmax/">OpenBSD/2.8/pmax</a>.
 
-<p><a href="20040710-openbsd-pmax.png"><img src="20040710-openbsd-pmax_small.png"></a>
- <a href="openbsd-pmax-20040710.png"><img src="openbsd-pmax-20040710_small.png"></a>
-
-<p>OpenBSD/pmax died at release 2.8 of OpenBSD, so you should be
-aware of the fact that this will not give you an up-to-date OpenBSD
-system.
-
-<p>Following these instructions <i>might</i> work. If not, then use
-common sense and imagination to modify them as you see fit.
-
-<p>
-<ol>
-  <li>Create an empty harddisk image, which will be the root disk
-	that OpenBSD installs itself onto:<pre>
-	<b>dd if=/dev/zero of=obsd_pmax.img bs=1 count=512 seek=900000000</b>
-
+<p><ol>
+  <li>Download that directory (approx. 99 MB), unpack the simpleroot,
+	and make a CD image of the directory (with <tt>mkisofs</tt>, or
+	<tt>xorriso -as mkisofs</tt>):<pre>
+	$ <b>gunzip -c pmax/simpleroot28.fs.gz &gt; simpleroot28.fs</b>
+	$ <b>mkisofs -r -o openbsd-2.8-pmax.iso pmax</b>
+	$ <b>truncate -s 1000M disk.img</b>
 </pre>
-  <li>Download the entire pmax directory from the ftp server: (approx. 99 MB)<pre>
-	<b>wget -r <a href="https://ftp.nluug.nl/OpenBSD/2.8/pmax/">https://ftp.nluug.nl/OpenBSD/2.8/pmax/</a></b>
-
+	Install on the serial console, which is faster than the
+	framebuffer, with this <tt>machine.json</tt> (and the
+	<a href="#setup">ROM images</a>) in the same folder:<pre>
+{
+  "gxemul": 1,
+  "name": "OpenBSD/pmax 2.8",
+  "machine": { "type": "decstation", "model": "3max", "memory_mb": 64 },
+  "boot": { "prom_emulation": false, "rom": "kn02_aa_5.3s.bin", "nvram": "nvram.bin" },
+  "drives": [ { "file": "disk.img", "kind": "disk", "id": 0 },
+              { "file": "simpleroot28.fs", "kind": "disk", "id": 1 },
+              { "file": "openbsd-2.8-pmax.iso", "kind": "cdrom", "id": 2, "readonly": true } ],
+  "display": { "enabled": false },
+  "slots": { "5": "pmaz_aa_5.3d.bin", "6": "pmad_aa_5.3a.bin" }
+}
 </pre>
 
-  <li>Execute the following commands:
-<p><table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<b>mv ftp.nluug.nl/OpenBSD/2.8/pmax/simpleroot28.fs.gz .
-gunzip simpleroot28.fs.gz
-chmod +w simpleroot28.fs</b>		&lt;--- make sure
-</pre></td></tr></table>
-  <li>You now need to make an ISO image of the entire directory you downloaded.
-	(I recommend using <tt>mkisofs</tt> for that purpose. If you don't
-	already have <tt>mkisofs</tt> installed on your system, you need
-	to install it in order to do this.)<pre>
-	<b>mkisofs -o openbsd_pmax_2.8.iso ftp.nluug.nl/OpenBSD/2.8/pmax</b>
-	<b>rm -rf ftp.nluug.nl</b>      <i>(this directory is not needed anymore)</i>
-
+  <li>Boot the simpleroot's kernel, with the simpleroot (<tt>rz1</tt>)
+	as the root device, and start the installer from its shell:<pre>
+	&gt;&gt;<b>boot 5/rz1a/bsd</b>
+	...
+	root device? <b>rz1</b>
+	Enter pathname of shell or RETURN for sh: <i>(press Return)</i>
+	# <b>fsck /dev/rrz1a</b>
+	# <b>mount /dev/rz1a /</b>
+	# <b>mkdir -p /kern /mnt2</b>
+	# <b>mount -t kernfs /kern /kern</b>
+	# <b>cd /; ./install</b>
 </pre>
-  <li>Start the emulator with all three (!) disk images:<pre>
-	<b>gxemul -e 3max -d obsd_pmax.img -d b:simpleroot28.fs -j bsd -d c:openbsd_pmax_2.8.iso</b>
 
+  <li>Answer the installer's questions: don't install onto the
+	simpleroot's disk, the root disk is <tt>rz0</tt>, and create a
+	label in the disklabel editor, e.g. a root partition and swap:<pre>
+	&gt; <b>a a</b>                  <i>(offset 0, a size, 4.2BSD, mount point /)</i>
+	&gt; <b>a b</b>                  <i>(the rest, swap)</i>
+	&gt; <b>w</b>
+	&gt; <b>q</b>
 </pre>
-	(If you add <tt>-X</tt>, you will run with the graphical
-	framebuffer. This is <i>REALLY</i> slow because the console has to
-	scroll a lot during the install. I don't recommend it.)
-  <p>
-  <li>Go on with the installation as you would do if you were installing on a real machine.
-	If you are not used to the OpenBSD installer, then this will most likely
-	be a very uncomfortable experience. Some important things to keep in mind are:
-	<ul>
-	  <li>rz0 is the rootdisk you wish to install onto.
-	  <li>rz1 is the simpleroot image.
-	  <li>rz2 is the CDROM containing the "install sets".
-	  <li>When asked for the "<b>root device?</b>", enter <b>rz1</b>.
-	  <li>At "<b>Enter pathname of shell or RETURN for sh:</b>", press enter.
-	  <li>At the # prompt, do the following:<pre>
-	<b>fsck /dev/rz1a</b>        (and mark the filesystem as clean)
-	<b>mount /dev/rz1a /</b>
-	<b>mkdir /kern</b>
-	<b>mkdir /mnt2</b>
-	<b>mount -t kernfs kern kern</b>
-	<b>./install</b>
+	No more file systems, no network, and install from the CD-ROM:
+	<tt>c</tt>, <tt>rz2</tt>, partition <tt>c</tt>, <tt>cd9660</tt>,
+	and the directory <tt>.</tt>; then extract each set (two
+	Returns each).
 
+  <li>The installer neither sets root's password (it is empty) nor
+	installs the X11 sets. Do that from the same shell, and halt:<pre>
+	# <b>mount /dev/rz0a /mnt</b>
+	# <b>chroot /mnt passwd root</b>
+	# <b>mount -t cd9660 /dev/rz2c /mnt2</b>
+	# <b>cd /mnt; for s in xbase xfont xserv xshare; do tar -xzpf /mnt2/${s}28.tgz; done</b>
+	# <b>ln -s Xcfbpmax /mnt/usr/X11R6/bin/X</b>
+	# <b>ln -s /dev/fb0 /mnt/dev/mouse</b>
+	# <b>echo /usr/X11R6/lib &gt;&gt; /mnt/etc/ld.so.conf</b>
+	# <b>cd /; umount /mnt2; umount /mnt; halt</b>
 </pre>
-		and proceed with the install. Good luck. :-)
-	  <li>Answer "<b>y</b>" when asked if you wish to configure the network.
-		(See the section about installing NetBSD/pmax for suitable
-		network settings.)
-	  <li>Install from "<b>c</b>" (cdrom), choose "<b>rz2</b>" as the cdrom device, and "<b>/</b>" as
-		the directory containing the install sets.
-	</ul>
-  <p>
-  <li>For some unknown reason, the install script does not set the root
-	password! The first time you boot up OpenBSD after the install, you
-	need to go into single user mode and run <b>passwd root</b> to set
-	the root password, or you will not be able to log in at all!<pre>
-	<b>gxemul -e 3max -d obsd_pmax.img -d 2c:openbsd_pmax_2.8.iso -j bsd -o '-s'</b>
+
+  <li>Turn the display on (<tt>"enabled": true</tt>, and the PMAG-BA's
+	ROM in slot 0, as in the <a href="#ultrixinstall">Ultrix</a>
+	example), and boot the new system:<pre>
+	&gt;&gt;<b>setenv boot "5/rz0a/bsd -aN"</b>
+	&gt;&gt;<b>boot</b>
 </pre>
-While you are at it, you might want to extract the X11 install sets
-as well, as the installer seems to ignore them too. (Perhaps due to a bug
-in the installer, perhaps because of the way I used mkisofs.)
-<p>
-Execute the following commands in the emulator:
-<p><table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<b>fsck /dev/rz0a
-mount /
-passwd root
-
-cd /; mount -t cd9660 /dev/rz2c /mnt; sh
-for a in /mnt/[xX]*; do tar zxvf $a; done
-ln -s /usr/X11R6/bin/Xcfbpmax /usr/X11R6/bin/X
-ln -s /dev/fb0 /dev/mouse
-echo /usr/X11R6/lib &gt;&gt; /etc/ld.so.conf
-ldconfig
-
-sync
-halt</b>
-</pre></td></tr></table>
+	(<tt>-a</tt> boots multi-user, and <tt>N</tt> takes the root device
+	from where the kernel was loaded, instead of asking.)
 </ol>
 
-<p>
-NOTE: It is also possible to install via ftp instead of using a CDROM image. 
-This is not much less awkward, you still need the simpleroot filesystem 
-image, and you still have to manually add the X11 install sets and set the 
-root password, and so on.
-
-<p>
-Once you have completed the installation procedure, the following command
-will let you boot from the new rootdisk image:
-<pre>
-	<b>gxemul -e 3max -X -o '-aN' -d obsd_pmax.img -j bsd</b>
-</pre>
-
-<p>
-(Normally, you would be asked about which root device to use (<tt>rz0</tt>),
-but using <b><tt>-o '-aN'</tt></b> supresses that.)
-
-<p>
-When asked for which terminal type to use, when logging in as root,
-enter <b><tt>rcons</tt></b> if you are using the graphical framebuffer,
-<b><tt>vt100</tt></b> for text-mode.
-<br>Use <b><tt>startx</tt></b> to start X windows.
-
-
-
-
-
-
-
+<p>When asked for the terminal type when logging in as root, enter
+<tt>rcons</tt> on the framebuffer (<tt>vt100</tt> on the serial
+console). Use <tt>startx</tt> to start X.
 
 <p><br>
 <a name="ultrixinstall"><h3>Ultrix/RISC:</h3></a>
