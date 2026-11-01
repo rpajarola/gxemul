@@ -1,9 +1,11 @@
 # DEC 3000 (EV4) emulation plan
 
-Goal: run DEC OSF/1 V1.0 on an emulated DEC 3000 Model 400/500
+Goal: run DEC OSF/1 V1.2 on an emulated DEC 3000 Model 400/500
 ("Sandpiper"/"Flamingo"), using the real console firmware and PALcode.
-No other emulator models the 21064 (EV4) or the TURBOchannel Alphas, and
-OSF/1 1.0 runs on nothing newer.
+No other emulator models the 21064 (EV4) or the TURBOchannel Alphas.
+(The original goal was V1.0, but it seems never to have been distributed
+in binary form; V1.2 is the oldest release at hand, and it supports the
+3000/400.)
 
 ## Starting point (as of branch creation)
 
@@ -26,7 +28,7 @@ OSF/1 1.0 runs on nothing newer.
 
 Run the real SRM console ROM with its own PALcode on an accurate EV4.
 
-- OSF/1 1.0 was written against DEC's console and PALcode; emulated
+- OSF/1 was written against DEC's console and PALcode; emulated
   PALcode is an endless tail of exception-frame, TB-miss, `swppal` and
   machine-check logout differences.
 - Disk boot (boot block -> `osfboot` -> `/vmunix`) and CD installation go
@@ -45,9 +47,9 @@ before the firmware runs.
 Everything below is in `media/` (not in git).
 
 - Hardware: DEC 3000/400, /600, /700 (condition unknown). The /400 is the
-  primary target (21064, supported by OSF/1 1.0). The /600 and /700 are
+  primary target (21064, supported by OSF/1 1.2). The /600 and /700 are
   21064A-based later models: useful for register dumps and their ROMs,
-  probably not for OSF/1 1.0 itself.
+  probably not for OSF/1 1.2 itself.
 - Manuals: `21064.pdf` (21064/21064A Hardware Reference Manual,
   EC-Q9ZUC-TE) and `EK-D3SYS-PM.B01.pdf` (DEC 3000 System Programmer's
   Manual).
@@ -145,7 +147,7 @@ Everything below is in `media/` (not in git).
 - Boot from an emulated disk via the real SRM: exercises interrupts,
   clock, SCSI DMA, LANCE, TC probing.
 
-### M6: OSF/1 V1.0
+### M6: OSF/1 V1.2
 - Boot the install CD image, install to disk, boot multi-user.
 - Expected trouble: HWRPB fields, VMS->OSF `swppal`, clock calibration.
 - Networking, framebuffer + X last.
