@@ -35,6 +35,7 @@ for name in names:
     try:
         p = subprocess.run([gxemul, '-q', '-E', 'testalpha',
                             os.path.join(build, name + '.gx')],
+                           stdin=subprocess.DEVNULL,
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            timeout=120)
         out = p.stdout.decode('latin-1').splitlines()
