@@ -101,6 +101,10 @@ extern int quiet_mode;
 struct asc_data {
 	int		mode;
 
+	/*  Added to SCSI target IDs to get disk image IDs (for a second
+	    SCSI bus, e.g. 8 for IDs 8..15).  */
+	int		target_offset;
+
 	void		*turbochannel;
 	struct interrupt irq;
 	int		irq_asserted;
@@ -562,8 +566,8 @@ fatal("TODO.......asdgasin\n");
 
 	/*  Redo the command if data was just sent using DATA_OUT:  */
 	if (d->cur_phase == PHASE_DATA_OUT) {
-		res = diskimage_scsicommand(cpu, d->reg_wo[NCR_SELID] & 7,
-		    DISKIMAGE_SCSI, d->xferp);
+		res = diskimage_scsicommand(cpu, (d->reg_wo[NCR_SELID] & 7)
+		    + d->target_offset, DISKIMAGE_SCSI, d->xferp);
 	}
 
 	if (all_done) {
@@ -737,7 +741,8 @@ static int dev_asc_select(struct cpu *cpu, struct asc_data *d, int from_id,
 	/*
 	 *  Call the SCSI device to perform the command:
 	 */
-	ok = diskimage_scsicommand(cpu, to_id, DISKIMAGE_SCSI, d->xferp);
+	ok = diskimage_scsicommand(cpu, to_id + d->target_offset,
+	    DISKIMAGE_SCSI, d->xferp);
 
 
 	/*  Cause an interrupt:  */
@@ -1071,7 +1076,8 @@ DEVICE_ACCESS(asc)
 			/*  TODO: not just disk, but some generic
 			    SCSI device  */
 			target_exists = diskimage_exist(cpu->machine,
-			    d->reg_wo[NCR_SELID] & 7, DISKIMAGE_SCSI);
+			    (d->reg_wo[NCR_SELID] & 7) + d->target_offset,
+			    DISKIMAGE_SCSI);
 
 			if (target_exists) {
 				/*
@@ -1241,7 +1247,7 @@ break;
  *
  *  Register an 'asc' device.
  */
-void dev_asc_init(struct machine *machine, struct memory *mem,
+void *dev_asc_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, const char *irq_path, void *turbochannel, int mode,
 	size_t (*dma_controller)(void *dma_controller_data,
 		unsigned char *data, size_t len, int writeflag),
@@ -1287,5 +1293,18 @@ void dev_asc_init(struct machine *machine, struct memory *mem,
 	}
 
 	machine_add_tickfunction(machine, dev_asc_tick, d, ASC_TICK_SHIFT);
+
+	return d;
+}
+
+
+/*
+ *  dev_asc_set_target_offset():
+ *
+ *  For a second SCSI bus: its target n is disk image ID n + offset.
+ */
+void dev_asc_set_target_offset(void *asc, int offset)
+{
+	((struct asc_data *) asc)->target_offset = offset;
 }
 

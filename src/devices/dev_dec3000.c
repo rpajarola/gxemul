@@ -32,21 +32,25 @@
  *  into longword TURBOchannel accesses (with a byte mask) to the slots:
  *
  *	slots 3..5	TURBOchannel options 0..2 (none yet: bus timeout)
- *	slot 6		SCSI interface (TODO), TURBOchannel ASIC CSRs
+ *	slot 6		dual SCSI ASIC (TCDS) with two 53C94s, TURBOchannel
+ *			ASIC CSRs
  *	slot 7		IOCTL ASIC: system FEPROM, IOCTL registers, Ethernet
  *			address ROM, LANCE (TODO), 2 x SCC, DS1287 RTC,
  *			79C30A (TODO)
  *
  *  The SCCs and the RTC are the DECstation devices (dev_scc, dev_mc146818),
- *  registered in a memory object of their own at their IOCTL offsets.
+ *  registered in a memory object of their own at their IOCTL offsets; the
+ *  53C94s are dev_asc, each in a memory object of its own. SCSI bus A
+ *  has the disk images with IDs 0..7, bus B those with IDs 8..15.
  *
  *  Interrupts: the IOCTL's SIR (masked by SIMR) is TURBOchannel interrupt
- *  line 7; the TURBOchannel lines (masked by IMR for the option slots) go
+ *  line 7, the TCDS's CIR (masked by IMER) line 6; the TURBOchannel lines (masked by IMR for the option slots) go
  *  to the CPU's irq_h[3]; uncorrectable errors in the IR to irq_h[4]. The
  *  RTC is connected to irq_h[1] by the machine.
  *
  *  Reference: DEC 3000 300/400/500/600/700/800/900 AXP Models System
- *  Programmer's Manual (EK-D3SYS-PM.B01), chapters 2, 3, 4, 7, appendix A.
+ *  Programmer's Manual (EK-D3SYS-PM.B01), chapters 2, 3, 4, 7, 8, 9,
+ *  appendix A.
  */
 
 #include <stdio.h>
@@ -106,6 +110,7 @@ struct dec3000_data {
 	unsigned char		sysrom[ROM_SIZE];
 	unsigned char		iorom[ROM_SIZE];
 	int			have_sysrom, have_iorom;
+	int			n_banks;	/*  32 MB each  */
 
 	/*  TURBOchannel ASIC:  */
 	uint32_t		ioslot;
@@ -126,6 +131,16 @@ struct dec3000_data {
 	uint32_t		ioctl_reg[N_IOCTL_REGS];
 	uint32_t		sir_dev;	/*  SIR<15:0>, from devices  */
 	unsigned char		esar[32];
+
+	/*  TCDS:  */
+	struct memory		*scsi_mem[2];
+	void			*asc[2];
+	int			asc_irq[2];
+	uint32_t		tcds_cir;
+	uint32_t		tcds_imer;
+	uint32_t		tcds_sda[2], tcds_dic[2];
+	uint32_t		tcds_dud0[2], tcds_dud1[2];
+	uint32_t		tcds_buf[2][32];
 
 	/*  LANCE stub:  */
 	uint16_t		lance_rap;
@@ -220,10 +235,9 @@ static void tc_timeout(struct dec3000_data *d, uint32_t tc_addr, int slot,
  *  Devices behind the IOCTL (registered in d->ioctl_mem)
  */
 
-static int sub_access(struct dec3000_data *d, struct cpu *cpu,
+static int sub_access(struct memory *mem, struct cpu *cpu,
 	uint64_t addr, unsigned char *data, size_t len, int writeflag)
 {
-	struct memory *mem = d->ioctl_mem;
 	int i;
 
 	for (i = 0; i < mem->n_mmapped_devices; i++) {
@@ -235,8 +249,8 @@ static int sub_access(struct dec3000_data *d, struct cpu *cpu,
 	return 0;
 }
 
-/*  An 8-bit device on byte lane 'lane' of the IOCTL's bus:  */
-static void byte_device(struct dec3000_data *d, struct cpu *cpu,
+/*  An 8-bit device on byte lane 'lane' of a bus:  */
+static void byte_device(struct memory *mem, struct cpu *cpu,
 	uint32_t off, int lane, uint32_t *val, int bytemask, int writeflag)
 {
 	unsigned char b;
@@ -245,10 +259,10 @@ static void byte_device(struct dec3000_data *d, struct cpu *cpu,
 		if (!(bytemask & (1 << lane)))
 			return;
 		b = *val >> (8 * lane);
-		sub_access(d, cpu, off + lane, &b, 1, MEM_WRITE);
+		sub_access(mem, cpu, off + lane, &b, 1, MEM_WRITE);
 	} else {
 		b = 0;
-		sub_access(d, cpu, off + lane, &b, 1, MEM_READ);
+		sub_access(mem, cpu, off + lane, &b, 1, MEM_READ);
 		*val = (uint32_t)b << (8 * lane);
 	}
 }
@@ -366,13 +380,13 @@ static int ioctl_access(struct dec3000_data *d, struct cpu *cpu,
 	case IOCTL_SCC1:
 		/*  RAP and data of channels B and A, at 0, 4, 8, c; the data
 		    is on byte lane 1 (IOBUS HI).  */
-		byte_device(d, cpu, (off & ~0x3ffff) | (off & 0xc), 1, val,
-		    bytemask, writeflag);
+		byte_device(d->ioctl_mem, cpu, (off & ~0x3ffff) | (off & 0xc),
+		    1, val, bytemask, writeflag);
 		return 1;
 	case IOCTL_RTC:
 		/*  Register n at n * 4, data on byte lane 0 (IOBUS LO).  */
-		byte_device(d, cpu, IOCTL_RTC | (off & 0xffc), 0, val,
-		    bytemask, writeflag);
+		byte_device(d->ioctl_mem, cpu, IOCTL_RTC | (off & 0xffc), 0,
+		    val, bytemask, writeflag);
 		return 1;
 	case IOCTL_ISDN:
 		/*  TODO: 79C30A. Reads as nothing interesting.  */
@@ -380,6 +394,233 @@ static int ioctl_access(struct dec3000_data *d, struct cpu *cpu,
 			*val = 0;
 		return 1;
 	}
+	return 0;
+}
+
+
+/*****************************************************************************
+ *
+ *  TURBOchannel dual SCSI ASIC (TCDS, slot 6, offsets below 0x2000000)
+ */
+
+#define	TCDS_CIR_DMA_EN(ch)	(0x100 << (ch))
+#define	TCDS_CIR_GPI		0xf0
+#define	TCDS_CIR_SCSI_INT(ch)	(0x40000 << (ch))
+#define	TCDS_DIC_WRITE		0x80	/*  DMA to memory  */
+
+struct tcds_chan {
+	struct dec3000_data	*d;
+	int			ch;
+};
+
+static void update_tcds_irq(struct dec3000_data *d)
+{
+	int ch;
+
+	/*  The 53C94 interrupts are levels; with their enable bits, they
+	    (re)set CIR<19:18>.  */
+	for (ch = 0; ch < 2; ch++)
+		if (d->asc_irq[ch] && (d->tcds_imer & (4 << ch)))
+			d->tcds_cir |= TCDS_CIR_SCSI_INT(ch);
+
+	set_tc_line(d, TC_LINE_SCSI,
+	    (d->tcds_cir & d->tcds_imer & 0xffff0000) != 0);
+}
+
+static void scsi_irq_assert(struct interrupt *interrupt)
+{
+	struct dec3000_data *d = (struct dec3000_data *) interrupt->extra;
+	d->asc_irq[interrupt->line] = 1;
+	update_tcds_irq(d);
+}
+static void scsi_irq_deassert(struct interrupt *interrupt)
+{
+	struct dec3000_data *d = (struct dec3000_data *) interrupt->extra;
+	d->asc_irq[interrupt->line] = 0;
+	update_tcds_irq(d);
+}
+
+
+/*  A TURBOchannel DMA address to a physical address (through the
+    scatter/gather map if it is enabled for the slot). Returns 0 if the
+    map entry isn't valid.  */
+static int tc_dma_addr(struct dec3000_data *d, int slot, uint64_t addr,
+	uint64_t *paddr)
+{
+	/*  IOSLOT: 3 bits per slot (P, B, S); the SCSI's are <20:18>.  */
+	int sbit = slot == 6? 18 : slot == 7? 21 : (slot - 3) * 3 + 9;
+
+	if (d->ioslot & (1 << sbit)) {
+		uint32_t e = d->sgmap[(addr >> 13) & 32767];
+		if (!(e & 0x800000))
+			return 0;
+		*paddr = (((uint64_t)(e >> 4) & 0x1ffff) << 13) |
+		    (addr & 0x1fff);
+	} else
+		*paddr = addr & 0x3fffffff;
+	return 1;
+}
+
+
+/*
+ *  tcds_dma():
+ *
+ *  The DMA engine of one SCSI channel, called by dev_asc to move data:
+ *  writeflag is non-zero for data from the SCSI bus to memory. The address
+ *  is SDA (longwords) with DIC<1:0>. At the end, SDA is where the
+ *  remaining partial longword is, and DUD0/DUD1 have the partial first and
+ *  last longwords of a transfer to memory (which is also written to
+ *  memory directly, so that the driver merging them again does no harm).
+ */
+static size_t tcds_dma(void *extra, unsigned char *data, size_t len,
+	int writeflag)
+{
+	struct tcds_chan *c = (struct tcds_chan *) extra;
+	struct dec3000_data *d = c->d;
+	struct cpu *cpu = d->machine->cpus[d->machine->bootstrap_cpu];
+	int ch = c->ch;
+	uint64_t addr, end;
+	size_t done = 0;
+	int i;
+
+	if (!(d->tcds_cir & TCDS_CIR_DMA_EN(ch))) {
+		debugmsg(SUBSYS_DEVICE, "dec3000", VERBOSITY_WARNING,
+		    "SCSI[%i] DMA of %i bytes, but DMA is not enabled", ch,
+		    (int) len);
+		return 0;
+	}
+	if (((d->tcds_dic[ch] & TCDS_DIC_WRITE) != 0) != (writeflag != 0))
+		debugmsg(SUBSYS_DEVICE, "dec3000", VERBOSITY_WARNING,
+		    "SCSI[%i] DMA %s memory, but DIC says otherwise", ch,
+		    writeflag? "to" : "from");
+
+	addr = ((uint64_t) d->tcds_sda[ch] << 2) | (d->tcds_dic[ch] & 3);
+	end = addr + len;
+
+	while (done < len) {
+		uint64_t paddr;
+		size_t n = 0x2000 - ((addr + done) & 0x1fff);
+		if (n > len - done)
+			n = len - done;
+		if (!tc_dma_addr(d, 6, addr + done, &paddr)) {
+			/*  Scatter/gather entry not valid  */
+			d->ir_errors |= 0x40000000;
+			d->tcds_cir |= 0x400000 << ch;
+			d->tcds_cir &= ~TCDS_CIR_DMA_EN(ch);
+			update_cpu_irqs(d);
+			update_tcds_irq(d);
+			break;
+		}
+		cpu->memory_rw(cpu, cpu->mem, paddr, data + done, n,
+		    writeflag? MEM_WRITE : MEM_READ, PHYSICAL | NO_EXCEPTIONS);
+		done += n;
+	}
+
+	if (writeflag) {
+		/*  Partial first longword:  */
+		d->tcds_dud0[ch] = 0;
+		if (addr & 3) {
+			for (i = addr & 3; i < 4 && (size_t)(i - (addr & 3))
+			    < len; i++)
+				d->tcds_dud0[ch] |= ((uint32_t)
+				    data[i - (addr & 3)] << (8 * i)) |
+				    (1 << (i - 1));
+		}
+		/*  Partial last longword:  */
+		d->tcds_dud1[ch] = 0;
+		if ((end & 3) && (end & ~3ULL) > (addr & ~3ULL)) {
+			int n = end & 3;
+			for (i = 0; i < n; i++)
+				d->tcds_dud1[ch] |= ((uint32_t)
+				    data[len - n + i] << (8 * i)) |
+				    (1 << (24 + i));
+		}
+	}
+
+	d->tcds_sda[ch] = (end >> 2) & 0xffffffff;
+	d->tcds_dic[ch] = (d->tcds_dic[ch] & ~3) | (end & 3);
+
+	return done;
+}
+
+
+static int tcds_access(struct dec3000_data *d, struct cpu *cpu,
+	uint32_t off, uint32_t *val, int writeflag)
+{
+	int ch;
+
+	switch (off & 0x3c0000) {
+	case 0x000000:
+		/*  FEPROM: none on the built-in TCDS.  */
+		if (!writeflag)
+			*val = 0xffffffff;
+		return 1;
+
+	case 0x040000:
+		if ((off & 0xffff) < 0x1000) {
+			if ((off & 0xffc) == 0) {
+				/*  CIR  */
+				if (writeflag) {
+					d->tcds_cir = (d->tcds_cir &
+					    (*val | 0xffff) & 0xffff0000) |
+					    (*val & 0xff0f);
+					update_tcds_irq(d);
+				} else
+					*val = d->tcds_cir | TCDS_CIR_GPI;
+			} else if ((off & 0xffc) == 4) {
+				/*  IMER  */
+				if (writeflag) {
+					d->tcds_imer = *val;
+					update_tcds_irq(d);
+				} else
+					*val = d->tcds_imer;
+			} else if (!writeflag)
+				*val = 0;
+			return 1;
+		}
+		ch = (off >> 8) & 1;
+		switch (off & 0xfc) {
+		case 0x00:
+			if (writeflag)
+				d->tcds_sda[ch] = *val;
+			else
+				*val = d->tcds_sda[ch];
+			break;
+		case 0x04:
+			if (writeflag)
+				d->tcds_dic[ch] = *val & 0xc3;
+			else
+				*val = d->tcds_dic[ch];
+			break;
+		case 0x08:
+			if (!writeflag)
+				*val = d->tcds_dud0[ch];
+			break;
+		case 0x0c:
+			if (!writeflag)
+				*val = d->tcds_dud1[ch];
+			break;
+		default:if (!writeflag)
+				*val = 0;
+		}
+		return 1;
+
+	case 0x080000:
+		/*  53C94 registers, at 4-byte steps, on byte lane 0.  */
+		ch = (off >> 8) & 1;
+		byte_device(d->scsi_mem[ch], cpu, off & 0xfc, 0, val, 0xf,
+		    writeflag);
+		return 1;
+
+	case 0x0c0000:
+		ch = (off >> 8) & 1;
+		if (writeflag)
+			d->tcds_buf[ch][(off >> 2) & 31] = *val;
+		else
+			*val = d->tcds_buf[ch][(off >> 2) & 31];
+		return 1;
+	}
+
 	return 0;
 }
 
@@ -510,8 +751,7 @@ static int tc_access(struct dec3000_data *d, struct cpu *cpu, int slot,
 	case 6:
 		if (off & 0x2000000)
 			return tc_csr_access(d, off, val, writeflag, sparse);
-		/*  TODO: the dual SCSI ASIC and the 53C94s.  */
-		return 0;
+		return tcds_access(d, cpu, off, val, writeflag);
 	case 7:
 		if (off & 0x2000000)
 			return 0;		/*  CXTurbo: 500 models only  */
@@ -692,6 +932,7 @@ struct dec3000_data *dev_dec3000_init(struct machine *machine,
 
 	/*  Memory: 32 MB banks from 0; the others mapped out.  */
 	banks = (ram_size + (32 << 20) - 1) / (32 << 20);
+	d->n_banks = banks;
 	for (i = 0; i < 8; i++) {
 		if (i < banks && i < 4)
 			d->mcr[i] = ((i * 4) << 9) | (0x3 << 5);
@@ -720,6 +961,31 @@ struct dec3000_data *dev_dec3000_init(struct machine *machine,
 	snprintf(tmp, sizeof(tmp), "%s.1", cpu_irq);
 	dev_mc146818_init(machine, d->ioctl_mem, IOCTL_RTC, tmp,
 	    MC146818_DEC, 1);
+
+	/*  The dual SCSI ASIC's 53C94s:  */
+	for (i = 0; i < 2; i++) {
+		struct interrupt templ;
+		struct tcds_chan *c;
+		char name[300];
+
+		snprintf(name, sizeof(name), "%s.dec3000.scsi.%i",
+		    machine->path, i);
+		memset(&templ, 0, sizeof(templ));
+		templ.line = i;
+		templ.name = name;
+		templ.extra = d;
+		templ.interrupt_assert = scsi_irq_assert;
+		templ.interrupt_deassert = scsi_irq_deassert;
+		interrupt_handler_register(&templ);
+
+		CHECK_ALLOCATION(c = (struct tcds_chan *) malloc(sizeof(*c)));
+		c->d = d;
+		c->ch = i;
+		d->scsi_mem[i] = memory_new(0);
+		d->asc[i] = dev_asc_init(machine, d->scsi_mem[i], 0, name,
+		    NULL, DEV_ASC_DEC, tcds_dma, c);
+		dev_asc_set_target_offset(d->asc[i], 8 * i);
+	}
 
 	make_esar(d, ether);
 	d->lance_csr[0] = 4;			/*  STOP  */
@@ -760,6 +1026,25 @@ void dev_dec3000_set_rom(struct dec3000_data *d, int sys,
 
 uint64_t dev_dec3000_srom(struct dec3000_data *d, struct cpu *cpu)
 {
+	uint64_t banks = 0;
+	int i;
+
+	/*
+	 *  The serial ROM's results, in registers (the console saves them
+	 *  in its PALcode's data, and reads them from there):
+	 *
+	 *	at	memory banks: byte n for bank n, size code in bits
+	 *		<7:6> (1 = 8 MB, 2 = 32 MB, 3 = 128 MB, 0 = none)
+	 *	a4	memory size in MB
+	 *
+	 *  (Found from the console code; the other registers, ra, t10,
+	 *  a1..a3, s1, s2, t6, t7, are not known yet and are left 0.)
+	 */
+	for (i = 0; i < d->n_banks && i < 8; i++)
+		banks |= (uint64_t)0x80 << (8 * i);
+	cpu->cd.alpha.r[ALPHA_AT] = banks;
+	cpu->cd.alpha.r[ALPHA_A4] = d->n_banks * 32;
+
 	/*  (Called after each ROM file is loaded.)  */
 	if (d->have_sysrom)
 		cpu->memory_rw(cpu, cpu->mem, 0x4000,
