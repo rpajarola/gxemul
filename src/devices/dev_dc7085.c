@@ -313,6 +313,18 @@ int dev_dc7085_init(struct machine *machine, struct memory *mem,
 	    add_to_rx_queue,
 	    d->console_handle, d);
 
+	/*
+	 *  With a framebuffer, the console is the keyboard's, and the lines
+	 *  with the modem signals, 2 (communications) and 3 (printer), are
+	 *  ports of their own, as on the real machine:
+	 */
+	if (use_fb) {
+		d->lk201.serial_handle[0] = console_start_slave(machine,
+		    "DC7085 line 2", 1);
+		d->lk201.serial_handle[1] = console_start_slave(machine,
+		    "DC7085 line 3", 1);
+	}
+
 	memory_device_register(mem, "dc7085", baseaddr, DEV_DC7085_LENGTH,
 	    dev_dc7085_access, d, DM_DEFAULT, NULL);
 	machine_add_tickfunction(machine, dev_dc7085_tick, d,

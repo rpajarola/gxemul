@@ -620,8 +620,8 @@ void dev_scc_serial_console(void *e, struct machine *machine)
 	struct scc_data *d = (struct scc_data *) e;
 
 	if (d->use_fb)
-		d->lk201.serial_handle = console_start_slave(machine,
-		    "SCC serial console", 1);
+		d->lk201.serial_handle[DCPRINTER_PORT - DCCOMM_PORT] =
+		    console_start_slave(machine, "SCC serial console", 1);
 }
 
 
