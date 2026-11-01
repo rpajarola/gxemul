@@ -1,0 +1,774 @@
+/*
+ *  Copyright (C) 2026  Rico Pajarola.  All rights reserved.
+ *
+ *  Redistribution and use in source and binary forms, with or without
+ *  modification, are permitted provided that the following conditions are met:
+ *
+ *  1. Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *  2. Redistributions in binary form must reproduce the above copyright
+ *     notice, this list of conditions and the following disclaimer in the
+ *     documentation and/or other materials provided with the distribution.
+ *  3. The name of the author may not be used to endorse or promote products
+ *     derived from this software without specific prior written permission.
+ *
+ *  THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ *  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ *  ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ *  FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ *  DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ *  OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ *  HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ *  LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ *  OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ *  SUCH DAMAGE.
+ *
+ *
+ *  COMMENT: DEC 3000 (TURBOchannel Alpha) I/O space
+ *
+ *  The whole TURBOchannel I/O space of a DEC 3000/400 (physical 1.0000.0000
+ *  to 1.FFFF.FFFF): CPU accesses through dense and sparse space are turned
+ *  into longword TURBOchannel accesses (with a byte mask) to the slots:
+ *
+ *	slots 3..5	TURBOchannel options 0..2 (none yet: bus timeout)
+ *	slot 6		SCSI interface (TODO), TURBOchannel ASIC CSRs
+ *	slot 7		IOCTL ASIC: system FEPROM, IOCTL registers, Ethernet
+ *			address ROM, LANCE (TODO), 2 x SCC, DS1287 RTC,
+ *			79C30A (TODO)
+ *
+ *  The SCCs and the RTC are the DECstation devices (dev_scc, dev_mc146818),
+ *  registered in a memory object of their own at their IOCTL offsets.
+ *
+ *  Interrupts: the IOCTL's SIR (masked by SIMR) is TURBOchannel interrupt
+ *  line 7; the TURBOchannel lines (masked by IMR for the option slots) go
+ *  to the CPU's irq_h[3]; uncorrectable errors in the IR to irq_h[4]. The
+ *  RTC is connected to irq_h[1] by the machine.
+ *
+ *  Reference: DEC 3000 300/400/500/600/700/800/900 AXP Models System
+ *  Programmer's Manual (EK-D3SYS-PM.B01), chapters 2, 3, 4, 7, appendix A.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "cpu.h"
+#include "device.h"
+#include "devices.h"
+#include "interrupt.h"
+#include "machine.h"
+#include "memory.h"
+#include "misc.h"
+
+
+#define	DEC3000_IO_BASE		0x100000000ULL
+#define	DEC3000_IO_LENGTH	0x100000000ULL
+
+#define	ROM_SIZE		(256 * 1024)
+
+/*  TURBOchannel interrupt lines (IOSLOT/IR bit numbers):  */
+#define	TC_LINE_SCSI		6
+#define	TC_LINE_IOCTL		7
+
+/*  IR error bits:  */
+#define	IR_TIMEOUT		0x08000000
+#define	IR_ERRORS		0xfff80000
+#define	IR_CORRECTED		0x02000000
+
+/*  Offsets in the IOCTL (slot 7):  */
+#define	IOCTL_ROM		0x000000
+#define	IOCTL_REGS		0x040000
+#define	IOCTL_ESAR		0x080000
+#define	IOCTL_LANCE		0x0c0000
+#define	IOCTL_SCC0		0x100000
+#define	IOCTL_SCC1		0x180000
+#define	IOCTL_RTC		0x200000
+#define	IOCTL_ISDN		0x240000
+
+/*  IOCTL registers (offset >> 4):  */
+#define	IOCTL_SSR		(0x100 >> 4)
+#define	IOCTL_SIR		(0x110 >> 4)
+#define	IOCTL_SIMR		(0x120 >> 4)
+#define	IOCTL_SAR		(0x130 >> 4)
+#define	N_IOCTL_REGS		32
+
+#define	SSR_ROM_SINGLE		(1 << 26)
+#define	SSR_ROM_SELECT		(1 << 9)	/*  TODO: and <7>?  */
+
+
+struct dec3000_data {
+	struct machine		*machine;
+
+	/*  Devices behind the IOCTL, at their IOCTL offsets:  */
+	struct memory		*ioctl_mem;
+
+	unsigned char		sysrom[ROM_SIZE];
+	unsigned char		iorom[ROM_SIZE];
+	int			have_sysrom, have_iorom;
+
+	/*  TURBOchannel ASIC:  */
+	uint32_t		ioslot;
+	uint32_t		tcconfig;
+	uint32_t		fadr, tcereg;
+	int			err_locked;
+	uint32_t		imr;		/*  <5:0>, 1 = disabled  */
+	uint32_t		ir_errors;	/*  <31:19>  */
+	uint32_t		tc_lines;	/*  <8:0>  */
+	uint32_t		mcr[8];
+	uint32_t		sgmap[32768];
+	struct interrupt	irq_io;		/*  cpu irq_h[3]  */
+	struct interrupt	irq_err;	/*  cpu irq_h[4]  */
+	struct interrupt	irq_corr;	/*  cpu irq_h[2]  */
+	int			irq_io_on, irq_err_on, irq_corr_on;
+
+	/*  IOCTL:  */
+	uint32_t		ioctl_reg[N_IOCTL_REGS];
+	uint32_t		sir_dev;	/*  SIR<15:0>, from devices  */
+	unsigned char		esar[32];
+
+	/*  LANCE stub:  */
+	uint16_t		lance_rap;
+	uint16_t		lance_csr[4];
+};
+
+
+/*****************************************************************************
+ *
+ *  Interrupts
+ */
+
+static void update_cpu_irqs(struct dec3000_data *d)
+{
+	uint32_t lines = d->tc_lines & ~(d->imr & 0x3f) & 0x1ff;
+	int io = lines != 0;
+	int err = (d->ir_errors & IR_ERRORS & ~IR_CORRECTED) != 0;
+	int corr = (d->ir_errors & IR_CORRECTED) != 0;
+
+	if (io != d->irq_io_on) {
+		if (io)
+			INTERRUPT_ASSERT(d->irq_io);
+		else
+			INTERRUPT_DEASSERT(d->irq_io);
+		d->irq_io_on = io;
+	}
+	if (err != d->irq_err_on) {
+		if (err)
+			INTERRUPT_ASSERT(d->irq_err);
+		else
+			INTERRUPT_DEASSERT(d->irq_err);
+		d->irq_err_on = err;
+	}
+	if (corr != d->irq_corr_on) {
+		if (corr)
+			INTERRUPT_ASSERT(d->irq_corr);
+		else
+			INTERRUPT_DEASSERT(d->irq_corr);
+		d->irq_corr_on = corr;
+	}
+}
+
+static void set_tc_line(struct dec3000_data *d, int line, int on)
+{
+	if (on)
+		d->tc_lines |= 1 << line;
+	else
+		d->tc_lines &= ~(1 << line);
+	update_cpu_irqs(d);
+}
+
+/*  The IOCTL interrupts the TURBOchannel ASIC if SIR & SIMR:  */
+static void update_ioctl_irq(struct dec3000_data *d)
+{
+	uint32_t sir = (d->ioctl_reg[IOCTL_SIR] & 0xffff0000) | d->sir_dev;
+
+	set_tc_line(d, TC_LINE_IOCTL, (sir & d->ioctl_reg[IOCTL_SIMR]) != 0);
+}
+
+/*  Device interrupts into SIR<15:0>: "<machine>.dec3000.<bit>"  */
+static void ioctl_irq_assert(struct interrupt *interrupt)
+{
+	struct dec3000_data *d = (struct dec3000_data *) interrupt->extra;
+	d->sir_dev |= 1 << interrupt->line;
+	update_ioctl_irq(d);
+}
+static void ioctl_irq_deassert(struct interrupt *interrupt)
+{
+	struct dec3000_data *d = (struct dec3000_data *) interrupt->extra;
+	d->sir_dev &= ~(1 << interrupt->line);
+	update_ioctl_irq(d);
+}
+
+
+/*  A TURBOchannel timeout (nothing in a slot, or a register that doesn't
+    respond): latched in IR and the error registers.  */
+static void tc_timeout(struct dec3000_data *d, uint32_t tc_addr, int slot,
+	int writeflag)
+{
+	d->ir_errors |= IR_TIMEOUT;
+	if (!d->err_locked) {
+		d->fadr = tc_addr & 0x07ffffff;
+		d->tcereg = (slot & 0xf) | 0x80 | (writeflag? 0x40000000 : 0);
+		d->err_locked = 1;
+	}
+	update_cpu_irqs(d);
+}
+
+
+/*****************************************************************************
+ *
+ *  Devices behind the IOCTL (registered in d->ioctl_mem)
+ */
+
+static int sub_access(struct dec3000_data *d, struct cpu *cpu,
+	uint64_t addr, unsigned char *data, size_t len, int writeflag)
+{
+	struct memory *mem = d->ioctl_mem;
+	int i;
+
+	for (i = 0; i < mem->n_mmapped_devices; i++) {
+		struct memory_device *dev = &mem->devices[i];
+		if (addr >= dev->baseaddr && addr + len <= dev->endaddr)
+			return dev->f(cpu, mem, addr - dev->baseaddr, data,
+			    len, writeflag, dev->extra);
+	}
+	return 0;
+}
+
+/*  An 8-bit device on byte lane 'lane' of the IOCTL's bus:  */
+static void byte_device(struct dec3000_data *d, struct cpu *cpu,
+	uint32_t off, int lane, uint32_t *val, int bytemask, int writeflag)
+{
+	unsigned char b;
+
+	if (writeflag) {
+		if (!(bytemask & (1 << lane)))
+			return;
+		b = *val >> (8 * lane);
+		sub_access(d, cpu, off + lane, &b, 1, MEM_WRITE);
+	} else {
+		b = 0;
+		sub_access(d, cpu, off + lane, &b, 1, MEM_READ);
+		*val = (uint32_t)b << (8 * lane);
+	}
+}
+
+
+static void rom_access(struct dec3000_data *d, uint32_t off, uint32_t *val,
+	int writeflag)
+{
+	unsigned char *rom = (d->ioctl_reg[IOCTL_SSR] & SSR_ROM_SELECT)?
+	    d->iorom : d->sysrom;
+	int i;
+
+	off &= ROM_SIZE - 1;
+
+	if (writeflag) {
+		/*  TODO: flash programming (28F020 commands).  */
+		debugmsg(SUBSYS_DEVICE, "dec3000", VERBOSITY_INFO,
+		    "FEPROM write 0x%08x to offset 0x%05x ignored",
+		    *val, off);
+		return;
+	}
+
+	if (d->ioctl_reg[IOCTL_SSR] & SSR_ROM_SINGLE) {
+		*val = rom[off];
+		return;
+	}
+
+	/*  Four byte reads, packed into a longword:  */
+	*val = 0;
+	for (i = 3; i >= 0; i--)
+		*val = (*val << 8) | rom[(off & ~3) + i];
+}
+
+
+static void ioctl_regs_access(struct dec3000_data *d, uint32_t off,
+	uint32_t *val, int writeflag)
+{
+	int r = (off >> 4) & (N_IOCTL_REGS - 1);
+
+	if (!writeflag) {
+		switch (r) {
+		case IOCTL_SIR:
+			*val = (d->ioctl_reg[IOCTL_SIR] & 0xffff0000) |
+			    d->sir_dev;
+			break;
+		default:*val = d->ioctl_reg[r];
+		}
+		return;
+	}
+
+	switch (r) {
+	case IOCTL_SIR:
+		/*  <31:16> are cleared by writing 0; <15:0> are read-only.  */
+		d->ioctl_reg[IOCTL_SIR] &= *val | 0xffff;
+		break;
+	case IOCTL_SAR:
+		break;
+	default:
+		d->ioctl_reg[r] = *val;
+	}
+
+	if (r == IOCTL_SSR)
+		debugmsg(SUBSYS_DEVICE, "dec3000", VERBOSITY_DEBUG,
+		    "SSR = 0x%08x", *val);
+
+	update_ioctl_irq(d);
+}
+
+
+/*  The LANCE, for now only so that its registers can be read and written.
+    TODO: dev_le with IOCTL DMA.  */
+static void lance_stub(struct dec3000_data *d, uint32_t off, uint32_t *val,
+	int writeflag)
+{
+	if ((off & 4) == 4) {
+		/*  RAP  */
+		if (writeflag)
+			d->lance_rap = *val & 3;
+		else
+			*val = d->lance_rap;
+		return;
+	}
+
+	/*  RDP  */
+	if (writeflag) {
+		if (d->lance_rap == 0) {
+			/*  CSR0: STOP resets; other bits aren't emulated.  */
+			if (*val & 4)
+				d->lance_csr[0] = 4;
+		} else
+			d->lance_csr[d->lance_rap] = *val;
+	} else
+		*val = d->lance_csr[d->lance_rap];
+}
+
+
+static int ioctl_access(struct dec3000_data *d, struct cpu *cpu,
+	uint32_t off, uint32_t *val, int bytemask, int writeflag)
+{
+	switch (off & ~0x3ffff) {
+	case IOCTL_ROM:
+		rom_access(d, off, val, writeflag);
+		return 1;
+	case IOCTL_REGS:
+		ioctl_regs_access(d, off, val, writeflag);
+		return 1;
+	case IOCTL_ESAR:
+		if (!writeflag)
+			*val = d->esar[(off >> 2) & 31];
+		return 1;
+	case IOCTL_LANCE:
+		lance_stub(d, off, val, writeflag);
+		return 1;
+	case IOCTL_SCC0:
+	case IOCTL_SCC1:
+		/*  RAP and data of channels B and A, at 0, 4, 8, c; the data
+		    is on byte lane 1 (IOBUS HI).  */
+		byte_device(d, cpu, (off & ~0x3ffff) | (off & 0xc), 1, val,
+		    bytemask, writeflag);
+		return 1;
+	case IOCTL_RTC:
+		/*  Register n at n * 4, data on byte lane 0 (IOBUS LO).  */
+		byte_device(d, cpu, IOCTL_RTC | (off & 0xffc), 0, val,
+		    bytemask, writeflag);
+		return 1;
+	case IOCTL_ISDN:
+		/*  TODO: 79C30A. Reads as nothing interesting.  */
+		if (!writeflag)
+			*val = 0;
+		return 1;
+	}
+	return 0;
+}
+
+
+/*****************************************************************************
+ *
+ *  TURBOchannel ASIC CSRs (slot 6, offsets 0x2000000 and up)
+ */
+
+static uint32_t read_ir(struct dec3000_data *d)
+{
+	return (d->ir_errors & IR_ERRORS) | (d->tc_lines & 0x1ff);
+}
+
+static int tc_csr_access(struct dec3000_data *d, uint32_t off,
+	uint32_t *val, int writeflag, int sparse)
+{
+	off &= 0x1ffffff;
+
+	if (off < 0x200000) {
+		switch (off & 0x38) {
+		case 0x00:
+		case 0x20:
+			if (writeflag)
+				d->ioslot = *val;
+			else
+				*val = d->ioslot;
+			return 1;
+		case 0x08:
+			if (writeflag)
+				d->tcconfig = *val & 0x11f;
+			else
+				*val = d->tcconfig;
+			return 1;
+		case 0x10:
+		case 0x18:
+			if (writeflag) {
+				d->err_locked = 0;
+				return 1;
+			}
+			*val = (off & 0x38) == 0x10? d->fadr : d->tcereg;
+			return 1;
+		}
+		if (!writeflag)
+			*val = 0;
+		return 1;
+	}
+
+	if (off < 0x400000) {
+		/*  Memory configuration registers (the data is in the
+		    address), and the victim address registers.  */
+		int n = (off >> 16) & 7;
+		if (off & 0x80000) {
+			if (!writeflag)
+				*val = 0;
+			return 1;
+		}
+		if (writeflag)
+			d->mcr[n] = off & 0xffe0;
+		else
+			*val = d->mcr[n];
+		return 1;
+	}
+
+	if (off < 0x800000) {
+		/*  Dense: IMR (and at 0x600000 clear IR). Sparse: IR (and at
+		    0x600000 clear IR).  */
+		if (writeflag)
+			return 1;
+		if (sparse)
+			*val = read_ir(d);
+		else
+			*val = (d->ir_errors & IR_ERRORS) | (d->imr & 0x3f);
+		if (off >= 0x600000) {
+			d->ir_errors = 0;
+			update_cpu_irqs(d);
+		}
+		return 1;
+	}
+
+	if (off < 0x820000) {
+		/*  Scatter/gather map (sparse writes), IMR (dense writes)  */
+		int i = (off >> 2) & 32767;
+		if (writeflag) {
+			if (sparse) {
+				uint32_t x = *val & 0xdffff0;
+				int bit, parity = 1;
+				for (bit = 0; bit < 24; bit++)
+					parity ^= (x >> bit) & 1;
+				/*  Odd parity in bit 21:  */
+				d->sgmap[i] = x | (parity << 21);
+			} else {
+				d->imr = *val & 0x3f;
+				update_cpu_irqs(d);
+			}
+		} else
+			*val = d->sgmap[i];
+		return 1;
+	}
+
+	if (off >= 0xa00000 && off < 0xa20000) {
+		/*  TCRESET  */
+		if (writeflag)
+			debugmsg(SUBSYS_DEVICE, "dec3000", VERBOSITY_INFO,
+			    "TURBOchannel reset");
+		return 1;
+	}
+
+	if (!writeflag)
+		*val = 0;
+	return 1;
+}
+
+
+/*****************************************************************************
+ *
+ *  TURBOchannel slots
+ */
+
+/*
+ *  A longword access on the TURBOchannel. bytemask: bit n set = byte n is
+ *  written. Returns 0 if nothing responds (timeout).
+ */
+static int tc_access(struct dec3000_data *d, struct cpu *cpu, int slot,
+	uint32_t off, uint32_t *val, int bytemask, int writeflag, int sparse)
+{
+	switch (slot) {
+	case 6:
+		if (off & 0x2000000)
+			return tc_csr_access(d, off, val, writeflag, sparse);
+		/*  TODO: the dual SCSI ASIC and the 53C94s.  */
+		return 0;
+	case 7:
+		if (off & 0x2000000)
+			return 0;		/*  CXTurbo: 500 models only  */
+		return ioctl_access(d, cpu, off, val, bytemask, writeflag);
+	}
+
+	/*  Option slots 3..5 (TC0..TC2), and slots 0..2 (500 models only):
+	    nothing there.  */
+	return 0;
+}
+
+
+static uint32_t le32(unsigned char *p)
+{
+	return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void put_le32(unsigned char *p, uint32_t x)
+{
+	p[0] = x; p[1] = x >> 8; p[2] = x >> 16; p[3] = x >> 24;
+}
+
+
+DEVICE_ACCESS(dec3000_io)
+{
+	struct dec3000_data *d = (struct dec3000_data *) extra;
+	uint64_t pa = DEC3000_IO_BASE + relative_addr;
+	int slot = (pa >> 29) & 7, sparse = (pa >> 28) & 1;
+	uint32_t off = pa & 0x0fffffff, tc, val;
+	int ok = 1;
+
+	if (sparse) {
+		/*  Even longwords: data, at the dense offset * 2. Odd
+		    longwords: byte masks (written with STQ).  */
+		tc = (off >> 1) & ~3;
+		if (writeflag == MEM_READ) {
+			if (off & 4)
+				val = 0;
+			else
+				ok = tc_access(d, cpu, slot, tc, &val, 0xf,
+				    MEM_READ, 1);
+			put_le32(data, val);
+			if (len == 8)
+				put_le32(data + 4, val);
+		} else {
+			int mask = 0xf;
+			if (off & 4)
+				return 1;
+			if (len == 8) {
+				mask = data[4] & 0xf;
+				if (mask == 0)
+					mask = 0xf;
+			}
+			val = le32(data);
+			ok = tc_access(d, cpu, slot, tc, &val, mask,
+			    MEM_WRITE, 1);
+		}
+	} else {
+		/*  Dense: longwords, or two of them for a quadword.  */
+		int i;
+		tc = off & ~3;
+		for (i = 0; i < (len == 8? 2 : 1) && ok; i++) {
+			if (writeflag == MEM_WRITE) {
+				val = le32(data + 4 * i);
+				ok = tc_access(d, cpu, slot, tc + 4 * i, &val,
+				    0xf, MEM_WRITE, 0);
+			} else {
+				val = 0;
+				ok = tc_access(d, cpu, slot, tc + 4 * i, &val,
+				    0xf, MEM_READ, 0);
+				put_le32(data + 4 * i, val);
+			}
+		}
+	}
+
+	if (!ok) {
+		tc_timeout(d, tc, slot, writeflag);
+		if (writeflag == MEM_READ)
+			memset(data, 0xff, len);
+		/*  The CPU gets a machine check (see memory_rw.c).  */
+		return 0;
+	}
+	return 1;
+}
+
+
+/*****************************************************************************
+ *
+ *  Main memory beyond the installed RAM, and the non-cacheable alias
+ */
+
+DEVICE_ACCESS(dec3000_nomem)
+{
+	/*  Nonexistent memory reads UNPREDICTABLE data (no error).  */
+	if (writeflag == MEM_READ)
+		memset(data, 0, len);
+	return 1;
+}
+
+
+/*****************************************************************************
+ *
+ *  Setup
+ */
+
+/*  The Ethernet address ROM, with its checksum and test patterns.  */
+static void make_esar(struct dec3000_data *d, const unsigned char *a)
+{
+	uint32_t sum = 0;
+	int i;
+
+	for (i = 0; i < 3; i++) {
+		sum <<= 1;
+		if (sum > 0xffff)
+			sum -= 0xffff;
+		sum += (a[2*i] << 8) | a[2*i + 1];
+		if (sum > 0xffff)
+			sum -= 0xffff;
+	}
+	if (sum == 0xffff)
+		sum = 0;
+
+	for (i = 0; i < 6; i++) {
+		d->esar[i] = a[i];
+		d->esar[15 - i] = a[i];
+		d->esar[16 + i] = a[i];
+	}
+	d->esar[6] = d->esar[9] = d->esar[22] = sum >> 8;
+	d->esar[7] = d->esar[8] = d->esar[23] = sum & 0xff;
+	for (i = 0; i < 8; i++)
+		d->esar[24 + i] = "\xff\x00\x55\xaa"[i & 3];
+}
+
+
+static void add_ioctl_irq_line(struct dec3000_data *d, int bit)
+{
+	struct interrupt templ;
+	char name[300];
+
+	snprintf(name, sizeof(name), "%s.dec3000.%i", d->machine->path, bit);
+	memset(&templ, 0, sizeof(templ));
+	templ.line = bit;
+	templ.name = name;
+	templ.extra = d;
+	templ.interrupt_assert = ioctl_irq_assert;
+	templ.interrupt_deassert = ioctl_irq_deassert;
+	interrupt_handler_register(&templ);
+}
+
+
+/*
+ *  dev_dec3000_init():
+ *
+ *  ram_size is the installed memory, in 32 MB banks (MCRs are set as the
+ *  serial ROM would leave them). cpu_irq is the path of the CPU's
+ *  interrupt pins ("machine[0].cpu[0]").
+ */
+struct dec3000_data *dev_dec3000_init(struct machine *machine,
+	struct memory *mem, uint64_t ram_size, const char *cpu_irq)
+{
+	struct dec3000_data *d;
+	char tmp[300];
+	unsigned char ether[6] = { 0x08, 0x00, 0x2b, 0x30, 0x00, 0x01 };
+	int i, banks;
+
+	CHECK_ALLOCATION(d = (struct dec3000_data *) calloc(1, sizeof(*d)));
+	d->machine = machine;
+	d->ioctl_mem = memory_new(0);
+	d->tcconfig = 0x14;		/*  as left by the serial ROM  */
+	d->imr = 0x3f;
+
+	snprintf(tmp, sizeof(tmp), "%s.2", cpu_irq);
+	INTERRUPT_CONNECT(tmp, d->irq_corr);
+	snprintf(tmp, sizeof(tmp), "%s.3", cpu_irq);
+	INTERRUPT_CONNECT(tmp, d->irq_io);
+	snprintf(tmp, sizeof(tmp), "%s.4", cpu_irq);
+	INTERRUPT_CONNECT(tmp, d->irq_err);
+
+	/*  Memory: 32 MB banks from 0; the others mapped out.  */
+	banks = (ram_size + (32 << 20) - 1) / (32 << 20);
+	for (i = 0; i < 8; i++) {
+		if (i < banks && i < 4)
+			d->mcr[i] = ((i * 4) << 9) | (0x3 << 5);
+		else
+			d->mcr[i] = 0x70 << 9;
+	}
+	if (ram_size < 0x40000000ULL)
+		memory_device_register(mem, "dec3000_nomem", ram_size,
+		    0x100000000ULL - ram_size, dev_dec3000_nomem_access, d,
+		    DM_DEFAULT, NULL);
+
+	memory_device_register(mem, "dec3000_io", DEC3000_IO_BASE,
+	    DEC3000_IO_LENGTH, dev_dec3000_io_access, d, DM_DEFAULT, NULL);
+
+	/*  IOCTL devices:  */
+	for (i = 0; i < 16; i++)
+		add_ioctl_irq_line(d, i);
+
+	snprintf(tmp, sizeof(tmp), "%s.dec3000.6", machine->path);
+	dev_scc_init(machine, d->ioctl_mem, IOCTL_SCC0, tmp,
+	    machine->display_md.in_use, 0, 1);
+	snprintf(tmp, sizeof(tmp), "%s.dec3000.7", machine->path);
+	dev_scc_init(machine, d->ioctl_mem, IOCTL_SCC1, tmp,
+	    machine->display_md.in_use, 1, 1);
+
+	snprintf(tmp, sizeof(tmp), "%s.1", cpu_irq);
+	dev_mc146818_init(machine, d->ioctl_mem, IOCTL_RTC, tmp,
+	    MC146818_DEC, 1);
+
+	make_esar(d, ether);
+	d->lance_csr[0] = 4;			/*  STOP  */
+
+	return d;
+}
+
+
+/*
+ *  dev_dec3000_set_rom():
+ *
+ *  Load the system (sys != 0) or I/O ROM image.
+ */
+void dev_dec3000_set_rom(struct dec3000_data *d, int sys,
+	const unsigned char *image, size_t len)
+{
+	unsigned char *rom = sys? d->sysrom : d->iorom;
+
+	memset(rom, 0xff, ROM_SIZE);
+	memcpy(rom, image, len > ROM_SIZE? ROM_SIZE : len);
+	if (sys)
+		d->have_sysrom = 1;
+	else
+		d->have_iorom = 1;
+}
+
+
+/*
+ *  dev_dec3000_srom():
+ *
+ *  What the serial ROM does after memory sizing and tests: copy the
+ *  contents of the system ROM (after its 0x40-byte header, the
+ *  "manufacturing data") to 0x4000, and those of the I/O ROM to 0x44000;
+ *  the decompressor at the start of the system ROM expects them there.
+ *  Returns the entry point.
+ */
+#define	ROM_HEADER_SIZE		0x40
+
+uint64_t dev_dec3000_srom(struct dec3000_data *d, struct cpu *cpu)
+{
+	/*  (Called after each ROM file is loaded.)  */
+	if (d->have_sysrom)
+		cpu->memory_rw(cpu, cpu->mem, 0x4000,
+		    d->sysrom + ROM_HEADER_SIZE, ROM_SIZE - ROM_HEADER_SIZE,
+		    MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
+	if (d->have_iorom)
+		cpu->memory_rw(cpu, cpu->mem, 0x44000,
+		    d->iorom + ROM_HEADER_SIZE, ROM_SIZE - ROM_HEADER_SIZE,
+		    MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
+
+	return 0x4000;
+}

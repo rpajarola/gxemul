@@ -613,16 +613,17 @@ static char *debugger_readline(void)
 			char info[1000];
 			snprintf(info, sizeof(info), "ninstrs=%lli, pc=", (long long) cpu->ninstrs);
 
+			uint64_t arch_pc = CPU_ARCH_PC(cpu);
 			if (cpu->is_32bit)
 				snprintf(info + strlen(info), sizeof(info) - strlen(info),
-				    "0x%08" PRIx32, (uint32_t) cpu->pc);
+				    "0x%08" PRIx32, (uint32_t) arch_pc);
 			else
 				snprintf(info + strlen(info), sizeof(info) - strlen(info),
-				    "0x%016" PRIx64, (uint64_t) cpu->pc);
+				    "0x%016" PRIx64, (uint64_t) arch_pc);
 
 			uint64_t offset;
 			int n_args;
-			char* pc_symbol = get_symbol_name_and_n_args(&debugger_machine->symbol_context, cpu->pc, &offset, &n_args);
+			char* pc_symbol = get_symbol_name_and_n_args(&debugger_machine->symbol_context, arch_pc, &offset, &n_args);
 			if (pc_symbol != NULL)
 				snprintf(info + strlen(info), sizeof(info) - strlen(info),
 				    " <%s>", pc_symbol);

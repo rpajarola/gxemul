@@ -201,6 +201,24 @@ Everything below is in `media/` (not in git).
     Every mode change flushes gxemul's translation tables (simple and
     correct, but slow for an OS: to be optimized when OSF/1 runs).
 
+- M3 (started): machine `dec3000 -e 400` (`machine_dec3000.c`,
+  `dev_dec3000.c`): TURBOchannel dense/sparse decoder, TC ASIC CSRs
+  (IOSLOT, TCCONFIG, FADR/TCEREG, MCRs, IMR/IR, S/G map), IOCTL registers,
+  FEPROM, ESAR, SCCs and RTC (reused DECstation models), LANCE stub, empty
+  slots time out with a machine check. Emulated serial ROM: copies the ROM
+  contents *without* their 0x40-byte header to 0x4000 (system) and
+  0x44000 (I/O) and starts at 0x4000 in PALmode. Takes an updater file or
+  extracted images as the file to load.
+  - Status: V3.3 console decompresses, initializes its PALcode, probes the
+    TC slots, prints on the serial console, then dies with "System
+    Machine Check Abort": a memory bitmap init uses a memory size of 0.
+    The serial ROM hands parameters to the console in at, ra, t10,
+    a1..a4, s1, s2, t6, t7 (the console saves them at physical 0x5a000:
+    [0]=t10 [8]=at [0x10]=a4 [0x20]=t6 [0x28]=t7 [0x30]=s1 [0x38]=s2
+    [0x50]=ra [0x58]=a3 [0x60]=a2 [0x68]=a1); which is which (memory
+    size, CPU speed, SROM version...) is the next thing to work out.
+  - TODO: SCSI (TCDS + 53C94), LANCE, ISDN stub, FEPROM programming.
+
 ## Things to get from the real machines (when they run)
 
 - ROM dump of the /400 (and /600, /700 for comparison).

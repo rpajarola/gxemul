@@ -482,6 +482,16 @@ struct cpu {
 };
 
 
+/*
+ *  The program counter as software sees it. (Alpha with real PALcode tags
+ *  cpu->pc to tell PALmode and native instruction fetches apart; see
+ *  ALPHA_PALMODE_TAG in cpu_alpha.h.) The debugger, breakpoints and the
+ *  control socket use this one.
+ */
+#define	CPU_ARCH_PC(c)	((c)->cpu_family->arch == ARCH_ALPHA?		\
+	alpha_pc_to_arch((c), (c)->pc) : (c)->pc)
+
+
 /*  cpu.c:  */
 struct cpu *cpu_new(struct memory *mem, struct machine *machine,
         int cpu_id, char *cpu_type_name);

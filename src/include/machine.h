@@ -197,6 +197,7 @@ struct machine {
 		struct machine_arcbios	*arc;
 		struct machine_pmax	*pmax;
 		struct of_data		*of_data;
+		struct dec3000_data	*dec3000;
 	} md;
 
 	/*  Bus-specific interrupt data:  */
@@ -238,6 +239,10 @@ struct machine {
 #define	MACHINE_BAREALPHA	4000
 #define	MACHINE_TESTALPHA	4001
 #define	MACHINE_TESTALPHAPAL	4003
+#define	MACHINE_DEC3000		4004
+
+/*  DEC 3000 models:  */
+#define	MACHINE_DEC3000_400	400
 #define	MACHINE_ALPHA		4002
 
 /*  ARM:  */
@@ -411,6 +416,10 @@ bool machine_run(struct machine *machine);
 void machine_list_available_types_and_cpus(void);
 struct machine_entry *machine_entry_new(const char *name, int oldstyle_type);
 void machine_entry_add_alias(struct machine_entry *me, const char *name);
+/*  machine_dec3000.c:  */
+int dec3000_load_rom(struct machine *machine, const char *filename,
+	uint64_t *entrypointp);
+
 void machine_entry_add_subtype(struct machine_entry *me, const char *name,
 	int oldstyle_subtype, ...);
 void machine_entry_register(struct machine_entry *me);

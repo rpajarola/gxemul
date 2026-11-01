@@ -529,6 +529,19 @@ int ev4_translate(struct cpu *cpu, uint64_t vaddr, uint64_t *paddr,
 	}
 
 	e = dtb_lookup(cpu, va);
+	if (e == NULL && noexc) {
+		/*  The debugger, looking at code: what the ITB maps, and in
+		    PALmode physical addresses (as the PALmode PC is).  */
+		struct ev4_tb_entry *ie = itb_lookup(cpu, va);
+		if (ie != NULL) {
+			*paddr = tb_paddr(ie, va);
+			return 1;
+		}
+		if (cpu->cd.alpha.palmode) {
+			*paddr = va & ALPHA_PA_MASK;
+			return 1;
+		}
+	}
 	if (e == NULL) {
 		entry = cpu->cd.alpha.palmode? EV4_ENTRY_DTB_MISS_PAL :
 		    EV4_ENTRY_DTB_MISS;

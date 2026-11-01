@@ -505,7 +505,7 @@ void control_note_stop(struct machine *m, const char *reason)
 			uint64_t mask = m->cpus[j]->is_32bit?
 			    0xffffffffULL : ~0ULL;
 			for (int i = 0; i < m->breakpoints.n; i++)
-				if ((m->cpus[j]->pc & mask) ==
+				if ((CPU_ARCH_PC(m->cpus[j]) & mask) ==
 				    (m->breakpoints.addr[i] & mask)) {
 					cpu = j;
 					bp = m->breakpoints.id[i];
@@ -517,7 +517,7 @@ void control_note_stop(struct machine *m, const char *reason)
 	strlcpy(last_stop.reason, reason, sizeof(last_stop.reason));
 	last_stop.cpu = cpu;
 	format_addr(last_stop.pc, sizeof(last_stop.pc), m->cpus[cpu],
-	    m->cpus[cpu]->pc);
+	    CPU_ARCH_PC(m->cpus[cpu]));
 	last_stop.bp = bp;
 	last_stop.ninstrs = ninstrs_now();
 	last_stop.condition = NULL;
@@ -643,7 +643,7 @@ CTL_HANDLER(cmd_status)
 	for (int j = 0; j < m->ncpus; j++) {
 		cJSON *co = cJSON_CreateObject();
 		cJSON_AddNumberToObject(co, "id", j);
-		add_addr(co, "pc", m->cpus[j], m->cpus[j]->pc);
+		add_addr(co, "pc", m->cpus[j], CPU_ARCH_PC(m->cpus[j]));
 		cJSON_AddBoolToObject(co, "halted", !m->cpus[j]->running);
 		cJSON_AddItemToArray(cpus, co);
 	}
@@ -1416,8 +1416,12 @@ CTL_HANDLER(cmd_disasm)
 	long textlen;
 	int n = 0;
 
-	if (!get_cpu(req, &cpu, err) ||
-	    !get_addr(req, "addr", &cpu->pc, &addr, err) ||
+	uint64_t pc;
+
+	if (!get_cpu(req, &cpu, err))
+		return false;
+	pc = CPU_ARCH_PC(cpu);
+	if (!get_addr(req, "addr", &pc, &addr, err) ||
 	    !get_int(req, "count", 10, &count, err))
 		return false;
 	if (count < 1 || count > 1000)
@@ -1908,7 +1912,7 @@ bool control_exception(struct cpu *cpu, const char *name, int code,
 		strlcpy(e.name, name, sizeof(e.name));
 		e.code = code;
 		e.addr = vaddr;
-		e.vector = cpu->pc;
+		e.vector = CPU_ARCH_PC(cpu);
 		stop |= watch_saw(w, &e);
 	}
 
@@ -1939,7 +1943,7 @@ void control_device_access(struct cpu *cpu, const char *devname,
 		memset(&e, 0, sizeof(e));
 		e.ninstrs = cpu->ninstrs + cpu->n_translated_instrs;
 		e.cpu = cpu->cpu_id;
-		e.pc = cpu->pc;
+		e.pc = CPU_ARCH_PC(cpu);
 		e.is_32bit = cpu->is_32bit;
 		e.device = true;
 		strlcpy(e.name, devname, sizeof(e.name));

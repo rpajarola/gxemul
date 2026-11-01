@@ -179,6 +179,11 @@ void file_load(struct machine *machine, struct memory *mem,
 		exit(1);
 	}
 
+	/*  DEC 3000 firmware (a ROM image, or a firmware update file)?  */
+	if (machine->machine_type == MACHINE_DEC3000 &&
+	    dec3000_load_rom(machine, filename, entrypointp))
+		goto ret;
+
 	/*  Is it an ELF?  */
 	if (buf[0] == 0x7f && buf[1]=='E' && buf[2]=='L' && buf[3]=='F') {
 		file_load_elf(machine, mem, filename,

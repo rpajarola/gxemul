@@ -113,6 +113,14 @@ uint64_t dec_ioasic_dma_ptr_to_addr(uint32_t ptr);
 size_t dec_ioasic_scsi_dma(void *dma_controller_data, unsigned char *data,
 	size_t len, int writeflag);
 int dev_dec_ioasic_access(struct cpu *cpu, struct memory *mem, uint64_t relative_addr, unsigned char *data, size_t len, int writeflag, void *);
+/*  dev_dec3000.c:  */
+struct dec3000_data;
+struct dec3000_data *dev_dec3000_init(struct machine *machine,
+	struct memory *mem, uint64_t ram_size, const char *cpu_irq);
+void dev_dec3000_set_rom(struct dec3000_data *d, int sys,
+	const unsigned char *image, size_t len);
+uint64_t dev_dec3000_srom(struct dec3000_data *d, struct cpu *cpu);
+
 struct dec_ioasic_data *dev_dec_ioasic_init(struct cpu *cpu, struct memory *mem, uint64_t baseaddr, int rackmount_flag, struct interrupt* irq);
 
 /*  dev_asc.c:  */
