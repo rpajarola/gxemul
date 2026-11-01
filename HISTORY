@@ -5571,6 +5571,10 @@ Changelog for GXemul:
 		debugger, as -V does. It used to pause the CPUs instead, so
 		continue stopped again at once (or, without -V, the emulator
 		exited right away).
+20261031	The LK201 keyboard no longer drops keys typed right after Esc:
+		what starts with ESC but isn't a key's escape sequence is
+		typed as Ctrl+[ and its characters, so typing Esc and then O
+		in vi within 100 ms opens a line again. (Antoni Sawicki)
 20261031	UDP through the simulated gateway: a datagram that the guest
 		sends in IP fragments is put together (NFS's 8 KB writes were
 		dropped, with "fragmented UDP packet, TODO"), and one sent
