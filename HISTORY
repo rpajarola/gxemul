@@ -5587,3 +5587,9 @@ Changelog for GXemul:
 		starts). Windows NT requests an APC interrupt when it returns
 		to user mode with a user APC pending, so a new thread ran user
 		code before the APC that initializes it. (Antoni Sawicki)
+20261101	DECstation PROM emulation: bootwrite (0x5c in the callback
+		vector, as on the real PROMs) writes to the boot device as
+		bootread reads it; a call to it stopped the emulator. bootread
+		and bootwrite use only the low 32 bits of their arguments, the
+		part of a register that a 32-bit CPU keeps up to date.
+		(Antoni Sawicki)

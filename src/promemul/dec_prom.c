@@ -217,6 +217,7 @@ int dec_jumptable_func(struct cpu *cpu, int vector)
  *	0x38	iopoll()
  *	0x54	bootinit()
  *	0x58	bootread()
+ *	0x5c	bootwrite()
  *	0x64	getenv()
  *	0x6c	slot_address()
  *	0x70	wbflush()
@@ -447,42 +448,89 @@ int decstation_prom_emul(struct cpu *cpu)
 		 *  buffer is the destination address, and n
 		 *  is the number of _bytes_ to read.
 		 *
+		 *  The arguments are 32-bit values: on a 32-bit processor, only
+		 *  the low half of a register is kept up to date.
+		 *
 		 *  TODO: Return value? NetBSD thinks that 0 is ok.
 		 */
-		debug("[ DEC PROM bootread(0x%x, 0x%08x, 0x%x) ]\n",
-		    (int)cpu->cd.mips.gpr[MIPS_GPR_A0],
-		    (int)cpu->cd.mips.gpr[MIPS_GPR_A1],
-		    (int)cpu->cd.mips.gpr[MIPS_GPR_A2]);
+		{
+			int32_t b = cpu->cd.mips.gpr[MIPS_GPR_A0];
+			uint32_t dst = cpu->cd.mips.gpr[MIPS_GPR_A1];
+			int32_t len = cpu->cd.mips.gpr[MIPS_GPR_A2];
 
-		cpu->cd.mips.gpr[MIPS_GPR_V0] = 0;
+			debug("[ DEC PROM bootread(0x%x, 0x%08x, 0x%x) ]\n",
+			    (int)b, (int)dst, (int)len);
 
-		if ((int32_t)cpu->cd.mips.gpr[MIPS_GPR_A2] > 0) {
-			int disk_id = diskimage_bootdev(cpu->machine, NULL);
-			int res;
-			unsigned char *tmp_buf;
+			cpu->cd.mips.gpr[MIPS_GPR_V0] = 0;
 
-			CHECK_ALLOCATION(tmp_buf = (unsigned char *)
-			    malloc(cpu->cd.mips.gpr[MIPS_GPR_A2]));
+			if (b >= 0 && len > 0) {
+				int disk_id = diskimage_bootdev(cpu->machine, NULL);
+				int res;
+				unsigned char *tmp_buf;
 
-			res = diskimage_access(cpu->machine, disk_id,
-			    DISKIMAGE_SCSI, 0,
-			    cpu->cd.mips.gpr[MIPS_GPR_A0] * 512, tmp_buf,
-			    cpu->cd.mips.gpr[MIPS_GPR_A2]);
+				CHECK_ALLOCATION(tmp_buf = (unsigned char *)
+				    malloc(len));
 
-			/*  If the transfer was successful, transfer the data
-			    to emulated memory:  */
-			if (res) {
-				uint64_t dst = cpu->cd.mips.gpr[MIPS_GPR_A1];
-				if (dst < 0x80000000ULL)
-					dst |= 0x80000000;
+				res = diskimage_access(cpu->machine, disk_id,
+				    DISKIMAGE_SCSI, 0, (off_t) b * 512, tmp_buf, len);
 
-				store_buf(cpu, dst, (char *)tmp_buf,
-				    cpu->cd.mips.gpr[MIPS_GPR_A2]);
-				cpu->cd.mips.gpr[MIPS_GPR_V0] =
-				    cpu->cd.mips.gpr[MIPS_GPR_A2];
+				/*  If the transfer was successful, transfer the
+				    data to emulated memory:  */
+				if (res) {
+					if (dst < 0x80000000U)
+						dst |= 0x80000000;
+
+					store_buf(cpu, (int32_t) dst, (char *)tmp_buf,
+					    len);
+					cpu->cd.mips.gpr[MIPS_GPR_V0] = len;
+				}
+
+				free(tmp_buf);
 			}
+		}
+		break;
+	case 0x5c:		/*  bootwrite(int b, void *buffer, int n)  */
+		/*
+		 *  Write data to the boot device, the way bootread reads it:
+		 *  b is a sector number (512 bytes per sector), buffer is the
+		 *  source address, and n is the number of _bytes_ to write.
+		 *  Returns the number of bytes written, or -1.
+		 */
+		{
+			int32_t b = cpu->cd.mips.gpr[MIPS_GPR_A0];
+			uint32_t src = cpu->cd.mips.gpr[MIPS_GPR_A1];
+			int32_t len = cpu->cd.mips.gpr[MIPS_GPR_A2];
 
-			free(tmp_buf);
+			debug("[ DEC PROM bootwrite(0x%x, 0x%08x, 0x%x) ]\n",
+			    (int)b, (int)src, (int)len);
+
+			cpu->cd.mips.gpr[MIPS_GPR_V0] = (uint64_t) -1;
+
+			if (b >= 0 && len > 0) {
+				int disk_id = diskimage_bootdev(cpu->machine, NULL);
+				int res;
+				unsigned char *tmp_buf;
+
+				CHECK_ALLOCATION(tmp_buf = (unsigned char *)
+				    malloc(len));
+
+				/*  Fetch the data from emulated memory:  */
+				if (src < 0x80000000U)
+					src |= 0x80000000;
+				for (i=0; i<len; i++)
+					cpu->memory_rw(cpu, cpu->mem,
+					    (int32_t) (src + i), &tmp_buf[i],
+					    sizeof(char), MEM_READ,
+					    CACHE_DATA | NO_EXCEPTIONS);
+
+				res = diskimage_access(cpu->machine, disk_id,
+				    DISKIMAGE_SCSI, 1, (off_t) b * 512, tmp_buf, len);
+
+				if (res)
+					cpu->cd.mips.gpr[MIPS_GPR_V0] = len;
+
+				free(tmp_buf);
+			}
 		}
 		break;
 	case 0x64:		/*  getenv()  */
