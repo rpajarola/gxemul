@@ -5783,3 +5783,9 @@ Changelog for GXemul:
 		lead-out, as block numbers or MSF, and the last session
 		(format 1 in the vendor bits), up to the allocation length.
 		(Antoni Sawicki)
+20261110	DC7085 lines 2 and 3 (communications and printer) with a
+		framebuffer: consoles of their own, as the two serial
+		connectors of the machine. What is written to a line goes to
+		its console, and what is typed there is received on the line;
+		they wrote to the main console, and nothing could be typed to
+		them. Windows NT has them as COM1 and COM2. (Antoni Sawicki)
