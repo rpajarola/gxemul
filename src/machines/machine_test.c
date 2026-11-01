@@ -142,6 +142,49 @@ static void default_test(struct machine *machine, struct cpu *cpu)
 }
 
 
+MACHINE_SETUP(barealpha)
+{
+	machine->machine_name = strdup("Generic \"bare\" Alpha machine");
+}
+
+
+MACHINE_SETUP(testalpha)
+{
+	machine->machine_name = strdup("Alpha test machine");
+
+	default_test(machine, cpu);
+}
+
+
+MACHINE_DEFAULT_CPU(barealpha)
+{
+	machine->cpu_name = strdup("21064");
+}
+
+
+MACHINE_DEFAULT_CPU(testalpha)
+{
+	machine->cpu_name = strdup("21064");
+}
+
+
+MACHINE_REGISTER(barealpha)
+{
+	MR_DEFAULT(barealpha, "Generic \"bare\" Alpha machine",
+	    MACHINE_BAREALPHA);
+
+	machine_entry_add_alias(me, "barealpha");
+}
+
+
+MACHINE_REGISTER(testalpha)
+{
+	MR_DEFAULT(testalpha, "Test-machine for Alpha", MACHINE_TESTALPHA);
+
+	machine_entry_add_alias(me, "testalpha");
+}
+
+
 MACHINE_SETUP(barearm)
 {
 	machine->machine_name = strdup("Generic \"bare\" ARM machine");

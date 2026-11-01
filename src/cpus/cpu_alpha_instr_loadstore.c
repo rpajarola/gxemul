@@ -190,7 +190,8 @@ static void LS_N(struct cpu *cpu, struct alpha_instr_call *ic)
 	    7
 #endif
 	    ) {
-		LS_GENERIC_N(cpu, ic);
+		/*  Not naturally aligned: unaligned access fault.  */
+		alpha_unaligned(cpu, ic, addr);
 		return;
 	}
 	else

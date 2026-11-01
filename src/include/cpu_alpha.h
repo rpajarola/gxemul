@@ -53,17 +53,21 @@ struct alpha_cpu_type_def {
 	int		l2way;
 };
 
-/*  TODO: More features  */
+/*
+ *  Architecture extensions (the bits are the same as in AMASK). Without
+ *  ALPHA_FEATURE_BWX, the byte/word instructions are reserved opcodes,
+ *  as on the 21064 and 21164.
+ */
 #define	ALPHA_FEATURE_BWX		1
 
 #define ALPHA_CPU_TYPE_DEFS	{					\
 	{ "21064",	0x000000002ULL, 0, 0, 16,5,2, 16,5,2,  0,0,0 },	\
 	{ "21066",	0x200000004ULL, 0, 0, 16,5,2, 16,5,2,  0,0,0 },	\
 	{ "21164",	0x000000005ULL, 0, 1, 16,5,2, 16,5,2,  0,0,0 },	\
-	{ "21164A-2",	0x000000007ULL, 0, 1, 16,5,2, 16,5,2,  0,0,0 },	\
-	{ "21164PC",	0x000000009ULL, 0, 1, 16,5,2, 16,5,2,  0,0,0 },	\
-	{ "21264",	0x00000000dULL, 0, 2, 16,5,2, 16,5,2,  0,0,0 },	\
-	{ "21364",	0x000000000ULL, 0, 3, 16,5,2, 16,5,2,  0,0,0 },	\
+	{ "21164A-2",	0x000000007ULL, 1, 1, 16,5,2, 16,5,2,  0,0,0 },	\
+	{ "21164PC",	0x000000009ULL, 1, 1, 16,5,2, 16,5,2,  0,0,0 },	\
+	{ "21264",	0x00000000dULL, 1, 2, 16,5,2, 16,5,2,  0,0,0 },	\
+	{ "21364",	0x000000000ULL, 1, 3, 16,5,2, 16,5,2,  0,0,0 },	\
 	{ NULL,		0x000000000ULL, 0, 0,  0,0,0,  0,0,0,  0,0,0 }	}
 
 
@@ -140,6 +144,27 @@ DYNTRANS_MISC64_DECLARATIONS(alpha,ALPHA,uint8_t)
 #define	ALPHA_PAGESHIFT		13
 
 
+/*
+ *  Exceptions (see alpha_exception()):
+ */
+#define	ALPHA_EXC_ARITH		1	/*  Arithmetic trap  */
+#define	ALPHA_EXC_OPCDEC	2	/*  Reserved or privileged instr.  */
+#define	ALPHA_EXC_UNALIGN	3	/*  Unaligned access  */
+#define	ALPHA_EXC_FEN		4	/*  Floating point disabled  */
+
+/*  Exception summary bits of an arithmetic trap (EXC_SUM):  */
+#define	ALPHA_EXC_SUM_SWC	0x01	/*  Software completion possible  */
+#define	ALPHA_EXC_SUM_INV	0x02	/*  Invalid operation  */
+#define	ALPHA_EXC_SUM_DZE	0x04	/*  Division by zero  */
+#define	ALPHA_EXC_SUM_FOV	0x08	/*  Floating point overflow  */
+#define	ALPHA_EXC_SUM_UNF	0x10	/*  Underflow  */
+#define	ALPHA_EXC_SUM_INE	0x20	/*  Inexact result  */
+#define	ALPHA_EXC_SUM_IOV	0x40	/*  Integer overflow  */
+
+/*  Returned by alpha_fp_operate() for an instruction that doesn't exist:  */
+#define	ALPHA_FP_OPCDEC		(-1)
+
+
 struct alpha_cpu {
 	struct alpha_cpu_type_def	cpu_type;
 
@@ -159,6 +184,24 @@ struct alpha_cpu {
 	int			ll_flag;
 
 	int			irq_asserted;
+
+	/*  Read by RC and RS:  */
+	int			intr_flag;
+
+	/*
+	 *  State of the most recent exception (until PALcode exists,
+	 *  alpha_exception() just reports these):
+	 *
+	 *  exc_sum and exc_mask are the summary and register write mask of
+	 *  an arithmetic trap (mask bit n = integer register n, bit 32+n =
+	 *  floating point register n). For an unaligned access, exc_va is
+	 *  the address and exc_opcode/exc_reg describe the instruction.
+	 */
+	uint64_t		exc_sum;
+	uint64_t		exc_mask;
+	uint64_t		exc_va;
+	int			exc_opcode;
+	int			exc_reg;
 
 	/*  OSF1 PALcode specific:  */
 	uint64_t		ps;		/*  Processor Status  */
@@ -191,6 +234,16 @@ int alpha_run_instr(struct cpu *cpu);
 int alpha_memory_rw(struct cpu *cpu, struct memory *mem, uint64_t vaddr,
 	unsigned char *data, size_t len, int writeflag, int cache_flags);
 void alpha_cpu_family_init(struct cpu_family *);
+
+void alpha_exception(struct cpu *cpu, int type);
+
+/*  cpu_alpha_fp.c:  */
+int alpha_fp_operate(struct cpu *cpu, uint32_t iword);
+uint64_t alpha_lds_to_reg(uint32_t m);
+uint32_t alpha_reg_to_sts(uint64_t r);
+uint64_t alpha_ldf_to_reg(uint32_t m);
+uint32_t alpha_reg_to_stf(uint64_t r);
+uint64_t alpha_swap_g(uint64_t x);
 
 /*  cpu_alpha_palcode.c:  */
 void alpha_palcode_name(uint32_t palcode, char *buf, size_t buflen);

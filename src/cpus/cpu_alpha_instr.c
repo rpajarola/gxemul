@@ -34,7 +34,7 @@
  */
 
 
-#include "float_emul.h"
+
 
 
 /*
@@ -82,7 +82,7 @@ X(call_pal)
  */
 X(jsr)
 {
-	uint64_t old_pc = cpu->pc, low_pc;
+	uint64_t old_pc = cpu->pc, low_pc, new_pc;
 	uint64_t mask_within_page = ((ALPHA_IC_ENTRIES_PER_PAGE-1)
 	    << ALPHA_INSTR_ALIGNMENT_SHIFT) |
 	    ((1 << ALPHA_INSTR_ALIGNMENT_SHIFT) - 1);
@@ -93,8 +93,10 @@ X(jsr)
 	    << ALPHA_INSTR_ALIGNMENT_SHIFT);
 	cpu->pc += (low_pc << ALPHA_INSTR_ALIGNMENT_SHIFT) + 4;
 
+	/*  Read the target first, in case Ra and Rb are the same:  */
+	new_pc = *((int64_t *)ic->arg[1]) & ~(uint64_t)3;
 	*((int64_t *)ic->arg[0]) = cpu->pc;
-	cpu->pc = *((int64_t *)ic->arg[1]);
+	cpu->pc = new_pc;
 
 	/*
 	 *  If this is a jump/return into the same code page as we were
@@ -135,7 +137,7 @@ X(jsr_0)
 	    << ALPHA_INSTR_ALIGNMENT_SHIFT)
 	    | ((1 << ALPHA_INSTR_ALIGNMENT_SHIFT) - 1);
 
-	cpu->pc = *((int64_t *)ic->arg[1]);
+	cpu->pc = *((int64_t *)ic->arg[1]) & ~(uint64_t)3;
 
 	/*
 	 *  If this is a jump/return into the same code page as we were
@@ -455,118 +457,29 @@ X(bgt_samepage)
 
 
 /*
- *  cvttq/c:  Convert floating point to quad.
+ *  Floating point branches. These look at the value as a floating point
+ *  number: -0.0 is zero, and is neither less nor greater than zero.
  *
- *  arg[0] = pointer to rc  (destination integer)
- *  arg[2] = pointer to rb  (source float)
+ *  arg[0] = as for the integer branches
+ *  arg[1] = pointer to the floating point register
  */
-X(cvttq_c)
-{
-	struct ieee_float_value fb;
-	ieee_interpret_float_value(reg(ic->arg[2]), &fb, IEEE_FMT_D);
-	reg(ic->arg[0]) = fb.nan? 0 : fb.f;
+#define	FP_IS_ZERO(x)	(((x) << 1) == 0)
+#define	FP_IS_NEG(x)	((x) >> 63)
+#define	FBRANCH(name, cond)						\
+X(name) {								\
+	uint64_t x = *((uint64_t *)ic->arg[1]);				\
+	if (cond) instr(br)(cpu, ic);					\
+}									\
+X(name ## _samepage) {							\
+	uint64_t x = *((uint64_t *)ic->arg[1]);				\
+	if (cond) instr(br_samepage)(cpu, ic);				\
 }
-
-
-/*
- *  cvtqt:  Convert quad to floating point.
- *
- *  arg[0] = pointer to rc  (destination float)
- *  arg[2] = pointer to rb  (source quad integer)
- */
-X(cvtqt)
-{
-	reg(ic->arg[0]) = ieee_store_float_value(reg(ic->arg[2]), IEEE_FMT_D);
-}
-
-
-/*
- *  fabs, fneg:  Floating point absolute value, or negation.
- *
- *  arg[0] = pointer to rc  (destination float)
- *  arg[2] = pointer to rb  (source quad integer)
- */
-X(fabs)
-{
-	reg(ic->arg[0]) = reg(ic->arg[2]) & 0x7fffffffffffffffULL;
-}
-X(fneg)
-{
-	reg(ic->arg[0]) = reg(ic->arg[2]) ^ 0x8000000000000000ULL;
-}
-
-
-/*
- *  addt, subt, mult, divt:  Floating point arithmetic.
- *
- *  arg[0] = pointer to rc  (destination)
- *  arg[1] = pointer to ra  (source)
- *  arg[2] = pointer to rb  (source)
- */
-X(addt)
-{
-	struct ieee_float_value fa, fb;
-	ieee_interpret_float_value(reg(ic->arg[1]), &fa, IEEE_FMT_D);
-	ieee_interpret_float_value(reg(ic->arg[2]), &fb, IEEE_FMT_D);
-	reg(ic->arg[0]) = ieee_store_float_value(fa.f + fb.f, IEEE_FMT_D);
-}
-X(subt)
-{
-	struct ieee_float_value fa, fb;
-	ieee_interpret_float_value(reg(ic->arg[1]), &fa, IEEE_FMT_D);
-	ieee_interpret_float_value(reg(ic->arg[2]), &fb, IEEE_FMT_D);
-	reg(ic->arg[0]) = ieee_store_float_value(fa.f - fb.f, IEEE_FMT_D);
-}
-X(mult)
-{
-	struct ieee_float_value fa, fb;
-	ieee_interpret_float_value(reg(ic->arg[1]), &fa, IEEE_FMT_D);
-	ieee_interpret_float_value(reg(ic->arg[2]), &fb, IEEE_FMT_D);
-	reg(ic->arg[0]) = ieee_store_float_value(fa.f * fb.f, IEEE_FMT_D);
-}
-X(divt)
-{
-	struct ieee_float_value fa, fb;
-	ieee_interpret_float_value(reg(ic->arg[1]), &fa, IEEE_FMT_D);
-	ieee_interpret_float_value(reg(ic->arg[2]), &fb, IEEE_FMT_D);
-	reg(ic->arg[0]) = ieee_store_float_value(fa.f / fb.f, IEEE_FMT_D);
-}
-X(cmpteq)
-{
-	struct ieee_float_value fa, fb;
-	int res = 0;
-	ieee_interpret_float_value(reg(ic->arg[1]), &fa, IEEE_FMT_D);
-	ieee_interpret_float_value(reg(ic->arg[2]), &fb, IEEE_FMT_D);
-	if (fa.nan | fb.nan)
-		res = 0;
-	else
-		res = fa.f == fb.f;
-	reg(ic->arg[0]) = res;
-}
-X(cmptlt)
-{
-	struct ieee_float_value fa, fb;
-	int res = 0;
-	ieee_interpret_float_value(reg(ic->arg[1]), &fa, IEEE_FMT_D);
-	ieee_interpret_float_value(reg(ic->arg[2]), &fb, IEEE_FMT_D);
-	if (fa.nan | fb.nan)
-		res = 0;
-	else
-		res = fa.f < fb.f;
-	reg(ic->arg[0]) = res;
-}
-X(cmptle)
-{
-	struct ieee_float_value fa, fb;
-	int res = 0;
-	ieee_interpret_float_value(reg(ic->arg[1]), &fa, IEEE_FMT_D);
-	ieee_interpret_float_value(reg(ic->arg[2]), &fb, IEEE_FMT_D);
-	if (fa.nan | fb.nan)
-		res = 0;
-	else
-		res = fa.f <= fb.f;
-	reg(ic->arg[0]) = res;
-}
+FBRANCH(fbeq, FP_IS_ZERO(x))
+FBRANCH(fbne, !FP_IS_ZERO(x))
+FBRANCH(fblt, FP_IS_NEG(x) && !FP_IS_ZERO(x))
+FBRANCH(fbge, !FP_IS_NEG(x) || FP_IS_ZERO(x))
+FBRANCH(fble, FP_IS_NEG(x) || FP_IS_ZERO(x))
+FBRANCH(fbgt, !FP_IS_NEG(x) && !FP_IS_ZERO(x))
 
 
 /*
@@ -702,6 +615,345 @@ X(rdcc)
 
 	/*  TODO: actually keep the pcc updated!  */
 	cpu->cd.alpha.pcc += 20;
+}
+
+
+/*****************************************************************************
+ *
+ *  Exceptions
+ */
+
+/*  Set cpu->pc to the address of the current instruction.  */
+#define	SYNCH_PC	{						\
+	uint64_t low_pc_ = ((size_t)ic - (size_t)			\
+	    cpu->cd.alpha.cur_ic_page) / sizeof(struct alpha_instr_call);\
+	cpu->pc &= ~((ALPHA_IC_ENTRIES_PER_PAGE-1) <<			\
+	    ALPHA_INSTR_ALIGNMENT_SHIFT);				\
+	cpu->pc += (low_pc_ << ALPHA_INSTR_ALIGNMENT_SHIFT);		\
+    }
+
+
+/*
+ *  alpha_exception():
+ *
+ *  Take an exception. For faults, cpu->pc must be the address of the
+ *  faulting instruction; for traps (arithmetic traps), the address of the
+ *  next instruction.
+ *
+ *  TODO: There is no PALcode mode yet, so for now this only reports the
+ *  exception and stops the emulation.
+ */
+void alpha_exception(struct cpu *cpu, int type)
+{
+	switch (type) {
+	case ALPHA_EXC_ARITH:
+		fatal("[ Alpha: arithmetic trap, pc 0x%016" PRIx64 ", exc_sum "
+		    "0x%02" PRIx64 ", exc_mask 0x%016" PRIx64 " ]\n",
+		    (uint64_t) cpu->pc, (uint64_t) cpu->cd.alpha.exc_sum,
+		    (uint64_t) cpu->cd.alpha.exc_mask);
+		break;
+	case ALPHA_EXC_OPCDEC:
+		fatal("[ Alpha: reserved instruction, pc 0x%016" PRIx64 " ]\n",
+		    (uint64_t) cpu->pc);
+		break;
+	case ALPHA_EXC_UNALIGN:
+		fatal("[ Alpha: unaligned access, pc 0x%016" PRIx64 ", va "
+		    "0x%016" PRIx64 ", opcode 0x%02x, reg %i ]\n",
+		    (uint64_t) cpu->pc, (uint64_t) cpu->cd.alpha.exc_va,
+		    cpu->cd.alpha.exc_opcode, cpu->cd.alpha.exc_reg);
+		break;
+	case ALPHA_EXC_FEN:
+		fatal("[ Alpha: floating point disabled, pc 0x%016" PRIx64
+		    " ]\n", (uint64_t) cpu->pc);
+		break;
+	default:
+		fatal("[ Alpha: exception %i, pc 0x%016" PRIx64 " ]\n",
+		    type, (uint64_t) cpu->pc);
+	}
+
+	cpu->running = 0;
+	cpu->cd.alpha.next_ic = &nothing_call;
+}
+
+
+/*
+ *  Raise an arithmetic trap after the current instruction.
+ */
+static void alpha_arith_trap(struct cpu *cpu, struct alpha_instr_call *ic,
+	uint64_t exc_sum, uint64_t exc_mask)
+{
+	SYNCH_PC;
+	cpu->pc += sizeof(uint32_t);
+	cpu->cd.alpha.exc_sum = exc_sum;
+	cpu->cd.alpha.exc_mask = exc_mask;
+	alpha_exception(cpu, ALPHA_EXC_ARITH);
+}
+
+
+/*
+ *  alpha_unaligned():
+ *
+ *  Called by loads and stores (cpu_alpha_instr_loadstore.c) for an address
+ *  that isn't naturally aligned. The opcode and register are taken from the
+ *  instruction word.
+ */
+static void alpha_unaligned(struct cpu *cpu, struct alpha_instr_call *ic,
+	uint64_t addr)
+{
+	unsigned char ib[4];
+	uint32_t iword = 0;
+
+	SYNCH_PC;
+	if (cpu->memory_rw(cpu, cpu->mem, cpu->pc, ib, sizeof(ib),
+	    MEM_READ, CACHE_INSTRUCTION | NO_EXCEPTIONS))
+		iword = ib[0] | (ib[1] << 8) | (ib[2] << 16) |
+		    ((uint32_t)ib[3] << 24);
+
+	cpu->cd.alpha.exc_va = addr;
+	cpu->cd.alpha.exc_opcode = iword >> 26;
+	cpu->cd.alpha.exc_reg = (iword >> 21) & 31;
+	cpu->n_translated_instrs --;
+	alpha_exception(cpu, ALPHA_EXC_UNALIGN);
+}
+
+
+/*
+ *  opcdec:  Reserved instruction (OPCDEC fault).
+ */
+X(opcdec)
+{
+	SYNCH_PC;
+	cpu->n_translated_instrs --;
+	alpha_exception(cpu, ALPHA_EXC_OPCDEC);
+}
+
+
+/*****************************************************************************
+ *
+ *  Integer instructions that can trap on overflow (/V), and other
+ *  integer instructions not generated by generate_alpha_misc.c.
+ *
+ *  arg[0] = pointer to destination uint64_t (Rc, possibly R31)
+ *  arg[1] = pointer to source uint64_t (Ra)
+ *  arg[2] = pointer to source uint64_t (Rb), or an 8-bit literal (_imm)
+ *  The register number of Rc is needed for the trap's register write mask;
+ *  it is found from arg[0].
+ */
+
+static void int_overflow(struct cpu *cpu, struct alpha_instr_call *ic)
+{
+	int rc = ((uint64_t *)ic->arg[0]) - &cpu->cd.alpha.r[0];
+	alpha_arith_trap(cpu, ic, ALPHA_EXC_SUM_IOV, 1ULL << rc);
+}
+
+/*  Results are written to a scratch location when Rc is R31:  */
+#define	INT_V_RESULT(x)	{						\
+	if ((uint64_t *)ic->arg[0] != &cpu->cd.alpha.r[ALPHA_ZERO])	\
+		reg(ic->arg[0]) = (x);					\
+    }
+
+#define	INT_V(name, expr_b, body)					\
+X(name)									\
+{									\
+	uint64_t a = reg(ic->arg[1]), b = (expr_b), res;		\
+	int ovf;							\
+	body								\
+	INT_V_RESULT(res);						\
+	if (ovf)							\
+		int_overflow(cpu, ic);					\
+}
+
+#define	ADDL_V	{ int64_t s = (int64_t)(int32_t)a + (int64_t)(int32_t)b;\
+	res = (int64_t)(int32_t)s; ovf = s != (int64_t)res; }
+#define	SUBL_V	{ int64_t s = (int64_t)(int32_t)a - (int64_t)(int32_t)b;\
+	res = (int64_t)(int32_t)s; ovf = s != (int64_t)res; }
+#define	ADDQ_V	{ res = a + b;						\
+	ovf = (~(a ^ b) & (a ^ res)) >> 63; }
+#define	SUBQ_V	{ res = a - b;						\
+	ovf = ((a ^ b) & (a ^ res)) >> 63; }
+#define	MULL_V	{ int64_t s = (int64_t)(int32_t)a * (int64_t)(int32_t)b;\
+	res = (int64_t)(int32_t)s; ovf = s != (int64_t)res; }
+
+static uint64_t umul_hi(uint64_t a, uint64_t b)
+{
+	uint64_t a0 = a & 0xffffffff, a1 = a >> 32;
+	uint64_t b0 = b & 0xffffffff, b1 = b >> 32;
+	uint64_t p00 = a0 * b0, p01 = a0 * b1, p10 = a1 * b0, p11 = a1 * b1;
+	uint64_t mid = (p00 >> 32) + (p01 & 0xffffffff) + (p10 & 0xffffffff);
+	return p11 + (p01 >> 32) + (p10 >> 32) + (mid >> 32);
+}
+
+/*  Signed 64x64 multiply overflows if the high half isn't the sign
+    extension of the low half:  */
+#define	MULQ_V	{ uint64_t hi = umul_hi(a, b);				\
+	if ((int64_t)a < 0) hi -= b;					\
+	if ((int64_t)b < 0) hi -= a;					\
+	res = a * b;							\
+	ovf = hi != (uint64_t)((int64_t)res >> 63); }
+
+INT_V(addl_v, reg(ic->arg[2]), ADDL_V)
+INT_V(addl_v_imm, ic->arg[2], ADDL_V)
+INT_V(subl_v, reg(ic->arg[2]), SUBL_V)
+INT_V(subl_v_imm, ic->arg[2], SUBL_V)
+INT_V(addq_v, reg(ic->arg[2]), ADDQ_V)
+INT_V(addq_v_imm, ic->arg[2], ADDQ_V)
+INT_V(subq_v, reg(ic->arg[2]), SUBQ_V)
+INT_V(subq_v_imm, ic->arg[2], SUBQ_V)
+INT_V(mull_v, reg(ic->arg[2]), MULL_V)
+INT_V(mull_v_imm, ic->arg[2], MULL_V)
+INT_V(mulq_v, reg(ic->arg[2]), MULQ_V)
+INT_V(mulq_v_imm, ic->arg[2], MULQ_V)
+
+X(umulh_imm)
+{
+	reg(ic->arg[0]) = umul_hi(reg(ic->arg[1]), ic->arg[2]);
+}
+
+/*  AMASK: clear the bits of the architecture extensions that exist.  */
+X(amask)
+{
+	reg(ic->arg[0]) = reg(ic->arg[2]) &
+	    ~(uint64_t)cpu->cd.alpha.cpu_type.features;
+}
+X(amask_imm)
+{
+	reg(ic->arg[0]) = ic->arg[2] &
+	    ~(uint64_t)cpu->cd.alpha.cpu_type.features;
+}
+
+/*
+ *  rc, rs:  Read and clear/set the interrupt flag.
+ *
+ *  arg[0] = pointer to destination uint64_t (Ra, possibly R31)
+ */
+X(rc)
+{
+	reg(ic->arg[0]) = cpu->cd.alpha.intr_flag;
+	cpu->cd.alpha.intr_flag = 0;
+	cpu->cd.alpha.r[ALPHA_ZERO] = 0;
+}
+X(rs)
+{
+	reg(ic->arg[0]) = cpu->cd.alpha.intr_flag;
+	cpu->cd.alpha.intr_flag = 1;
+	cpu->cd.alpha.r[ALPHA_ZERO] = 0;
+}
+
+
+/*****************************************************************************
+ *
+ *  Floating point
+ */
+
+/*
+ *  fp_operate:  Floating point operate instruction (opcode 0x15..0x17).
+ *
+ *  arg[0] = the instruction word
+ */
+X(fp_operate)
+{
+	int exc = alpha_fp_operate(cpu, ic->arg[0]);
+
+	if (exc == 0)
+		return;
+
+	if (exc == ALPHA_FP_OPCDEC) {
+		instr(opcdec)(cpu, ic);
+		return;
+	}
+
+	alpha_arith_trap(cpu, ic, exc, cpu->cd.alpha.exc_mask);
+}
+
+
+/*
+ *  Floating point loads and stores that convert between the memory and the
+ *  register format (LDF, LDG, LDS, STF, STG, STS). These go through the
+ *  slow memory_rw() path. (LDT and STT, which don't convert, use the
+ *  ordinary load/store functions.)
+ *
+ *  arg[0] = pointer to the floating point register
+ *  arg[1] = pointer to the base register
+ *  arg[2] = offset (as an int32_t)
+ *  arg[3] is not available, so the kind of conversion is in the function.
+ */
+static int fp_mem(struct cpu *cpu, struct alpha_instr_call *ic,
+	unsigned char *buf, int len, int writeflag)
+{
+	uint64_t addr = reg(ic->arg[1]) + (int32_t)ic->arg[2];
+
+	if (addr & (len - 1)) {
+		alpha_unaligned(cpu, ic, addr);
+		return 0;
+	}
+	if (!cpu->memory_rw(cpu, cpu->mem, addr, buf, len, writeflag,
+	    CACHE_DATA)) {
+		/*  TODO: memory management faults.  */
+		fatal("[ Alpha: fp load/store failed: TODO ]\n");
+		SYNCH_PC;
+		cpu->running = 0;
+		cpu->cd.alpha.next_ic = &nothing_call;
+		return 0;
+	}
+	return 1;
+}
+
+static uint32_t le32(unsigned char *b)
+{
+	return b[0] | (b[1] << 8) | (b[2] << 16) | ((uint32_t)b[3] << 24);
+}
+
+static uint64_t le64(unsigned char *b)
+{
+	return le32(b) | ((uint64_t)le32(b + 4) << 32);
+}
+
+static void put_le32(unsigned char *b, uint32_t x)
+{
+	b[0] = x; b[1] = x >> 8; b[2] = x >> 16; b[3] = x >> 24;
+}
+
+static void put_le64(unsigned char *b, uint64_t x)
+{
+	put_le32(b, x);
+	put_le32(b + 4, x >> 32);
+}
+
+X(ldf)
+{
+	unsigned char b[4];
+	if (fp_mem(cpu, ic, b, sizeof(b), MEM_READ))
+		reg(ic->arg[0]) = alpha_ldf_to_reg(le32(b));
+}
+X(lds)
+{
+	unsigned char b[4];
+	if (fp_mem(cpu, ic, b, sizeof(b), MEM_READ))
+		reg(ic->arg[0]) = alpha_lds_to_reg(le32(b));
+}
+X(ldg)
+{
+	unsigned char b[8];
+	if (fp_mem(cpu, ic, b, sizeof(b), MEM_READ))
+		reg(ic->arg[0]) = alpha_swap_g(le64(b));
+}
+X(stf)
+{
+	unsigned char b[4];
+	put_le32(b, alpha_reg_to_stf(reg(ic->arg[0])));
+	fp_mem(cpu, ic, b, sizeof(b), MEM_WRITE);
+}
+X(sts)
+{
+	unsigned char b[4];
+	put_le32(b, alpha_reg_to_sts(reg(ic->arg[0])));
+	fp_mem(cpu, ic, b, sizeof(b), MEM_WRITE);
+}
+X(stg)
+{
+	unsigned char b[8];
+	put_le64(b, alpha_swap_g(reg(ic->arg[0])));
+	fp_mem(cpu, ic, b, sizeof(b), MEM_WRITE);
 }
 
 
@@ -841,9 +1093,13 @@ X(to_be_translated)
 	case 0x0c:
 	case 0x0d:
 	case 0x0e:
-	case 0x22:
+		/*  LDBU, LDWU, STW, STB: only with the BWX extension.  */
+		if (!(cpu->cd.alpha.cpu_type.features & ALPHA_FEATURE_BWX)) {
+			ic->f = instr(opcdec);
+			break;
+		}
+		/*  Fall through.  */
 	case 0x23:
-	case 0x26:
 	case 0x27:
 	case 0x28:
 	case 0x29:
@@ -859,9 +1115,7 @@ X(to_be_translated)
 		case 0x0c: loadstore_type = 1; load = 1; break;	/*  ldwu  */
 		case 0x0d: loadstore_type = 1; break;		/*  stw  */
 		case 0x0e: loadstore_type = 0; break;		/*  stb  */
-		case 0x22: loadstore_type = 2; load = 1; fp = 1; break; /*lds*/
 		case 0x23: loadstore_type = 3; load = 1; fp = 1; break; /*ldt*/
-		case 0x26: loadstore_type = 2; fp = 1; break;	/*  sts  */
 		case 0x27: loadstore_type = 3; fp = 1; break;	/*  stt  */
 		case 0x28: loadstore_type = 2; load = 1; break;	/*  ldl  */
 		case 0x29: loadstore_type = 3; load = 1; break;	/*  ldq  */
@@ -888,8 +1142,34 @@ X(to_be_translated)
 		ic->arg[1] = (size_t) &cpu->cd.alpha.r[rb];
 		ic->arg[2] = (ssize_t)(int16_t)imm;
 		break;
+	case 0x20:						/*  LDF  */
+	case 0x21:						/*  LDG  */
+	case 0x22:						/*  LDS  */
+	case 0x24:						/*  STF  */
+	case 0x25:						/*  STG  */
+	case 0x26:						/*  STS  */
+		switch (opcode) {
+		case 0x20: ic->f = instr(ldf); break;
+		case 0x21: ic->f = instr(ldg); break;
+		case 0x22: ic->f = instr(lds); break;
+		case 0x24: ic->f = instr(stf); break;
+		case 0x25: ic->f = instr(stg); break;
+		case 0x26: ic->f = instr(sts); break;
+		}
+		/*  A load to F31 is a prefetch hint.  */
+		if (opcode <= 0x22 && ra == ALPHA_ZERO) {
+			ic->f = instr(nop);
+			break;
+		}
+		ic->arg[0] = (size_t) &cpu->cd.alpha.f[ra];
+		ic->arg[1] = (size_t) &cpu->cd.alpha.r[rb];
+		ic->arg[2] = (ssize_t)(int16_t)imm;
+		break;
 	case 0x10:
-		if (rc == ALPHA_ZERO) {
+		/*  The /V forms (addl/v, subl/v, addq/v, subq/v) trap on
+		    overflow even if Rc is R31:  */
+		if (rc == ALPHA_ZERO && (func & 0x76) != 0x40 &&
+		    (func & 0x76) != 0x60) {
 			ic->f = instr(nop);
 			break;
 		}
@@ -916,8 +1196,11 @@ X(to_be_translated)
 		case 0x32: ic->f = instr(s8addq); break;
 		case 0x3b: ic->f = instr(s8subq); break;
 		case 0x3d: ic->f = instr(cmpule); break;
+		case 0x40: ic->f = instr(addl_v); break;
+		case 0x49: ic->f = instr(subl_v); break;
 		case 0x4d: ic->f = instr(cmplt); break;
-		// case 0x69: ic->f = instr(subq_v); break;
+		case 0x60: ic->f = instr(addq_v); break;
+		case 0x69: ic->f = instr(subq_v); break;
 		case 0x6d: ic->f = instr(cmple); break;
 
 		case 0x80: ic->f = instr(addl_imm); break;
@@ -936,13 +1219,14 @@ X(to_be_translated)
 		case 0xb2: ic->f = instr(s8addq_imm); break;
 		case 0xbb: ic->f = instr(s8subq_imm); break;
 		case 0xbd: ic->f = instr(cmpule_imm); break;
+		case 0xc0: ic->f = instr(addl_v_imm); break;
+		case 0xc9: ic->f = instr(subl_v_imm); break;
 		case 0xcd: ic->f = instr(cmplt_imm); break;
+		case 0xe0: ic->f = instr(addq_v_imm); break;
+		case 0xe9: ic->f = instr(subq_v_imm); break;
 		case 0xed: ic->f = instr(cmple_imm); break;
 
-		default:if (!cpu->translation_readahead)
-				fatal("[ Alpha: unimplemented function 0x%03x "
-				    "for opcode 0x%02x ]\n", func, opcode);
-			goto bad;
+		default:ic->f = instr(opcdec);
 		}
 		break;
 	case 0x11:
@@ -975,8 +1259,10 @@ X(to_be_translated)
 		case 0x44: ic->f = instr(cmovlt); break;
 		case 0x46: ic->f = instr(cmovge); break;
 		case 0x48: ic->f = instr(xornot); break;
+		case 0x61: ic->f = instr(amask); break;
 		case 0x64: ic->f = instr(cmovle); break;
 		case 0x66: ic->f = instr(cmovgt); break;
+		case 0x6c: ic->f = instr(implver); break;
 		case 0x80: ic->f = instr(and_imm); break;
 		case 0x88: ic->f = instr(andnot_imm); break;
 		case 0x94: ic->f = instr(cmovlbs_imm); break;
@@ -990,12 +1276,10 @@ X(to_be_translated)
 		case 0xc6: ic->f = instr(cmovge_imm); break;
 		case 0xc8: ic->f = instr(xornot_imm); break;
 		case 0xe4: ic->f = instr(cmovle_imm); break;
+		case 0xe1: ic->f = instr(amask_imm); break;
 		case 0xe6: ic->f = instr(cmovgt_imm); break;
 		case 0xec: ic->f = instr(implver); break;
-		default:if (!cpu->translation_readahead)
-				fatal("[ Alpha: unimplemented function 0x%03x "
-				    "for opcode 0x%02x ]\n", func, opcode);
-			goto bad;
+		default:ic->f = instr(opcdec);
 		}
 		break;
 	case 0x12:
@@ -1062,14 +1346,14 @@ X(to_be_translated)
 		case 0xf2: ic->f = instr(mskqh_imm); break;
 		case 0xf7: ic->f = instr(insqh_imm); break;
 		case 0xfa: ic->f = instr(extqh_imm); break;
-		default:if (!cpu->translation_readahead)
-				fatal("[ Alpha: unimplemented function 0x%03x "
-				    "for opcode 0x%02x ]\n", func, opcode);
-			goto bad;
+		default:ic->f = instr(opcdec);
 		}
 		break;
 	case 0x13:
-		if (rc == ALPHA_ZERO) {
+		/*  The /V forms (mull/v, mulq/v) trap on overflow even if
+		    Rc is R31:  */
+		if (rc == ALPHA_ZERO && (func & 0x7f) != 0x40 &&
+		    (func & 0x7f) != 0x60) {
 			ic->f = instr(nop);
 			break;
 		}
@@ -1085,68 +1369,46 @@ X(to_be_translated)
 		case 0x00: ic->f = instr(mull); break;
 		case 0x20: ic->f = instr(mulq); break;
 		case 0x30: ic->f = instr(umulh); break;
+		case 0x40: ic->f = instr(mull_v); break;
+		case 0x60: ic->f = instr(mulq_v); break;
 		case 0x80: ic->f = instr(mull_imm); break;
 		case 0xa0: ic->f = instr(mulq_imm); break;
-		default:if (!cpu->translation_readahead)
-				fatal("[ Alpha: unimplemented function 0x%03x "
-				    "for opcode 0x%02x ]\n", func, opcode);
-			goto bad;
+		case 0xb0: ic->f = instr(umulh_imm); break;
+		case 0xc0: ic->f = instr(mull_v_imm); break;
+		case 0xe0: ic->f = instr(mulq_v_imm); break;
+		default:ic->f = instr(opcdec);
 		}
 		break;
-	case 0x16:
-		if (rc == ALPHA_ZERO) {
-			ic->f = instr(nop);
-			break;
-		}
-		ic->arg[0] = (size_t) &cpu->cd.alpha.f[rc];
-		ic->arg[1] = (size_t) &cpu->cd.alpha.f[ra];
-		ic->arg[2] = (size_t) &cpu->cd.alpha.f[rb];
-		switch (func & 0x7ff) {
-		case 0x02f: ic->f = instr(cvttq_c); break;
-		case 0x0a0: ic->f = instr(addt); break;
-		case 0x0a1: ic->f = instr(subt); break;
-		case 0x0a2: ic->f = instr(mult); break;
-		case 0x0a3: ic->f = instr(divt); break;
-		case 0x0a5: ic->f = instr(cmpteq); break;
-		case 0x0a6: ic->f = instr(cmptlt); break;
-		case 0x0a7: ic->f = instr(cmptle); break;
-		case 0x0be: ic->f = instr(cvtqt); break;
-		default:if (!cpu->translation_readahead)
-				fatal("[ Alpha: unimplemented function 0x%03x "
-				    "for opcode 0x%02x ]\n", func, opcode);
-			goto bad;
-		}
+	case 0x15:		/*  VAX floating point operate  */
+	case 0x16:		/*  IEEE floating point operate  */
+	case 0x17:		/*  Data type independent floating point  */
+		ic->f = instr(fp_operate);
+		ic->arg[0] = iword;
 		break;
-	case 0x17:
-		if (rc == ALPHA_ZERO) {
-			ic->f = instr(nop);
+	case 0x14:		/*  FIX extension (not in the 21064)  */
+	case 0x1c:		/*  BWX/CIX/MVI extensions  */
+		if (cpu->cd.alpha.cpu_type.features == 0) {
+			ic->f = instr(opcdec);
 			break;
 		}
-		ic->arg[0] = (size_t) &cpu->cd.alpha.f[rc];
-		ic->arg[1] = (size_t) &cpu->cd.alpha.f[ra];
-		ic->arg[2] = (size_t) &cpu->cd.alpha.f[rb];
-		switch (func & 0x7ff) {
-		case 0x020:
-			/*  fabs (or fclr):  */
-			if (ra == 31 && rb == 31)
-				ic->f = instr(clear);
-			else
-				ic->f = instr(fabs);
-			break;
-		case 0x021:
-			ic->f = instr(fneg);
-			break;
-		default:if (!cpu->translation_readahead)
-				fatal("[ Alpha: unimplemented function 0x%03x "
-				    "for opcode 0x%02x ]\n", func, opcode);
-			goto bad;
-		}
-		break;
+		if (!cpu->translation_readahead)
+			fatal("[ Alpha: unimplemented opcode 0x%02x ]\n",
+			    opcode);
+		goto bad;
 	case 0x18:
 		switch (iword & 0xffff) {
+		case 0x0000:	/*  trapb  */
+		case 0x0400:	/*  excb  */
 		case 0x4000:	/*  mb  */
 		case 0x4400:	/*  wmb  */
+		case 0x8000:	/*  fetch  */
+		case 0xa000:	/*  fetch_m  */
 			ic->f = instr(nop);
+			break;
+		case 0xe000:	/*  rc  ra  */
+		case 0xf000:	/*  rs  ra  */
+			ic->arg[0] = (size_t) &cpu->cd.alpha.r[ra];
+			ic->f = (iword & 0x1000)? instr(rs) : instr(rc);
 			break;
 		case 0xc000:	/*  rdcc  ra  */
 			if (ra == ALPHA_ZERO) {
@@ -1156,10 +1418,7 @@ X(to_be_translated)
 			ic->arg[0] = (size_t) &cpu->cd.alpha.r[ra];
 			ic->f = instr(rdcc);
 			break;
-		default:if (!cpu->translation_readahead)
-				fatal("[ Alpha: unimplemented function 0x%03x "
-				    "for opcode 0x%02x ]\n", func, opcode);
-			goto bad;
+		default:ic->f = instr(opcdec);
 		}
 		break;
 	case 0x1a:
@@ -1167,6 +1426,7 @@ X(to_be_translated)
 		case 0:	/*  JMP  */
 		case 1:	/*  JSR  */
 		case 2:	/*  RET  */
+		case 3:	/*  JSR_COROUTINE  */
 			ic->arg[0] = (size_t) &cpu->cd.alpha.r[ra];
 			ic->arg[1] = (size_t) &cpu->cd.alpha.r[rb];
 			if (ra == ALPHA_ZERO) {
@@ -1182,16 +1442,16 @@ X(to_be_translated)
 					ic->f = instr(jsr);
 			}
 			break;
-		default:if (!cpu->translation_readahead)
-				fatal("[ Alpha: unimpl JSR type %i, ra=%i "
-				    "rb=%i ]\n", ((iword >> 14) & 3), ra, rb);
-			goto bad;
 		}
 		break;
 	case 0x30:						/*  BR    */
 	case 0x31:						/*  FBEQ  */
+	case 0x32:						/*  FBLT  */
+	case 0x33:						/*  FBLE  */
 	case 0x34:						/*  BSR   */
 	case 0x35:						/*  FBNE  */
+	case 0x36:						/*  FBGE  */
+	case 0x37:						/*  FBGT  */
 	case 0x38:						/*  BLBC  */
 	case 0x39:						/*  BEQ   */
 	case 0x3a:						/*  BLT   */
@@ -1219,7 +1479,34 @@ X(to_be_translated)
 			break;
 		case 0x31:
 			fp = 1;
-			// fall through
+			ic->f = instr(fbeq);
+			samepage_function = instr(fbeq_samepage);
+			break;
+		case 0x32:
+			fp = 1;
+			ic->f = instr(fblt);
+			samepage_function = instr(fblt_samepage);
+			break;
+		case 0x33:
+			fp = 1;
+			ic->f = instr(fble);
+			samepage_function = instr(fble_samepage);
+			break;
+		case 0x35:
+			fp = 1;
+			ic->f = instr(fbne);
+			samepage_function = instr(fbne_samepage);
+			break;
+		case 0x36:
+			fp = 1;
+			ic->f = instr(fbge);
+			samepage_function = instr(fbge_samepage);
+			break;
+		case 0x37:
+			fp = 1;
+			ic->f = instr(fbgt);
+			samepage_function = instr(fbgt_samepage);
+			break;
 		case 0x39:
 			ic->f = instr(beq);
 			samepage_function = instr(beq_samepage);
@@ -1236,9 +1523,6 @@ X(to_be_translated)
 			ic->f = instr(blbs);
 			samepage_function = instr(blbs_samepage);
 			break;
-		case 0x35:
-			fp = 1;
-			// fall through
 		case 0x3d:
 			ic->f = instr(bne);
 			samepage_function = instr(bne_samepage);
@@ -1277,9 +1561,10 @@ X(to_be_translated)
 			}
 		}
 		break;
-	default:if (!cpu->translation_readahead)
-			fatal("[ UNIMPLEMENTED Alpha opcode 0x%x ]\n", opcode);
-		goto bad;
+	default:
+		/*  Reserved opcodes, and (TODO) the PALcode instructions
+		    0x19, 0x1b, 0x1d, 0x1e, 0x1f:  */
+		ic->f = instr(opcdec);
 	}
 
 

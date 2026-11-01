@@ -26,3 +26,4 @@
 /src/devices/autodev.c
 /src/machines/automachine.c
 /dist/
+__pycache__/
