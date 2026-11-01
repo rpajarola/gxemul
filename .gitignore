@@ -27,3 +27,4 @@
 /src/machines/automachine.c
 /dist/
 __pycache__/
+media/
