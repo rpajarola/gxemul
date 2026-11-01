@@ -62,7 +62,8 @@
 #define	LK201_TICKS_PER_BYTE	4
 
 /*  How long the rest of an escape sequence may take to arrive (stdin and
-    telnet input can split a key's bytes); after that, a lone ESC is Esc:  */
+    telnet input can split a key's bytes); after that, what did arrive is
+    typed, so a lone ESC is Esc:  */
 #define	LK201_ESCAPE_USEC	100000
 
 /*  The farthest one mouse update moves:  */
@@ -201,23 +202,70 @@ static int lk201_send_escape(struct lk201_data *d)
 
 
 /*
+ *  lk201_escape_continues():
+ *
+ *  Tells if ch can be the next byte of a key's escape sequence, given the
+ *  len bytes after its ESC so far.  No key's sequence has a control
+ *  character or a byte that isn't ASCII in it, and ESC O is only F1 to
+ *  F4: in vi, Esc and then O (open a line above) and a letter is ESC O
+ *  and that letter.
+ */
+static bool lk201_escape_continues(const unsigned char *seq, int len,
+	unsigned char ch)
+{
+	if (ch < 32 || ch >= 127)
+		return false;
+	if (len == 0)
+		return ch == '[' || ch == 'O';
+	if (seq[0] == 'O')
+		return ch >= 'P' && ch <= 'S';
+	return true;
+}
+
+
+/*
+ *  lk201_type_escape():
+ *
+ *  Types the start of an escape sequence in keyb_buf that isn't a key's
+ *  as the keys it came from: the ESC as Ctrl+[, and the characters after
+ *  it as themselves, while the receive queue has room.  Returns how many
+ *  bytes were added.
+ */
+static int lk201_type_escape(struct lk201_data *d)
+{
+	int i, key, shifted, len = d->keyb_buf_pos;
+	int n = lk201_send_escape(d);
+
+	d->keyb_buf_pos = 0;
+	for (i = 1; i < len &&
+	    d->space_available_in_queue(d->add_data, DCKBD_PORT); i++) {
+		key = lk201_ascii_key(d->keyb_buf[i], &shifted);
+		if (key >= 0)
+			n += lk201_send_key(d, key, shifted, false);
+	}
+	return n;
+}
+
+
+/*
  *  lk201_convert_ascii_to_keybcode():
  *
  *  Converts ascii console input to LK201 keyboard scan codes, and adds
  *  those scancodes using the add_to_rx_queue() function. Escape sequences
- *  for function and editing keys become those keys, other sequences type
- *  nothing, and an ESC that doesn't start one is typed as Ctrl+[ (by
- *  lk201_tick(), if nothing follows it). Returns how many bytes were
- *  added.
+ *  for function and editing keys become those keys, and other complete
+ *  ESC [ sequences type nothing. What starts with ESC but isn't a key's
+ *  sequence (a lone ESC, or Esc, O and a letter as typed in vi) is typed
+ *  as Ctrl+[ and the characters after it (by lk201_tick(), if nothing
+ *  more arrives). Returns how many bytes were added.
  */
 int lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 {
 	int key, shifted = 0, controlled = 0;
 
-	if (d->keyb_buf_pos == 1 && ch != '[' && ch != 'O') {
-		/*  The ESC before ch doesn't start an escape sequence:  */
-		d->keyb_buf_pos = 0;
-		int n = lk201_send_escape(d);
+	if (d->keyb_buf_pos > 0 && !lk201_escape_continues(d->keyb_buf + 1,
+	    d->keyb_buf_pos - 1, ch)) {
+		/*  What came before ch isn't a key's escape sequence:  */
+		int n = lk201_type_escape(d);
 		return n + lk201_convert_ascii_to_keybcode(d, ch);
 	}
 
@@ -399,18 +447,14 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 	}
 
 	/*
-	 *  An ESC that nothing follows for a while is a key of its own (Esc,
-	 *  or Ctrl+[), and a sequence that stops early is dropped:
+	 *  An escape sequence that nothing follows for a while was typed: a
+	 *  lone ESC is Esc (Ctrl+[), and Esc and O in vi are Ctrl+[ and O:
 	 */
 	if (d->use_fb && d->keyb_buf_pos > 0 && d->keyb_delay == 0 &&
 	    !console_charavail(d->console_handle) &&
 	    d->space_available_in_queue(d->add_data, port) &&
-	    lk201_usec() - d->keyb_esc_usec >= LK201_ESCAPE_USEC) {
-		if (d->keyb_buf_pos == 1)
-			d->keyb_delay = LK201_TICKS_PER_BYTE *
-			    lk201_send_escape(d);
-		d->keyb_buf_pos = 0;
-	}
+	    lk201_usec() - d->keyb_esc_usec >= LK201_ESCAPE_USEC)
+		d->keyb_delay = LK201_TICKS_PER_BYTE * lk201_type_escape(d);
 
 	/*  Don't do mouse updates if we're running in serial console mode:  */
 	if (!d->use_fb)
