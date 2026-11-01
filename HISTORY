@@ -5775,4 +5775,11 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.23  ==============
 
-
+20261110	SCSI CD-ROM: READ SUB-CHANNEL returns the SCSI-2 sub-channel
+		header and, with SubQ, the current position, the media catalog
+		number or the ISRC, up to the allocation length; it returned
+		48 bytes of READ CAPACITY data, and Windows NT reset the SCSI
+		bus when CD Player started. READ TOC has track 1 and the
+		lead-out, as block numbers or MSF, and the last session
+		(format 1 in the vendor bits), up to the allocation length.
+		(Antoni Sawicki)

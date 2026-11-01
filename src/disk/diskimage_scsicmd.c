@@ -250,6 +250,31 @@ static void diskimage__switch_tape(struct diskimage *d)
 
 
 /*
+ *  cdrom_address():
+ *
+ *  Puts the address of logical block lba of a CD-ROM in p[0..3]: the block
+ *  number, or with msf the minute, second and frame (block 0 is at 00:02:00,
+ *  after the 150 frames of the pause at the start of the disc).
+ */
+static void cdrom_address(unsigned char *p, uint64_t lba, int msf)
+{
+	if (msf) {
+		uint64_t f = lba + 150;
+
+		p[0] = 0;
+		p[1] = f / (60 * 75);
+		p[2] = (f / 75) % 60;
+		p[3] = f % 75;
+	} else {
+		p[0] = lba >> 24;
+		p[1] = lba >> 16;
+		p[2] = lba >> 8;
+		p[3] = lba;
+	}
+}
+
+
+/*
  *  check_condition():
  *
  *  Returns CHECK CONDITION status, and remembers the sense key and
@@ -1637,64 +1662,109 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 	case SCSICDROM_READ_SUBCHANNEL:
 		/*
-		 *  According to
-		 *  http://mail-index.netbsd.org/port-i386/1997/03/03/0010.html:
-		 *
-		 *  "The READ_CD_CAPACITY, READ_SUBCHANNEL, and MODE_SELECT
-		 *   commands have the same opcode in SCSI or ATAPI, but don't
-		 *   have the same command structure"...
-		 *
-		 *  TODO: This still doesn't work. Hm.
+		 *  READ SUB-CHANNEL of SCSI-2: a header of four bytes (the
+		 *  audio status, none as audio play is not emulated, and the
+		 *  length of the data after the header), then, with SubQ,
+		 *  the data of the format asked for: the current position (1),
+		 *  at the start of track 1, the data track of the disc; the
+		 *  media catalog number (2) or the ISRC of a track (3), which
+		 *  the disc does not have. As many bytes as the allocation
+		 *  length are returned.
 		 */
-		retlen = 48;
+		{
+			unsigned char sub[24];
+			int msf = xferp->cmd[1] & 2, n = 4;
 
-		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
-		    "id=%i: CDROM_READ_SUBCHANNEL/READ_CD_CAPACITY cmd[1]=0x%02x\n",
-		    id, xferp->cmd[1]);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: CDROM_READ_SUBCHANNEL msf=%i subq=%i format=%i "
+			    "track=%i\n", id, msf? 1 : 0, (xferp->cmd[2] >> 6) & 1,
+			    xferp->cmd[3], xferp->cmd[6]);
 
-		/*  Return data:  */
-		scsi_transfer_allocbuf(&xferp->data_in_len,
-		    &xferp->data_in, retlen, 1);
+			memset(sub, 0, sizeof(sub));
+			sub[1] = 0x15;		/*  No current audio status  */
+			if ((xferp->cmd[2] & 0x40) && xferp->cmd[3] >= 1 &&
+			    xferp->cmd[3] <= 3) {
+				sub[4] = xferp->cmd[3];
+				if (xferp->cmd[3] == 1) {
+					sub[5] = 0x14;	/*  ADR 1, data track  */
+					sub[6] = 1;	/*  Track  */
+					sub[7] = 1;	/*  Index  */
+					cdrom_address(sub + 8, 0, msf);
+					/*  Track relative address: 0  */
+					n = 16;
+				} else {
+					if (xferp->cmd[3] == 3) {
+						sub[5] = 0x14;
+						sub[6] = xferp->cmd[6];
+					}
+					n = 24;
+				}
+			}
+			sub[3] = n - 4;
 
-		diskimage_recalc_size(d);
-
-		size = d->nr_of_logical_blocks;
-
-		xferp->data_in[0] = (size >> 24) & 255;
-		xferp->data_in[1] = (size >> 16) & 255;
-		xferp->data_in[2] = (size >> 8) & 255;
-		xferp->data_in[3] = size & 255;
-
-		xferp->data_in[4] = (d->logical_block_size >> 24) & 255;
-		xferp->data_in[5] = (d->logical_block_size >> 16) & 255;
-		xferp->data_in[6] = (d->logical_block_size >> 8) & 255;
-		xferp->data_in[7] = d->logical_block_size & 255;
+			retlen = xferp->cmd[7] * 256 + xferp->cmd[8];
+			if (retlen > 0) {
+				scsi_transfer_allocbuf(&xferp->data_in_len,
+				    &xferp->data_in, retlen, 1);
+				memcpy(xferp->data_in, sub,
+				    retlen < n? retlen : n);
+			}
+		}
 
 		diskimage__return_default_status_and_message(xferp);
 		break;
 
 	case SCSICDROM_READ_TOC:
-		retlen = xferp->cmd[7] * 256 + xferp->cmd[8];
-		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
-		    "id=%i: CDROM_READ_TOC lun=%i msf=%i starting_track=%i alloc_len=%i\n",
-		    id, xferp->cmd[1] >> 5, (xferp->cmd[1] >> 1) & 1, xferp->cmd[6], retlen);
+		/*
+		 *  The disc is one data track, track 1 from block 0. The table
+		 *  of contents (format 0) has the descriptors of track 1 and of
+		 *  the lead-out (track AAh) after it, from the starting track
+		 *  on; format 1, in the vendor bits of the control byte as
+		 *  SCSI-2 drives have it, the first track of the last session
+		 *  (the only one). Addresses are block numbers or, with MSF,
+		 *  minutes, seconds and frames. As many bytes as the
+		 *  allocation length are returned.
+		 */
+		{
+			unsigned char toc[20];
+			int msf = xferp->cmd[1] & 2, n = 4;
 
-		/*  Return data:  */
-		scsi_transfer_allocbuf(&xferp->data_in_len,
-		    &xferp->data_in, retlen, 1);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: CDROM_READ_TOC lun=%i msf=%i starting_track=%i "
+			    "format=%i alloc_len=%i\n", id, xferp->cmd[1] >> 5,
+			    msf? 1 : 0, xferp->cmd[6], xferp->cmd[9] >> 6,
+			    xferp->cmd[7] * 256 + xferp->cmd[8]);
 
-		xferp->data_in[0] = 0;
-		xferp->data_in[1] = 10;
-		xferp->data_in[2] = 0;		/*  First track.  */
-		xferp->data_in[3] = 0;		/*  Last track.  */
+			diskimage_recalc_size(d);
 
-		/*  Track 0 data:  */
-		xferp->data_in[4] = 0x00;	/*  Reserved.  */
-		xferp->data_in[5] = 0x04;	/*  ADR + CTRL:
-						    Data, not audio  */
-		xferp->data_in[6] = 0x00;	/*  Track nr  */
-		xferp->data_in[7] = 0x00;	/*  Reserved  */
-		/*  8..11 = absolute CDROM address  */
+			memset(toc, 0, sizeof(toc));
+			toc[2] = 1;		/*  First track or session  */
+			toc[3] = 1;		/*  Last track or session  */
+			if ((xferp->cmd[9] & 0xc0) == 0x40 ||
+			    xferp->cmd[6] <= 1) {
+				toc[n + 1] = 0x14;	/*  ADR 1, data track  */
+				toc[n + 2] = 1;
+				cdrom_address(toc + n + 4, 0, msf);
+				n += 8;
+			}
+			if ((xferp->cmd[9] & 0xc0) != 0x40) {
+				toc[n + 1] = 0x14;
+				toc[n + 2] = 0xaa;	/*  Lead-out  */
+				cdrom_address(toc + n + 4,
+				    d->nr_of_logical_blocks, msf);
+				n += 8;
+			}
+			toc[0] = (n - 2) >> 8;
+			toc[1] = n - 2;
+
+			retlen = xferp->cmd[7] * 256 + xferp->cmd[8];
+			if (retlen > 0) {
+				scsi_transfer_allocbuf(&xferp->data_in_len,
+				    &xferp->data_in, retlen, 1);
+				memcpy(xferp->data_in, toc,
+				    retlen < n? retlen : n);
+			}
+		}
 
 		diskimage__return_default_status_and_message(xferp);
 		break;
