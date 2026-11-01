@@ -35,10 +35,21 @@
  *    o  IEEE operands that are not finite numbers (infinity, NaN) or that
  *	 are denormal cause an invalid operation trap. (The 21064 leaves
  *	 these to software completion, i.e. to the operating system.)
- *    o  Results that underflow are a true zero, unless underflow traps
- *	 are enabled (/U), in which case there is an underflow trap.
+ *    o  Results that underflow are a true zero (+0, even where IEEE would
+ *	 give -0), unless underflow traps are enabled (/U), in which case
+ *	 there is an underflow trap.
  *    o  Overflow, invalid operation and division by zero always trap.
  *	 Inexact traps only with /SUI.
+ *    o  The FPCR records every exception that occurs, whether it traps or
+ *	 not. Divides never set FPCR[INE]; DIVS/SUI and DIVT/SUI always
+ *	 trap with EXC_SUM[INE] instead (the 21064 doesn't compute the
+ *	 inexact flag of a division).
+ *    o  IEEE rounding towards plus or minus infinity (/M, or /D with
+ *	 FPCR[DYN] = 1 or 3), and IEEE instructions with the reserved data
+ *	 type 1, raise a FEN exception; the operating system completes them
+ *	 in software. (Other Alphas implement these rounding modes.)
+ *
+ *  Hardware Reference Manual sections 2.6, 2.7 and Table 4-1.
  *
  *  Traps are reported precisely, right after the instruction. (Real
  *  hardware reports them some instructions later; precise reporting is
@@ -302,7 +313,8 @@ static uint64_t afp_pack(struct afp *x, int fmt, int mode, int *exc)
 		return 0;
 	}
 	if (x->exp < emin) {
-		*exc |= EXC_UNF;
+		/*  A nonzero result flushed to zero is also inexact.  */
+		*exc |= EXC_UNF | EXC_INE;
 		return 0;
 	}
 
@@ -521,7 +533,7 @@ static int afp_compare(struct afp *a, struct afp *b)
 #define	FPCR_EV4_MASK	0x8ff0000000000000ULL
 
 
-/*  Record the exceptions of a trap in the FPCR.  */
+/*  Record exceptions in the FPCR.  */
 static void fpcr_set_exc(struct cpu *cpu, int exc)
 {
 	uint64_t bits = 0;
@@ -562,6 +574,41 @@ static int ieee_rounding(struct cpu *cpu, int rnd)
 }
 
 
+/*  The EV4 family (21064, 21066, ...) leaves some things to software:  */
+static int is_ev4(struct cpu *cpu)
+{
+	return cpu->cd.alpha.cpu_type.implver == 0;
+}
+
+
+/*  Rounding towards +/- infinity, which the EV4 doesn't implement:  */
+static int inf_rounding(struct cpu *cpu, int mode)
+{
+	return is_ev4(cpu) && (mode == RND_MINUS || mode == RND_PLUS);
+}
+
+
+/*
+ *  Finish an operate instruction: write the result, record the exceptions
+ *  in the FPCR (fpcr_exc), and return the ones that trap (exc).
+ */
+static int fp_finish(struct cpu *cpu, int fc, uint64_t result, int fpcr_exc,
+	int exc, int swc)
+{
+	if (fc != 31)
+		cpu->cd.alpha.f[fc] = result;
+
+	fpcr_set_exc(cpu, fpcr_exc);
+
+	if (exc) {
+		if (swc)
+			exc |= EXC_SWC;
+		cpu->cd.alpha.trap_mask = 1ULL << (32 + fc);
+	}
+	return exc;
+}
+
+
 /*
  *  IEEE operate (opcode 0x16).
  */
@@ -574,11 +621,17 @@ static int fp_ieee(struct cpu *cpu, uint32_t iword)
 	int mode = ieee_rounding(cpu, rnd), exc = 0, fmt, cmp;
 	struct afp a, b, r;
 	uint64_t result;
+	int fpcr_exc;
+
+	if (src == 1 && is_ev4(cpu))
+		return ALPHA_FP_FEN;
 
 	if (fnc <= 3) {
 		/*  ADDx, SUBx, MULx, DIVx  */
 		if (src != 0 && src != 2)
 			return ALPHA_FP_OPCDEC;
+		if (inf_rounding(cpu, mode))
+			return ALPHA_FP_FEN;
 		fmt = src == 0? FMT_S : FMT_T;
 		unpack_ieee(cpu->cd.alpha.f[fa], &a);
 		unpack_ieee(cpu->cd.alpha.f[fb], &b);
@@ -636,6 +689,8 @@ static int fp_ieee(struct cpu *cpu, uint32_t iword)
 			unpack_ieee(cpu->cd.alpha.f[fb], &b);
 		else
 			return ALPHA_FP_OPCDEC;
+		if (inf_rounding(cpu, mode))
+			return ALPHA_FP_FEN;
 		if (b.cls == AFP_SPECIAL) {
 			exc = EXC_INV;
 			result = 0;
@@ -643,6 +698,8 @@ static int fp_ieee(struct cpu *cpu, uint32_t iword)
 			result = afp_pack(&b, fmt, mode, &exc);
 	} else if (fnc == 0xf && src == 2) {
 		/*  CVTTQ  */
+		if (inf_rounding(cpu, mode))
+			return ALPHA_FP_FEN;
 		unpack_ieee(cpu->cd.alpha.f[fb], &b);
 		if (b.cls == AFP_SPECIAL) {
 			exc = EXC_INV;
@@ -652,17 +709,18 @@ static int fp_ieee(struct cpu *cpu, uint32_t iword)
 	} else
 		return ALPHA_FP_OPCDEC;
 
-	if (fc != 31)
-		cpu->cd.alpha.f[fc] = result;
-
+	fpcr_exc = exc;
 	exc = trapping_exc(exc, trp, 1);
-	if (exc) {
-		fpcr_set_exc(cpu, exc);
-		if (trp & 4)
-			exc |= EXC_SWC;
-		cpu->cd.alpha.exc_mask = 1ULL << (32 + fc);
+
+	if (fnc == 3 && is_ev4(cpu) && !(fpcr_exc & (EXC_INV | EXC_DZE))) {
+		/*  The 21064 doesn't compute the inexact flag of a divide:  */
+		fpcr_exc &= ~EXC_INE;
+		exc &= ~EXC_INE;
+		if (trp == 7)
+			exc |= EXC_INE;
 	}
-	return exc;
+
+	return fp_finish(cpu, fc, result, fpcr_exc, exc, trp & 4);
 }
 
 
@@ -759,17 +817,8 @@ static int fp_vax(struct cpu *cpu, uint32_t iword)
 	} else
 		return ALPHA_FP_OPCDEC;
 
-	if (fc != 31)
-		cpu->cd.alpha.f[fc] = result;
-
-	exc = trapping_exc(exc, trp, 0);
-	if (exc) {
-		fpcr_set_exc(cpu, exc);
-		if (trp & 4)
-			exc |= EXC_SWC;
-		cpu->cd.alpha.exc_mask = 1ULL << (32 + fc);
-	}
-	return exc;
+	return fp_finish(cpu, fc, result, exc, trapping_exc(exc, trp, 0),
+	    trp & 4);
 }
 
 
@@ -833,23 +882,16 @@ static int fp_misc(struct cpu *cpu, uint32_t iword)
 	case 0x130:	/*  CVTQL/V  */
 	case 0x530:	/*  CVTQL/SV  */
 		result = ((b >> 30) & 3) << 62 | (b & 0x3fffffff) << 29;
-		if (func != 0x030 && (int64_t)b != (int64_t)(int32_t)b)
-			exc = EXC_IOV;
+		/*  Overflow sets FPCR[IOV] and FPCR[INE]; only /V traps.  */
+		if ((int64_t)b != (int64_t)(int32_t)b)
+			exc = EXC_IOV | EXC_INE;
 		break;
 	default:
 		return ALPHA_FP_OPCDEC;
 	}
 
-	if (fc != 31)
-		cpu->cd.alpha.f[fc] = result;
-
-	if (exc) {
-		fpcr_set_exc(cpu, exc);
-		if (func & 0x400)
-			exc |= EXC_SWC;
-		cpu->cd.alpha.exc_mask = 1ULL << (32 + fc);
-	}
-	return exc;
+	return fp_finish(cpu, fc, result, exc,
+	    func == 0x030? 0 : exc & EXC_IOV, func & 0x400);
 }
 
 
@@ -858,8 +900,9 @@ static int fp_misc(struct cpu *cpu, uint32_t iword)
  *
  *  Executes a floating point operate instruction (opcode 0x15, 0x16 or
  *  0x17). Returns 0 normally, ALPHA_FP_OPCDEC if the instruction doesn't
- *  exist, or the EXC_SUM bits of an arithmetic trap (with the register
- *  write mask in cpu->cd.alpha.exc_mask).
+ *  exist, ALPHA_FP_FEN if the hardware leaves it to software (EV4), or the
+ *  EXC_SUM bits of an arithmetic trap (with the register write mask in
+ *  cpu->cd.alpha.exc_mask).
  */
 int alpha_fp_operate(struct cpu *cpu, uint32_t iword)
 {

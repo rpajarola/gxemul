@@ -659,6 +659,11 @@ bool emul_machine_setup(struct machine *m, int n_load, char **load_names,
 	if (m->byte_order_override != NO_BYTE_ORDER_OVERRIDE)
 		cpu->byte_order = m->byte_order_override;
 
+	/*  Alpha with real PALcode: start in PALmode, at a physical
+	    address.  */
+	if (cpu->cpu_family->arch == ARCH_ALPHA && cpu->cd.alpha.ev4_palcode)
+		ev4_reset(cpu, cpu->pc);
+
 	/*  Same byte order and entrypoint for all CPUs:  */
 	for (i=0; i<m->ncpus; i++)
 		if (i != m->bootstrap_cpu) {

@@ -1,0 +1,100 @@
+ipr PAL_TEMP17 written and read back
+ipr PAL_BASE all ones written: bits <33:14>
+ipr ICCSR read format with FPE, MAP set (bits 23, 22)
+ipr EXC_ADDR written and read back
+ipr DC_STAT: CHIP_ID of a production 21064
+ipr PS read format, user mode (CM1 bit 34, CM0 bit 1)
+ipr DTB_PTE_TEMP read format of a DTB entry (PFN 0x123, KRE KWE FOR)
+ipr CC counts when enabled
+callpal84 count
+callpal84 entry (unprivileged CALL_PAL 0x84)
+callpal84 exc_addr - next instruction
+callpal84 -
+callpal84 -
+opcdec count
+opcdec entry (HW_MFPR in native mode)
+opcdec exc_addr - instruction
+opcdec -
+opcdec -
+unaligned count
+unaligned entry
+unaligned exc_addr - instruction
+unaligned VA - data_page
+unaligned MM_CSR (opcode ldq, ra 2)
+badva count
+badva entry (D_FAULT)
+badva exc_addr - instruction
+badva VA
+badva MM_CSR (ACV, ldq, ra 3)
+dtbmiss count
+dtbmiss entry (DTB_MISS native)
+dtbmiss exc_addr - instruction
+dtbmiss VA
+dtbmiss MM_CSR (ldq, ra 5)
+dtbmiss value loaded after the fill
+fow count
+fow entry (D_FAULT)
+fow exc_addr - instruction
+fow VA
+fow MM_CSR (FOW, WR, stq, ra 31)
+itbmiss count
+itbmiss entry (ITB_MISS)
+itbmiss exc_addr - target
+itbmiss -
+itbmiss -
+iov count
+iov entry (ARITH)
+iov exc_addr - instruction (next, with bit 1)
+iov EXC_SUM (IOV)
+iov register write mask (r3)
+dze count
+dze entry (ARITH)
+dze exc_addr - instruction
+dze EXC_SUM (DZE)
+dze register write mask (f5)
+divsui count
+divsui entry (ARITH)
+divsui exc_addr - instruction
+divsui EXC_SUM (INE, SWC)
+divsui register write mask (f6)
+fpcr product that underflows without /U: true zero
+fpcr FPCR after it: SUM, INE, UNF
+minf count
+minf entry (FEN: rounding to minus infinity)
+minf exc_addr - instruction
+minf -
+minf -
+fen count
+fen entry (FEN: floating point disabled)
+fen exc_addr - instruction
+fen -
+fen -
+intr count
+intr entry (INTERRUPT)
+intr exc_addr - next instruction
+intr HIRR (SIRR<3>, SWR)
+intr -
+mchk count
+mchk entry (MCHK)
+mchk exc_addr - next instruction (bit 1 set)
+mchk BIU_ADDR
+mchk BIU_STAT (HERR)
+mchk value loaded: all ones
+user value read from a user-readable page
+user number of exceptions in user mode
+user rec0 entry (D_FAULT: write to a read-only page)
+user rec0 exc_addr
+user rec0 VA
+user rec0 MM_CSR (ACV, WR, stq, ra 20)
+user rec1 entry (OPCDEC: privileged CALL_PAL in user mode)
+user rec1 exc_addr
+user rec1 -
+user rec1 -
+user rec2 entry (DTB_MISS: no superpage in user mode)
+user rec2 exc_addr
+user rec2 VA
+user rec2 MM_CSR (ldq, ra 3)
+user rec3 -
+user rec3 -
+user rec3 -
+user rec3 -

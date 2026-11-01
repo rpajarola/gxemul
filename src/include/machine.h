@@ -237,6 +237,7 @@ struct machine {
 /*  Alpha:  */
 #define	MACHINE_BAREALPHA	4000
 #define	MACHINE_TESTALPHA	4001
+#define	MACHINE_TESTALPHAPAL	4003
 #define	MACHINE_ALPHA		4002
 
 /*  ARM:  */

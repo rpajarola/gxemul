@@ -161,8 +161,144 @@ DYNTRANS_MISC64_DECLARATIONS(alpha,ALPHA,uint8_t)
 #define	ALPHA_EXC_SUM_INE	0x20	/*  Inexact result  */
 #define	ALPHA_EXC_SUM_IOV	0x40	/*  Integer overflow  */
 
-/*  Returned by alpha_fp_operate() for an instruction that doesn't exist:  */
+/*  Returned by alpha_fp_operate() for an instruction that doesn't exist,
+    or that the hardware leaves to software (FEN exception on the EV4):  */
 #define	ALPHA_FP_OPCDEC		(-1)
+#define	ALPHA_FP_FEN		(-2)
+
+
+/*****************************************************************************
+ *
+ *  21064 (EV4) privileged architecture: PALmode, internal processor
+ *  registers (IPRs), translation buffers. See cpu_alpha_ev4.c and the
+ *  "Alpha 21064 and 21064A Microprocessors Hardware Reference Manual"
+ *  (EC-Q9ZUC-TE), chapters 4 and 5.
+ */
+
+/*
+ *  The PC as seen by dyntrans is tagged, so that the three kinds of
+ *  instruction fetches get separate entries in the virtual-to-host
+ *  translation tables, and none of them can be mistaken for a data
+ *  access (all data addresses are sign extended from bit 42):
+ *
+ *	PALmode:	ALPHA_PALMODE_TAG | physical address
+ *	native mode:	virtual address ^ ALPHA_ISTREAM_TAG
+ *
+ *  alpha_pc_to_arch() and alpha_arch_to_pc() convert. With emulated
+ *  PALcode (ev4_palcode == 0), there are no tags.
+ */
+#define	ALPHA_PALMODE_TAG	0x2000000000000000ULL
+#define	ALPHA_ISTREAM_TAG	0x4000000000000000ULL
+#define	ALPHA_PA_MASK		0x00000003ffffffffULL	/*  34 bits  */
+
+/*  PALcode entry points (offsets from PAL_BASE):  */
+#define	EV4_ENTRY_RESET		0x0000
+#define	EV4_ENTRY_MCHK		0x0020
+#define	EV4_ENTRY_ARITH		0x0060
+#define	EV4_ENTRY_INTERRUPT	0x00e0
+#define	EV4_ENTRY_D_FAULT	0x01e0
+#define	EV4_ENTRY_ITB_MISS	0x03e0
+#define	EV4_ENTRY_ITB_ACV	0x07e0
+#define	EV4_ENTRY_DTB_MISS	0x08e0	/*  native mode  */
+#define	EV4_ENTRY_DTB_MISS_PAL	0x09e0
+#define	EV4_ENTRY_UNALIGN	0x11e0
+#define	EV4_ENTRY_OPCDEC	0x13e0
+#define	EV4_ENTRY_FEN		0x17e0
+#define	EV4_ENTRY_CALL_PAL	0x2000	/*  privileged; unprivileged 0x3000  */
+
+/*  IPR numbers: the low 8 bits of HW_MFPR/HW_MTPR (PAL, ABX, IBX, index)  */
+#define	EV4_IPR_PAL		0x80
+#define	EV4_IPR_ABX		0x40
+#define	EV4_IPR_IBX		0x20
+
+#define	EV4_IPR_TB_TAG		0	/*  Ibox  */
+#define	EV4_IPR_ITB_PTE		1
+#define	EV4_IPR_ICCSR		2
+#define	EV4_IPR_ITB_PTE_TEMP	3
+#define	EV4_IPR_EXC_ADDR	4
+#define	EV4_IPR_SL_RCV		5
+#define	EV4_IPR_ITBZAP		6
+#define	EV4_IPR_ITBASM		7
+#define	EV4_IPR_ITBIS		8
+#define	EV4_IPR_PS		9
+#define	EV4_IPR_EXC_SUM		10
+#define	EV4_IPR_PAL_BASE	11
+#define	EV4_IPR_HIRR		12
+#define	EV4_IPR_SIRR		13
+#define	EV4_IPR_ASTRR		14
+#define	EV4_IPR_HIER		16
+#define	EV4_IPR_SIER		17
+#define	EV4_IPR_ASTER		18
+#define	EV4_IPR_SL_CLR		19
+#define	EV4_IPR_SL_XMIT		22
+
+#define	EV4_IPR_TB_CTL		0	/*  Abox  */
+#define	EV4_IPR_DTB_PTE		2
+#define	EV4_IPR_DTB_PTE_TEMP	3
+#define	EV4_IPR_MM_CSR		4
+#define	EV4_IPR_VA		5
+#define	EV4_IPR_DTBZAP		6
+#define	EV4_IPR_DTBASM		7
+#define	EV4_IPR_DTBIS		8
+#define	EV4_IPR_BIU_ADDR	9
+#define	EV4_IPR_BIU_STAT	10
+#define	EV4_IPR_DC_STAT		12
+#define	EV4_IPR_FILL_ADDR	13
+#define	EV4_IPR_ABOX_CTL	14
+#define	EV4_IPR_ALT_MODE	15
+#define	EV4_IPR_CC		16
+#define	EV4_IPR_CC_CTL		17
+#define	EV4_IPR_BIU_CTL		18
+#define	EV4_IPR_FILL_SYNDROME	19
+#define	EV4_IPR_BC_TAG		20
+#define	EV4_IPR_FLUSH_IC	21
+#define	EV4_IPR_FLUSH_IC_ASM	23
+
+/*  ICCSR bits (write format):  */
+#define	EV4_ICCSR_FPE		(1ULL << 42)
+#define	EV4_ICCSR_MAP		(1ULL << 41)
+#define	EV4_ICCSR_HWE		(1ULL << 40)
+
+/*  ABOX_CTL bits:  */
+#define	EV4_ABOX_MCHK_EN	(1ULL << 1)
+#define	EV4_ABOX_CRD_EN		(1ULL << 2)
+#define	EV4_ABOX_SPE_1		(1ULL << 4)
+#define	EV4_ABOX_SPE_2		(1ULL << 5)
+
+/*  MM_CSR bits:  */
+#define	EV4_MMCSR_WR		0x01
+#define	EV4_MMCSR_ACV		0x02
+#define	EV4_MMCSR_FOR		0x04
+#define	EV4_MMCSR_FOW		0x08
+
+/*  BIU_STAT bits:  */
+#define	EV4_BIU_HERR		0x01
+#define	EV4_BIU_FATAL1		0x80
+
+/*  Page table entry bits, as written to ITB_PTE/DTB_PTE:  */
+#define	EV4_PTE_FOR		0x0002
+#define	EV4_PTE_FOW		0x0004
+#define	EV4_PTE_ASM		0x0010
+#define	EV4_PTE_GH_SHIFT	5
+#define	EV4_PTE_KRE		0x0100
+#define	EV4_PTE_URE		0x0800
+#define	EV4_PTE_KWE		0x1000
+#define	EV4_PTE_UWE		0x8000
+
+#define	EV4_N_ITB_SMALL		8
+#define	EV4_N_ITB_LARGE		4
+#define	EV4_N_DTB		32
+
+/*  A translation buffer entry. va and pfn are page numbers (VA<42:13>,
+    PA<33:13>); gh is the granularity hint (block of 8^gh pages).  */
+struct ev4_tb_entry {
+	int		valid;
+	int		gh;
+	int		asm_bit;
+	uint64_t	vpn;
+	uint64_t	pfn;
+	uint32_t	prot;		/*  xRE/xWE, FOR, FOW (PTE bits <15:0>)  */
+};
 
 
 struct alpha_cpu {
@@ -199,9 +335,71 @@ struct alpha_cpu {
 	 */
 	uint64_t		exc_sum;
 	uint64_t		exc_mask;
+	uint64_t		trap_mask;	/*  Of the current FP trap  */
+	int			swc_blocked;
 	uint64_t		exc_va;
 	int			exc_opcode;
 	int			exc_reg;
+
+	/*
+	 *  21064 privileged architecture (ev4_palcode != 0): the CPU runs
+	 *  real PALcode (from the firmware). Otherwise PALcode calls are
+	 *  emulated in cpu_alpha_palcode.c.
+	 */
+	int			ev4_palcode;
+	int			palmode;
+	int			cm;		/*  Current mode, PS<4:3>  */
+
+	uint64_t		exc_addr;
+	uint64_t		pal_base;
+	uint64_t		iccsr;
+	uint64_t		pal_temp[32];
+
+	uint32_t		hier;		/*  <5:0>: irq_h[5:0]  */
+	uint32_t		hier_misc;	/*  CRE, PC0, PC1, SLE  */
+	uint32_t		irq_lines;	/*  irq_h[5:0] pins  */
+	uint32_t		sirr, sier;	/*  <15:1>  */
+	uint32_t		astrr, aster;	/*  <3:0>: K, E, S, U  */
+	int			sl_rcv;
+	int			sl_xmit;
+	int			crd_pending;
+	int			slr_pending;
+
+	uint64_t		tb_tag;
+	int			tb_ctl_gh;
+	struct ev4_tb_entry	itb[EV4_N_ITB_SMALL + EV4_N_ITB_LARGE];
+	int			itb_next_small, itb_next_large;
+	uint64_t		itb_pte_temp;
+	struct ev4_tb_entry	dtb[EV4_N_DTB];
+	int			dtb_next;
+	uint64_t		dtb_pte_temp;
+
+	uint64_t		mm_csr;
+	uint64_t		va;
+	int			va_locked;
+	uint64_t		abox_ctl;
+	int			alt_mode;
+	uint64_t		biu_ctl;
+	uint64_t		biu_stat;
+	uint64_t		biu_addr;
+	int			biu_locked;
+	uint64_t		fill_addr;
+	uint64_t		fill_syndrome;
+	uint64_t		bc_tag;
+
+	/*  Cycle counter: CC<63:32> is cc_offset, CC<31:0> counts cycles
+	    (one per instruction) while cc_enabled.  */
+	uint64_t		cc_offset;
+	uint32_t		cc_base;
+	uint64_t		cc_base_ninstrs;
+	int			cc_enabled;
+
+	/*  Modes for which entries were added to the translation tables
+	    (bit n = mode n). See ev4_set_mode().  */
+	int			vph_modes;
+
+	/*  Set by a memory access to nothing (-> machine check):  */
+	int			mchk_pending;
 
 	/*  OSF1 PALcode specific:  */
 	uint64_t		ps;		/*  Processor Status  */
@@ -236,6 +434,27 @@ int alpha_memory_rw(struct cpu *cpu, struct memory *mem, uint64_t vaddr,
 void alpha_cpu_family_init(struct cpu_family *);
 
 void alpha_exception(struct cpu *cpu, int type);
+void alpha_pc_to_pointers(struct cpu *cpu);
+
+/*  cpu_alpha_ev4.c:  */
+uint64_t alpha_pc_to_arch(struct cpu *cpu, uint64_t pc);
+uint64_t alpha_arch_to_pc(struct cpu *cpu, uint64_t addr);
+void ev4_reset(struct cpu *cpu, uint64_t pc);
+void ev4_exception(struct cpu *cpu, int entry, uint64_t exc_addr);
+void ev4_call_pal(struct cpu *cpu, uint32_t func, uint64_t next_pc);
+int ev4_hw_allowed(struct cpu *cpu);
+uint64_t ev4_mfpr(struct cpu *cpu, int ipr);
+void ev4_mtpr(struct cpu *cpu, int ipr, uint64_t value, int rb_value_valid);
+int ev4_hw_rei(struct cpu *cpu);
+int ev4_translate(struct cpu *cpu, uint64_t vaddr, uint64_t *paddr,
+	int flags);
+int ev4_hw_ldst(struct cpu *cpu, uint32_t iword, uint64_t addr,
+	uint64_t *reg);
+int ev4_interrupt_pending(struct cpu *cpu);
+void ev4_check_interrupts(struct cpu *cpu);
+void ev4_machine_check(struct cpu *cpu, uint64_t paddr, int writeflag);
+uint64_t ev4_read_cc(struct cpu *cpu);
+void ev4_tlbdump(struct cpu *cpu);
 
 /*  cpu_alpha_fp.c:  */
 int alpha_fp_operate(struct cpu *cpu, uint32_t iword);

@@ -204,6 +204,10 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 	/*  Note: Do not cause interrupts while single-stepping. It is
 	    so horribly annoying.  */
 	if (!single_step) {
+#ifdef DYNTRANS_ALPHA
+		if (cpu->cd.alpha.ev4_palcode)
+			ev4_check_interrupts(cpu);
+#endif
 #ifdef DYNTRANS_ARM
 		if (cpu->cd.arm.irq_asserted && !(cpu->cd.arm.cpsr & ARM_FLAG_I))
 			arm_exception(cpu, ARM_EXCEPTION_IRQ);

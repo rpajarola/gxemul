@@ -382,8 +382,16 @@ FPCR_DYN = {0: 0 << 58, 1: 1 << 58, 2: 2 << 58, 3: 3 << 58}
 DYN_NAMES = ['chopped', 'minus', 'normal', 'plus']
 
 
+def inf_rounding(rnd, dyn):
+    """Rounding towards +/- infinity: the 21064 leaves it to software
+    (FEN exception), so these cases go to separate tests (NAME_inf) that
+    run on a 21164."""
+    return rnd == '/m' or (rnd == '/d' and dyn in (1, 3))
+
+
 def gen_fp_ieee(rng):
-    g = Gen('fp_ieee')
+    g0 = Gen('fp_ieee')
+    g0.inf = Gen('fp_ieee_inf')
     for fmt, single in (('s', True), ('t', False)):
         vals = fp_values(rng, single)
         for fn in ('add', 'sub', 'mul', 'div'):
@@ -391,6 +399,7 @@ def gen_fp_ieee(rng):
                 for trp in IEEE_TRP:
                     dyns = range(4) if rnd == '/d' else [2]
                     for dyn in dyns:
+                        g = g0.inf if inf_rounding(rnd, dyn) else g0
                         fp_prologue(g, FPCR_DYN[dyn])
                         mnem = '%s%s%s' % (fn, fmt,
                                            (trp + rnd[1:] if trp
@@ -407,7 +416,8 @@ def gen_fp_ieee(rng):
                             g.code.append('\t%s\t$f1, $f2, $f3' % mnem)
                             g.result('$f3', '%s[%s] %016x,%016x' % (
                                 mnem, DYN_NAMES[dyn], a, b), fp=True)
-        g.code.append('\ttrapb')
+        g0.code.append('\ttrapb')
+    g = g0
     #  Results that underflow are a true zero without /U (the 21064
     #  doesn't make denormals); with /U they would trap.
     tiny_t = [t_bits(x) for x in (1e-200, -1e-200, 3e-160, 2.0 ** -600)]
@@ -416,6 +426,9 @@ def gen_fp_ieee(rng):
     for fmt, tiny in (('s', tiny_s), ('t', tiny_t)):
         for mnem in ('mul' + fmt, 'mul%s/c' % fmt, 'mul%s/m' % fmt,
                      'div%s' % fmt):
+            g = g0.inf if mnem.endswith('/m') else g0
+            if g is g0.inf:
+                fp_prologue(g, FPCR_DYN[2])
             for a in tiny:
                 for b in tiny:
                     if mnem.startswith('div'):
@@ -427,6 +440,7 @@ def gen_fp_ieee(rng):
                     g.code.append('\t%s\t$f1, $f2, $f3' % mnem)
                     g.result('$f3', '%s[normal] %016x,%016x' % (mnem, a, b),
                              fp=True)
+    g = g0
     #  Compares (T only; /su needed for unordered on real hardware, but
     #  with non-NaN inputs plain compares never trap):
     vals = fp_values(rng, False)
@@ -447,7 +461,8 @@ def gen_fp_ieee(rng):
 
 
 def gen_fp_conv(rng):
-    g = Gen('fp_conv')
+    g0 = g = Gen('fp_conv')
+    g0.inf = Gen('fp_conv_inf')
     ints = [0, 1, MASK64, 2, 3, 100, 0x7fffffff, 0x80000000, 0xffffffff,
             1 << 52, (1 << 53) + 1, (1 << 24) + 1, 0x7fffffffffffffff,
             0x8000000000000000, 0x0123456789abcdef]
@@ -461,6 +476,7 @@ def gen_fp_conv(rng):
                 if trp == '/sui':
                     continue        #  Inexact would trap.
                 for dyn in dyns:
+                    g = g0.inf if inf_rounding(rnd, dyn) else g0
                     fp_prologue(g, FPCR_DYN[dyn])
                     mnem = 'cvtq%s%s' % (dst, rnd)
                     for q in ints:
@@ -479,6 +495,7 @@ def gen_fp_conv(rng):
         for trp in ('', '/v', '/sv'):
             dyns = range(4) if rnd == '/d' else [2]
             for dyn in dyns:
+                g = g0.inf if inf_rounding(rnd, dyn) else g0
                 fp_prologue(g, FPCR_DYN[dyn])
                 mnem = 'cvttq%s%s' % (trp, rnd[1:] if trp else rnd)
                 for t in tv:
@@ -496,6 +513,7 @@ def gen_fp_conv(rng):
         for trp in ('', '/u', '/su'):
             dyns = range(4) if rnd == '/d' else [2]
             for dyn in dyns:
+                g = g0.inf if inf_rounding(rnd, dyn) else g0
                 fp_prologue(g, FPCR_DYN[dyn])
                 mnem = 'cvtts%s%s' % (trp, rnd[1:] if trp else rnd)
                 for t in tv2:
@@ -505,6 +523,7 @@ def gen_fp_conv(rng):
                     g.code.append('\t%s\t$f1, $f3' % mnem)
                     g.result('$f3', '%s[%s] %016x' % (
                         mnem, DYN_NAMES[dyn], t), fp=True)
+    g = g0
     #  cvtst (S -> T, exact):
     fp_prologue(g, FPCR_DYN[2])
     for x in (0.0, -0.0, 1.0, -2.5, 1e30, 3.4e38, 1e-30):
@@ -740,6 +759,9 @@ def main():
     progs.append(gen_fp_conv(rng))
     progs.append(gen_fp_misc(rng))
     progs.append(gen_fp_vax(rng))
+    for p in list(progs):
+        if getattr(p, 'inf', None) is not None:
+            progs.append(p.inf)
     for p in progs:
         p.write(outdir)
         print(p.name)

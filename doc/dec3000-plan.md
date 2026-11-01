@@ -42,13 +42,31 @@ before the firmware runs.
 
 ## Available material
 
+Everything below is in `media/` (not in git).
+
 - Hardware: DEC 3000/400, /600, /700 (condition unknown). The /400 is the
   primary target (21064, supported by OSF/1 1.0). The /600 and /700 are
   21064A-based later models: useful for register dumps and their ROMs,
   probably not for OSF/1 1.0 itself.
-- Firmware: update images only (netbootable executable, bootable floppy).
-  The raw ROM image has to be extracted from them, or dumped from the /400.
-- OSF/1 V1.0 media, possibly source code.
+- Manuals: `21064.pdf` (21064/21064A Hardware Reference Manual,
+  EC-Q9ZUC-TE) and `EK-D3SYS-PM.B01.pdf` (DEC 3000 System Programmer's
+  Manual).
+- Firmware: `dec3000fw/` (V7.0 updaters for the 300, 400/600/700 and
+  500/800/900) and two firmware CDs (V3.2 and V3.3 for all models, V4.0
+  for the 500). Each updater (.EXE, .SYS, .BTP) carries the ROM images as
+  plain copies; `experiments/dec3000_extract_rom.py` extracts them:
+  SYSTEM_ROM, IO_ROM, and a second SYSTEM_ROM variant (flags byte 0x2a/
+  0x2b is 01/00 for the first, 00/01 for the second; which one a /400
+  uses is still open). The 64 KB serial ROM is not in the updaters (it's
+  not field-updatable); it has to be emulated (see M4).
+- OS media: OSF/1 V1.2, V1.3A, V2.0B (with layered products). **No V1.0
+  media so far.** The CDs have a UFS file system (disk label at sector 0),
+  not ISO 9660.
+- Source: `OSF1-1.0-src.tar.bz2` and `osf1-src-v2.0.tgz` contain the same
+  source kit (OSC200, DEC OSF/1 V2.0), including the Alpha kernel:
+  `arch/alpha` (locore, trap handling, pmap, `softfp.c`), `arch/alpha/hal/
+  kn15aa.c` (DEC 3000/400/500), `dec/sas/alpha` (boot programs),
+  `io/dec/scsi/alpha` (TCDS/53C94 DMA). No PALcode source.
 
 ## Milestones
 
@@ -111,8 +129,14 @@ before the firmware runs.
 
 ### M4: real firmware reaches `>>>`
 - Extract the ROM image from the update kits (or use the /400 dump).
-- Load it and start in PAL mode in the state the serial ROM leaves.
-  Open question: does the SRM run from ROM space or copy itself to RAM?
+  Done: `experiments/dec3000_extract_rom.py`.
+- Load it and start in PAL mode in the state the serial ROM leaves
+  (SPM chapters 11 and 14). The serial ROM copies the system ROM into
+  memory and jumps to it; the system ROM starts with an uncompressed PAL
+  mode decompressor (at offset 0x40, after the header) that copies the
+  I/O ROM and decompresses the console. From its code, the serial ROM
+  puts the system ROM at 0x4000 and the I/O ROM at 0x44000, and starts at
+  0x4040; the decompressed console runs at 0x54000.
 - Flash/NVRAM environment variables.
 - Work through the self-tests using the unmapped-access log;
   `show config`, `show device`, `test`.
@@ -138,15 +162,52 @@ before the firmware runs.
   Exceptions currently stop the emulator with a message
   (`alpha_exception()`).
 
+- M2: 21064 privileged architecture in `cpu_alpha_ev4.c`, used when
+  `ev4_palcode` is set (machines that run real PALcode; the others keep
+  the emulated OSF/1 PALcode):
+  - PALmode, all PALcode entry points, CALL_PAL dispatch (privileged and
+    unprivileged ranges), EXC_ADDR with the PAL bit and the arithmetic
+    trap/machine check bit 1 convention.
+  - HW_MFPR/HW_MTPR with all Ibox and Abox IPRs and PAL_TEMPs (read
+    formats as in the HRM), HW_LD/HW_ST (physical, ALT mode, read with
+    write check, locked/conditional), HW_REI; ICCSR<HWE>.
+  - ITB (8 + 4 large) and DTB (32, granularity hints), superpages
+    (ICCSR<MAP>, ABOX_CTL<SPE_1>, <SPE_2>), D-stream faults with VA and
+    MM_CSR (locking), ITB miss/ACV, bad VAs. The TBs are architectural
+    state; gxemul's translation tables only cache them. Instruction fetches
+    use tagged addresses (PALmode, native, data are separate).
+  - Interrupts: six irq_h pins (`<cpu>.0` .. `<cpu>.5`), software
+    interrupts, ASTs, HIRR/HIER/SIRR/SIER/ASTRR/ASTER; taken between
+    instruction batches and right after HW_REI.
+  - Machine checks for accesses to nonexistent physical addresses (BIU_STAT,
+    BIU_ADDR), taken after the instruction; the cycle counter (one cycle
+    per instruction).
+  - FEN for floating point with ICCSR<FPE> clear.
+  - Corrections to M1 from the HRM: the FPCR records all exceptions (not
+    only trapping ones); divides never set FPCR<INE>, DIVx/SUI always
+    trap with INE; IEEE rounding towards +/- infinity (/M, /D with DYN =
+    1 or 3) and IEEE data type 1 raise FEN on the EV4 (the OS emulates
+    them, see `softfp.c`); an underflow without /U gives +0 (confirmed by
+    the HRM, section 2.7).
+  - Tests: `test/alpha/pal_ev4.S` is a small PALcode of its own with 100
+    checked results (machine `testalphapal`).
+  - With the V3.3 /400 ROM loaded as the serial ROM would, the decompressor
+    runs (~30M instructions) and the console starts at 0x54000 with its
+    own PALcode; it stops at the first DEC 3000 I/O access (0x1_D4C0_0000
+    etc.), which is M3.
+  - Not done: performance counters, Icache/ASNs, cache and parity errors.
+    Every mode change flushes gxemul's translation tables (simple and
+    correct, but slow for an OS: to be optimized when OSF/1 runs).
+
 ## Things to get from the real machines (when they run)
 
 - ROM dump of the /400 (and /600, /700 for comparison).
 - `show config`, `show device`, `show *` output; power-up self-test log.
 - TC option ROM dumps of any installed cards.
 - Checks of CPU behaviour where the documentation is unclear:
-  - sign of an IEEE result that underflows without /U (emulated: +0,
-    QEMU: signed zero);
-  - which FPCR bits the 21064 implements and whether it sets the exception
-    bits for non-trapping exceptions (emulated: only SUM, DYN and the
-    exception bits exist, set only when a trap is taken);
   - AMASK on the 21064 (emulated: Rc = Rb).
+  - The order of the register write mask bits read from EXC_SUM (the HRM
+    says "F31-F0 then I31-I0"; emulated: F31 first).
+  - Which of the two system ROM images in the updater a /400 uses.
+  - (Answered by the HRM: an underflow without /U gives +0; the FPCR
+    records all exceptions, trapping or not.)

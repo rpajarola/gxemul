@@ -176,7 +176,7 @@ printf "#define ADD_ALL_CPU_FAMILIES    " >> config.h
 
 #  Alpha
 printf " add_cpu_family(alpha_cpu_family_init, ARCH_ALPHA);" >> config.h
-CPU_ARCHS="$CPU_ARCHS cpu_alpha.o cpu_alpha_fp.o cpu_alpha_palcode.o memory_alpha.o"
+CPU_ARCHS="$CPU_ARCHS cpu_alpha.o cpu_alpha_fp.o cpu_alpha_ev4.o cpu_alpha_palcode.o memory_alpha.o"
 CPU_TOOLS="$CPU_TOOLS generate_alpha_misc"
 
 #  ARM

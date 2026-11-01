@@ -29,3 +29,15 @@ for t in $(cat "$OUT/tests.txt"); do
 	$LD $LDFLAGS -o "$OUT/$t.linux" \
 	    "$OUT/rt_linux.o" "$OUT/common.o" "$OUT/$t.o"
 done
+
+#  Tests of the 21064 privileged architecture (PALmode etc.), written by
+#  hand. They are their own PALcode and run on the "testalphapal" machine.
+CPP=${CPP:-cpp}
+for t in pal_ev4; do
+	$CPP -P -undef -nostdinc "$HERE/$t.S" > "$OUT/$t.s"
+	$AS -o "$OUT/$t.o" "$OUT/$t.s"
+	$LD $LDFLAGS -Ttext=0xfffffc0000000000 -o "$OUT/$t.gx" \
+	    "$OUT/$t.o" "$OUT/common.o"
+	cp "$HERE/$t.list" "$OUT/$t.list"
+	echo $t >> "$OUT/tests.txt"
+done

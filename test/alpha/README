@@ -47,6 +47,14 @@ Where the references come from:
      it has no D_floating (fp_vax crashes in QEMU at the first CVTGD,
      which is expected).
 
-Only cases that cannot trap are tested here. Trapping behaviour (overflow,
-invalid operands, /SUI inexact, unaligned accesses, reserved opcodes)
-needs PALcode to deliver the exception and is tested separately.
+Tests named *_inf use IEEE rounding towards plus or minus infinity, which
+the 21064 leaves to software (FEN exception); they run on a 21164.
+
+Only cases that cannot trap are tested in the generated tests. Trapping
+behaviour (overflow, invalid operands, /SUI inexact, unaligned accesses,
+reserved opcodes, FEN) and the 21064 privileged architecture (PALmode,
+IPRs, translation buffers, interrupts, machine checks) are tested by
+pal_ev4.S, which is its own small PALcode and runs on the "testalphapal"
+machine. Its result lines are described in pal_ev4.list; the expected
+values were worked out by hand from the 21064 Hardware Reference Manual.
+build_tests.sh runs it through cpp (set CPP to use another one).

@@ -63,11 +63,20 @@ static void LS_GENERIC_N(struct cpu *cpu, struct alpha_instr_call *ic)
 	addr &= ~7;
 #endif
 
+	/*  The PC is needed if there is an exception:  */
+	SYNCH_PC;
+
 #ifdef LS_LOAD
 	/*  Load:  */
 	if (!cpu->memory_rw(cpu, cpu->mem, addr, data, sizeof(data),
 	    MEM_READ, CACHE_DATA)) {
-		fatal("store failed: TODO\n");
+		if (cpu->cd.alpha.ev4_palcode) {
+			/*  Continue at the PALcode entry point.  */
+			cpu->n_translated_instrs --;
+			alpha_pc_to_pointers(cpu);
+			return;
+		}
+		fatal("load failed: TODO\n");
 		exit(1);
 	}
 
@@ -109,6 +118,11 @@ static void LS_GENERIC_N(struct cpu *cpu, struct alpha_instr_call *ic)
 
 	if (!cpu->memory_rw(cpu, cpu->mem, addr, data, sizeof(data),
 	    MEM_WRITE, CACHE_DATA)) {
+		if (cpu->cd.alpha.ev4_palcode) {
+			cpu->n_translated_instrs --;
+			alpha_pc_to_pointers(cpu);
+			return;
+		}
 		fatal("store failed: TODO\n");
 		exit(1);
 	}
@@ -120,6 +134,9 @@ static void LS_GENERIC_N(struct cpu *cpu, struct alpha_instr_call *ic)
 #endif
 
 #endif
+
+	/*  Access to nothing?  */
+	alpha_check_mchk(cpu, ic);
 }
 #endif
 

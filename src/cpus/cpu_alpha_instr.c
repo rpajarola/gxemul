@@ -60,6 +60,13 @@ X(call_pal)
 	cpu->pc += (low_pc << ALPHA_INSTR_ALIGNMENT_SHIFT);
 	old_pc = cpu->pc;
 
+	if (cpu->cd.alpha.ev4_palcode) {
+		/*  Real PALcode:  */
+		ev4_call_pal(cpu, ic->arg[0], cpu->pc + sizeof(uint32_t));
+		alpha_pc_to_pointers(cpu);
+		return;
+	}
+
 	alpha_palcode(cpu, ic->arg[0]);
 
 	if (!cpu->running) {
@@ -94,8 +101,9 @@ X(jsr)
 	cpu->pc += (low_pc << ALPHA_INSTR_ALIGNMENT_SHIFT) + 4;
 
 	/*  Read the target first, in case Ra and Rb are the same:  */
-	new_pc = *((int64_t *)ic->arg[1]) & ~(uint64_t)3;
-	*((int64_t *)ic->arg[0]) = cpu->pc;
+	new_pc = alpha_arch_to_pc(cpu, *((int64_t *)ic->arg[1]) &
+	    ~(uint64_t)3);
+	*((int64_t *)ic->arg[0]) = alpha_pc_to_arch(cpu, cpu->pc);
 	cpu->pc = new_pc;
 
 	/*
@@ -137,7 +145,8 @@ X(jsr_0)
 	    << ALPHA_INSTR_ALIGNMENT_SHIFT)
 	    | ((1 << ALPHA_INSTR_ALIGNMENT_SHIFT) - 1);
 
-	cpu->pc = *((int64_t *)ic->arg[1]) & ~(uint64_t)3;
+	cpu->pc = alpha_arch_to_pc(cpu, *((int64_t *)ic->arg[1]) &
+	    ~(uint64_t)3);
 
 	/*
 	 *  If this is a jump/return into the same code page as we were
@@ -205,7 +214,7 @@ X(br_return)
 	cpu->pc += (low_pc << ALPHA_INSTR_ALIGNMENT_SHIFT);
 
 	/*  ... but first, save away the return address:  */
-	*((int64_t *)ic->arg[1]) = cpu->pc + 4;
+	*((int64_t *)ic->arg[1]) = alpha_pc_to_arch(cpu, cpu->pc + 4);
 
 	cpu->pc += (int32_t)ic->arg[0];
 
@@ -345,7 +354,7 @@ X(br_return_samepage)
 	cpu->pc &= ~((ALPHA_IC_ENTRIES_PER_PAGE-1)
 	    << ALPHA_INSTR_ALIGNMENT_SHIFT);
 	cpu->pc += (low_pc << ALPHA_INSTR_ALIGNMENT_SHIFT);
-	*((int64_t *)ic->arg[1]) = cpu->pc + 4;
+	*((int64_t *)ic->arg[1]) = alpha_pc_to_arch(cpu, cpu->pc + 4);
 
 	cpu->cd.alpha.next_ic = (struct alpha_instr_call *) ic->arg[0];
 }
@@ -465,13 +474,26 @@ X(bgt_samepage)
  */
 #define	FP_IS_ZERO(x)	(((x) << 1) == 0)
 #define	FP_IS_NEG(x)	((x) >> 63)
+static void alpha_fen(struct cpu *cpu, struct alpha_instr_call *ic);
+
+/*  Floating point instructions with FP disabled (ICCSR<FPE> clear) cause
+    a FEN exception:  */
+#define	FEN_CHECK							\
+	if (cpu->cd.alpha.ev4_palcode &&				\
+	    !(cpu->cd.alpha.iccsr & EV4_ICCSR_FPE)) {			\
+		alpha_fen(cpu, ic);					\
+		return;							\
+	}
+
 #define	FBRANCH(name, cond)						\
 X(name) {								\
 	uint64_t x = *((uint64_t *)ic->arg[1]);				\
+	FEN_CHECK							\
 	if (cond) instr(br)(cpu, ic);					\
 }									\
 X(name ## _samepage) {							\
 	uint64_t x = *((uint64_t *)ic->arg[1]);				\
+	FEN_CHECK							\
 	if (cond) instr(br_samepage)(cpu, ic);				\
 }
 FBRANCH(fbeq, FP_IS_ZERO(x))
@@ -611,6 +633,11 @@ X(clear)
  */
 X(rdcc)
 {
+	if (cpu->cd.alpha.ev4_palcode) {
+		reg(ic->arg[0]) = ev4_read_cc(cpu);
+		return;
+	}
+
 	reg(ic->arg[0]) = cpu->cd.alpha.pcc;
 
 	/*  TODO: actually keep the pcc updated!  */
@@ -645,6 +672,41 @@ X(rdcc)
  */
 void alpha_exception(struct cpu *cpu, int type)
 {
+	if (cpu->cd.alpha.ev4_palcode) {
+		uint64_t exc_addr = alpha_pc_to_arch(cpu, cpu->pc) |
+		    cpu->cd.alpha.palmode;
+		int entry, op = cpu->cd.alpha.exc_opcode;
+
+		switch (type) {
+		case ALPHA_EXC_ARITH:
+			/*  EXC_ADDR<1> set: the address is right as it is
+			    (the next instruction).  */
+			entry = EV4_ENTRY_ARITH;
+			exc_addr |= 2;
+			break;
+		case ALPHA_EXC_UNALIGN:
+			entry = EV4_ENTRY_UNALIGN;
+			if (!cpu->cd.alpha.va_locked) {
+				int wr = (op >= 0x0d && op <= 0x0f) ||
+				    (op >= 0x24 && op <= 0x27) ||
+				    (op >= 0x2c && op <= 0x2f);
+				cpu->cd.alpha.va = cpu->cd.alpha.exc_va;
+				cpu->cd.alpha.mm_csr = (wr? EV4_MMCSR_WR : 0) |
+				    (cpu->cd.alpha.exc_reg << 4) | (op << 9);
+				cpu->cd.alpha.va_locked = 1;
+			}
+			break;
+		case ALPHA_EXC_FEN:
+			entry = EV4_ENTRY_FEN;
+			break;
+		default:entry = EV4_ENTRY_OPCDEC;
+		}
+
+		ev4_exception(cpu, entry, exc_addr);
+		alpha_pc_to_pointers(cpu);
+		return;
+	}
+
 	switch (type) {
 	case ALPHA_EXC_ARITH:
 		fatal("[ Alpha: arithmetic trap, pc 0x%016" PRIx64 ", exc_sum "
@@ -684,8 +746,22 @@ static void alpha_arith_trap(struct cpu *cpu, struct alpha_instr_call *ic,
 {
 	SYNCH_PC;
 	cpu->pc += sizeof(uint32_t);
-	cpu->cd.alpha.exc_sum = exc_sum;
-	cpu->cd.alpha.exc_mask = exc_mask;
+
+	if (cpu->cd.alpha.ev4_palcode) {
+		/*  EXC_SUM accumulates until written; SWC stays set only
+		    while all the floating point traps were /S:  */
+		int fp = (exc_mask >> 32) != 0;
+		cpu->cd.alpha.exc_sum |= exc_sum & ~ALPHA_EXC_SUM_SWC;
+		if (fp && !(exc_sum & ALPHA_EXC_SUM_SWC)) {
+			cpu->cd.alpha.exc_sum &= ~ALPHA_EXC_SUM_SWC;
+			cpu->cd.alpha.swc_blocked = 1;
+		} else if (fp && !cpu->cd.alpha.swc_blocked)
+			cpu->cd.alpha.exc_sum |= ALPHA_EXC_SUM_SWC;
+		cpu->cd.alpha.exc_mask |= exc_mask;
+	} else {
+		cpu->cd.alpha.exc_sum = exc_sum;
+		cpu->cd.alpha.exc_mask = exc_mask;
+	}
 	alpha_exception(cpu, ALPHA_EXC_ARITH);
 }
 
@@ -725,6 +801,125 @@ X(opcdec)
 	SYNCH_PC;
 	cpu->n_translated_instrs --;
 	alpha_exception(cpu, ALPHA_EXC_OPCDEC);
+}
+
+
+/*  FEN fault: floating point disabled, or left to software.  */
+static void alpha_fen(struct cpu *cpu, struct alpha_instr_call *ic)
+{
+	SYNCH_PC;
+	cpu->n_translated_instrs --;
+	alpha_exception(cpu, ALPHA_EXC_FEN);
+}
+
+
+/*
+ *  Called after a memory access in the slow path: if the access went to
+ *  a physical address where nothing is, take the machine check now that
+ *  the instruction is done.
+ */
+static void alpha_check_mchk(struct cpu *cpu, struct alpha_instr_call *ic)
+{
+	if (!cpu->cd.alpha.mchk_pending)
+		return;
+	SYNCH_PC;
+	cpu->pc += sizeof(uint32_t);
+	ev4_check_interrupts(cpu);
+}
+
+
+/*****************************************************************************
+ *
+ *  21064 PALmode instructions (opcodes 0x19, 0x1b, 0x1d, 0x1e, 0x1f). See
+ *  cpu_alpha_ev4.c. Outside of PALmode they are reserved opcodes, unless
+ *  ICCSR<HWE> allows them in kernel mode.
+ */
+
+/*
+ *  hw_mfpr, hw_mtpr:  Move from/to an internal processor register.
+ *
+ *  arg[0] = pointer to the register (Ra)
+ *  arg[1] = IPR number (instruction bits <7:0>)
+ */
+X(hw_mfpr)
+{
+	uint64_t x;
+
+	if (!ev4_hw_allowed(cpu)) {
+		instr(opcdec)(cpu, ic);
+		return;
+	}
+	x = ev4_mfpr(cpu, ic->arg[1]);
+	if ((uint64_t *)ic->arg[0] != &cpu->cd.alpha.r[ALPHA_ZERO])
+		reg(ic->arg[0]) = x;
+}
+
+X(hw_mtpr)
+{
+	if (!ev4_hw_allowed(cpu)) {
+		instr(opcdec)(cpu, ic);
+		return;
+	}
+	ev4_mtpr(cpu, ic->arg[1], reg(ic->arg[0]), 1);
+
+	/*  Outside of PALmode (with ICCSR<HWE>), this may have made an
+	    interrupt deliverable:  */
+	if (!cpu->cd.alpha.palmode && ev4_interrupt_pending(cpu)) {
+		SYNCH_PC;
+		cpu->pc += sizeof(uint32_t);
+		ev4_check_interrupts(cpu);
+	}
+}
+
+
+/*
+ *  hw_rei:  Return from PALmode (or jump within it).
+ */
+X(hw_rei)
+{
+	if (!ev4_hw_allowed(cpu)) {
+		instr(opcdec)(cpu, ic);
+		return;
+	}
+	ev4_hw_rei(cpu);
+	alpha_pc_to_pointers(cpu);
+}
+
+
+/*
+ *  hw_ld, hw_st:  Physical, or alternate mode, load and store.
+ *
+ *  arg[0] = pointer to the register (Ra)
+ *  arg[1] = pointer to the base register (Rb)
+ *  arg[2] = the instruction word
+ */
+X(hw_ldst)
+{
+	uint32_t iword = ic->arg[2];
+	uint64_t addr, x;
+	int store = (iword >> 26) == 0x1f;
+
+	if (!ev4_hw_allowed(cpu)) {
+		instr(opcdec)(cpu, ic);
+		return;
+	}
+
+	SYNCH_PC;
+	addr = reg(ic->arg[1]) + (int64_t)((int32_t)(iword << 20) >> 20);
+	x = reg(ic->arg[0]);
+	if (!ev4_hw_ldst(cpu, iword, addr, &x)) {
+		/*  An exception; continue at the handler.  */
+		cpu->n_translated_instrs --;
+		alpha_pc_to_pointers(cpu);
+		return;
+	}
+
+	/*  Loads, and the store conditional's result:  */
+	if ((!store || (iword & 0xc000) == 0xc000) &&
+	    (uint64_t *)ic->arg[0] != &cpu->cd.alpha.r[ALPHA_ZERO])
+		reg(ic->arg[0]) = x;
+
+	alpha_check_mchk(cpu, ic);
 }
 
 
@@ -852,8 +1047,11 @@ X(rs)
  */
 X(fp_operate)
 {
-	int exc = alpha_fp_operate(cpu, ic->arg[0]);
+	int exc;
 
+	FEN_CHECK
+
+	exc = alpha_fp_operate(cpu, ic->arg[0]);
 	if (exc == 0)
 		return;
 
@@ -861,8 +1059,12 @@ X(fp_operate)
 		instr(opcdec)(cpu, ic);
 		return;
 	}
+	if (exc == ALPHA_FP_FEN) {
+		alpha_fen(cpu, ic);
+		return;
+	}
 
-	alpha_arith_trap(cpu, ic, exc, cpu->cd.alpha.exc_mask);
+	alpha_arith_trap(cpu, ic, exc, cpu->cd.alpha.trap_mask);
 }
 
 
@@ -882,15 +1084,26 @@ static int fp_mem(struct cpu *cpu, struct alpha_instr_call *ic,
 {
 	uint64_t addr = reg(ic->arg[1]) + (int32_t)ic->arg[2];
 
+	if (cpu->cd.alpha.ev4_palcode &&
+	    !(cpu->cd.alpha.iccsr & EV4_ICCSR_FPE)) {
+		alpha_fen(cpu, ic);
+		return 0;
+	}
 	if (addr & (len - 1)) {
 		alpha_unaligned(cpu, ic, addr);
 		return 0;
 	}
+	SYNCH_PC;
 	if (!cpu->memory_rw(cpu, cpu->mem, addr, buf, len, writeflag,
 	    CACHE_DATA)) {
-		/*  TODO: memory management faults.  */
+		if (cpu->cd.alpha.ev4_palcode) {
+			/*  A memory management fault; continue at the
+			    PALcode entry point.  */
+			cpu->n_translated_instrs --;
+			alpha_pc_to_pointers(cpu);
+			return 0;
+		}
 		fatal("[ Alpha: fp load/store failed: TODO ]\n");
-		SYNCH_PC;
 		cpu->running = 0;
 		cpu->cd.alpha.next_ic = &nothing_call;
 		return 0;
@@ -954,6 +1167,23 @@ X(stg)
 	unsigned char b[8];
 	put_le64(b, alpha_swap_g(reg(ic->arg[0])));
 	fp_mem(cpu, ic, b, sizeof(b), MEM_WRITE);
+}
+
+/*  LDT and STT with real PALcode (which may disable floating point):  */
+X(ldt_fen)
+{
+	unsigned char b[8];
+	if (fp_mem(cpu, ic, b, sizeof(b), MEM_READ)) {
+		reg(ic->arg[0]) = le64(b);
+		alpha_check_mchk(cpu, ic);
+	}
+}
+X(stt_fen)
+{
+	unsigned char b[8];
+	put_le64(b, reg(ic->arg[0]));
+	if (fp_mem(cpu, ic, b, sizeof(b), MEM_WRITE))
+		alpha_check_mchk(cpu, ic);
 }
 
 
@@ -1129,6 +1359,8 @@ X(to_be_translated)
 		ic->f = alpha_loadstore[
 		    loadstore_type + (imm==0? 4 : 0) + 8 * load
 		    + 16 * llsc];
+		if (fp && cpu->cd.alpha.ev4_palcode)
+			ic->f = load? instr(ldt_fen) : instr(stt_fen);
 		/*  Load to the zero register is treated as a prefetch
 		    hint. It is ignored here.  */
 		if (load && ra == ALPHA_ZERO) {
@@ -1561,9 +1793,33 @@ X(to_be_translated)
 			}
 		}
 		break;
+	case 0x19:		/*  HW_MFPR  */
+	case 0x1d:		/*  HW_MTPR  */
+		if (!cpu->cd.alpha.ev4_palcode) {
+			ic->f = instr(opcdec);
+			break;
+		}
+		ic->f = opcode == 0x19? instr(hw_mfpr) : instr(hw_mtpr);
+		ic->arg[0] = (size_t) &cpu->cd.alpha.r[ra];
+		ic->arg[1] = iword & 0xff;
+		break;
+	case 0x1b:		/*  HW_LD  */
+	case 0x1f:		/*  HW_ST  */
+		if (!cpu->cd.alpha.ev4_palcode) {
+			ic->f = instr(opcdec);
+			break;
+		}
+		ic->f = instr(hw_ldst);
+		ic->arg[0] = (size_t) &cpu->cd.alpha.r[ra];
+		ic->arg[1] = (size_t) &cpu->cd.alpha.r[rb];
+		ic->arg[2] = iword;
+		break;
+	case 0x1e:		/*  HW_REI  */
+		ic->f = cpu->cd.alpha.ev4_palcode? instr(hw_rei) :
+		    instr(opcdec);
+		break;
 	default:
-		/*  Reserved opcodes, and (TODO) the PALcode instructions
-		    0x19, 0x1b, 0x1d, 0x1e, 0x1f:  */
+		/*  Reserved opcodes:  */
 		ic->f = instr(opcdec);
 	}
 

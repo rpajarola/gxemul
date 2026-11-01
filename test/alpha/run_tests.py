@@ -33,8 +33,13 @@ for name in names:
     desc = open(os.path.join(build, name + '.list')).read().splitlines()
     exp = open(os.path.join(expdir, name + '.txt')).read().splitlines()
     try:
-        p = subprocess.run([gxemul, '-q', '-E', 'testalpha',
-                            os.path.join(build, name + '.gx')],
+        #  Tests named *_inf need rounding towards +/- infinity, which
+        #  the 21064 leaves to software; they run on a 21164.
+        cpu = ['-C', '21164'] if name.endswith('_inf') else []
+        #  pal_* tests are PALcode themselves (real PALcode machine).
+        machine = 'testalphapal' if name.startswith('pal_') else 'testalpha'
+        p = subprocess.run([gxemul, '-q', '-E', machine] + cpu +
+                           [os.path.join(build, name + '.gx')],
                            stdin=subprocess.DEVNULL,
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            timeout=120)
