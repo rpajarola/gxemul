@@ -5789,3 +5789,12 @@ Changelog for GXemul:
 		its console, and what is typed there is received on the line;
 		they wrote to the main console, and nothing could be typed to
 		them. Windows NT has them as COM1 and COM2. (Antoni Sawicki)
+20261110	SCSI tape: on a SIMH tape image (.tap), WRITE writes records
+		and WRITE FILEMARKS tape marks, and the tape ends at what was
+		written last (also after ERASE); a WRITE went to a block
+		address, as on a disk. LOCATE, READ POSITION, MODE SENSE and
+		MODE SELECT, LOG SENSE (the tape capacity) and LOAD UNLOAD, as
+		Windows NT's 4mmdat driver and Backup use them. A command
+		that a tape drive does not have fails with ILLEGAL REQUEST,
+		and a write to a read-only image with DATA PROTECT.
+		(Antoni Sawicki)

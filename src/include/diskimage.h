@@ -109,6 +109,14 @@ struct diskimage {
 	uint32_t	tape_partial_len;
 	uint64_t	tape_partial_at;
 
+	/*  The position of a SIMH tape as READ POSITION and LOCATE count it
+	    (the records and filemarks from the beginning of the tape), and
+	    what MODE SELECT set: variable blocks (block length 0), report
+	    setmarks (the device configuration page):  */
+	int64_t		tape_blocknr;
+	int		tape_variable;
+	int		tape_rsmk;
+
 	/*
 	 *  Removable media (CD-ROMs and tapes) can be ejected and loaded
 	 *  while the machine runs.  Without a medium, fname is the last
@@ -229,6 +237,11 @@ extern unsigned long diskimage_media_generation;
 #define	SCSICMD_REWIND			0x01
 #define	SCSICMD_READ_BLOCK_LIMITS	0x05
 #define	SCSICMD_SPACE			0x11
+#define	SCSICMD_WRITE_FILEMARKS		0x10
+#define	SCSICMD_ERASE			0x19
+#define	SCSICMD_LOCATE			0x2b
+#define	SCSICMD_READ_POSITION		0x34
+#define	SCSICMD_LOG_SENSE		0x4d
 
 
 #endif	/*  DISKIMAGE_H  */

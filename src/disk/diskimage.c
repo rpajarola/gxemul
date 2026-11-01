@@ -1441,6 +1441,8 @@ static void close_medium(struct diskimage *d)
 
 	d->tape_offset = 0;
 	d->tape_filenr = 0;
+	d->tape_blocknr = 0;
+	d->tape_partial_len = 0;
 	d->filemark = 0;
 	d->tape_sense_key = 0;
 	d->tape_sense_flags = 0;
