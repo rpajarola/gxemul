@@ -5575,3 +5575,9 @@ Changelog for GXemul:
 		what starts with ESC but isn't a key's escape sequence is
 		typed as Ctrl+[ and its characters, so typing Esc and then O
 		in vi within 100 ms opens a line again. (Antoni Sawicki)
+20261031	UDP through the simulated gateway: a datagram that the guest
+		sends in IP fragments is put together (NFS's 8 KB writes were
+		dropped, with "fragmented UDP packet, TODO"), and one sent
+		from a reserved port leaves the host from a reserved port
+		too, where the host lets a user bind one, for NFS servers
+		that require it. See doc/networking.html. (Antoni Sawicki)
