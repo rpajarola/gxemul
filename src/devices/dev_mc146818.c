@@ -858,6 +858,13 @@ void dev_mc146818_init(struct machine *machine, struct memory *mem,
 
 		/*  Battery valid, for DECstations  */
 		d->reg[0xf8] = 1;
+
+		/*  The battery kept the clock running, in binary 24-hour
+		    mode, as the firmware set it up; the KN02's ROM checks
+		    this at power-on, and otherwise prints ?RTC and forgets
+		    its settings (such as the keyboard's language):  */
+		d->reg[MC_REGA * 4] = MC_BASE_32_KHz;
+		d->reg[MC_REGB * 4] = MC_REGB_24HR | MC_REGB_BINARY;
 	}
 
 	/*

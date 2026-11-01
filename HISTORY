@@ -5567,3 +5567,14 @@ Changelog for GXemul:
 20261031	The LK201 keyboard waits 100 ms for the rest of an escape
 		sequence, so a key whose bytes arrive split (from stdin or
 		telnet) is still that key, instead of Esc and characters.
+20261031	A framebuffer window's title (and the VNC desktop name) starts
+		with the machine's name, or the name of its configuration
+		file's folder. --record file.mp4 records the framebuffer
+		window from the start, and --record-nonblack file.mp4 from
+		when it first shows something other than black; a recording
+		is finished when the emulator quits.
+20261101	The DECstations' MC146818 clock starts as running in binary
+		24-hour mode, as the battery would have kept it, instead of
+		stopped: the KN02's ROM printed ?RTC at every power-on and
+		reset the clock, and Ultrix said that the battery backup
+		clock wasn't valid.

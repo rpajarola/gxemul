@@ -95,7 +95,8 @@ void set_blackwhite_palette(struct vfb_data *d, int ncolors)
 
 static void set_title(struct vfb_data *d)
 {
-	snprintf(d->title, sizeof(d->title),"GXemul: %ix%ix%i %s framebuffer",
+	snprintf(d->title, sizeof(d->title),"%s%sGXemul: %ix%ix%i %s framebuffer",
+	    d->machine_name ? d->machine_name : "", d->machine_name ? " - " : "",
 	    d->visible_xsize, d->visible_ysize, d->bit_depth, d->name);
 	d->title[sizeof(d->title)-1] = '\0';
 }
@@ -653,6 +654,7 @@ struct vfb_data *dev_fb_init(struct machine *machine, struct memory *mem,
 	}
 
 	CHECK_ALLOCATION(d->name = strdup(name));
+	d->machine_name = machine_title_name(machine);
 	set_title(d);
 
 	d->redraw_func = d->vfb_scaledown > 1 ? redraw_scaledown : redraw;

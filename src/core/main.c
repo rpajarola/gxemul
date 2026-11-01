@@ -45,6 +45,7 @@
 #include "device.h"
 #include "devices.h"
 #include "diskimage.h"
+#include "display.h"
 #include "emul.h"
 #include "machine.h"
 #include "machine_config.h"
@@ -257,6 +258,12 @@ static void usage(bool longusage)
 	       "            (see doc/control.html); for AI agents, %s --mcp\n"
 	       "            unix:path|tcp:port is an MCP server which uses it\n",
 	    progname, progname);
+	printf("  --record file.mp4\n"
+	       "            record the framebuffer window into a video (with "
+	       "ffmpeg) from\n"
+	       "            the start; --record-nonblack file.mp4 starts when "
+	       "the screen\n"
+	       "            first shows something other than black\n");
 	printf("  --vnc tcp:port | tcp:host:port | unix:path\n"
 	       "            show the framebuffer to VNC clients instead of in "
 	       "a window\n"
@@ -853,6 +860,23 @@ int main(int argc, char *argv[])
 		}
 	if (vnc_spec != NULL)
 		vnc_init(vnc_spec);
+
+	/*  --record file or --record-nonblack file:  */
+	for (i = 1; i < argc; i++)
+		if (strcmp(argv[i], "--record") == 0 ||
+		    strcmp(argv[i], "--record-nonblack") == 0) {
+			if (i + 1 >= argc) {
+				fprintf(stderr, "%s needs a file name, e.g. "
+				    "video.mp4.\n", argv[i]);
+				return 1;
+			}
+			display_video_record(argv[i + 1],
+			    strcmp(argv[i], "--record-nonblack") == 0);
+			memmove(&argv[i], &argv[i + 2],
+			    sizeof(char *) * (argc - i - 1));
+			argc -= 2;
+			break;
+		}
 
 	/*  --export machine.json folder:  */
 	if (argc >= 2 && strcmp(argv[1], "--export") == 0)
