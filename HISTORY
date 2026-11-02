@@ -5798,3 +5798,10 @@ Changelog for GXemul:
 		that a tape drive does not have fails with ILLEGAL REQUEST,
 		and a write to a read-only image with DATA PROTECT.
 		(Antoni Sawicki)
+20261110	DECstation 5000/240 (3MAX+, KN03): it stopped at "TODO"
+		fatals. It now has the devices of the KN03 (new dev_kn03.c):
+		the IOASIC and its system interrupt register, the LANCE, the
+		two SCCs and the NCR 53C94 with the IOASIC's DMA, the RTC, and
+		the memory error and ECC registers. Ultrix 4.5's generic
+		kernel and Windows NT 3.5 run on it with PROM emulation.
+		(Antoni Sawicki)

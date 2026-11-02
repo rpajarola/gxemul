@@ -362,17 +362,21 @@ MACHINE_SETUP(pmax)
 			fprintf(stderr, "WARNING! Real KN03 machines cannot "
 			    "have more than 480MB RAM. Continuing anyway.\n");
 
-		/*  KN03 interrupts:  */
-fatal("TODO: Legacy rewrite\n");
-abort();
-//		machine->md_interrupt = kn03_interrupt;
+		/*
+		 *  KN03 interrupts: the IOASIC's system interrupt register
+		 *  (the devices of the system slot and the option slots) on
+		 *  CPU int 0, the RTC on int 1.
+		 */
+		snprintf(tmpstr, sizeof(tmpstr), "kn03 irq=%s.cpu[%i].%i",
+		    machine->path, machine->bootstrap_cpu, KN03_INT_ASIC);
+		kmin_ioasic = (struct dec_ioasic_data *)
+		    device_add(machine, tmpstr);
 
 		/*
 		 *  tc0 at mainbus0: 25 MHz clock (slot 0)	(0x1e000000)
 		 *  tc0 slot 1					(0x1e800000)
 		 *  tc0 slot 2					(0x1f000000)
 		 *  ioasic0 at tc0 slot 3 offset 0x0		(0x1f800000)
-		 *    something that has to do with interrupts? (?)(0x1f840000?)
 		 *  le0 at ioasic0 offset 0xc0000		(0x1f8c0000)
 		 *  scc0 at ioasic0 offset 0x100000		(0x1f900000)
 		 *  scc1 at ioasic0 offset 0x180000: console	(0x1f980000)
@@ -381,69 +385,68 @@ abort();
 		 *  asc0 at ioasic0 offset 0x300000: NCR53C94, 25MHz,
 		 *	SCSI ID 7				(0x1fb00000)
 		 */
-fatal("TODO: dec_ioasic legacy rewrite\n");
-abort();
-//		machine->md_int.dec_ioasic_data = dev_dec_ioasic_init(cpu,
-//		    mem, 0x1f800000, 0);
+		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn03.0x%x",
+		    machine->path, machine->bootstrap_cpu, KN03_INT_ASIC,
+		    KN03_INTR_LANCE);
+		dev_le_ioasic_init(machine, mem, KN03_SYS_LANCE, tmpstr,
+		    kmin_ioasic);
 
-fatal("TODO: kn03 dev_le_init rewrite\n");
-abort();
-//		dev_le_init(machine, mem, KN03_SYS_LANCE, 0, 0,
-//		    KN03_INTR_LANCE +8, 4 * 65536);
+		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn03.0x%x",
+		    machine->path, machine->bootstrap_cpu, KN03_INT_ASIC,
+		    KN03_INTR_SCC_0);
+		kmin_ioasic->scc[0] = dev_scc_init(machine, mem, KN03_SYS_SCC_0,
+		    tmpstr, machine->display_md.in_use, 0, 1);
 
-fatal("TODO: dec_ioasic legacy rewrite\n");
-abort();
-//		machine->md_int.dec_ioasic_data->dma_func[3] =
-//		    dev_scc_dma_func;
-//		machine->md_int.dec_ioasic_data->dma_func_extra[2] =
-//		    dev_scc_init(machine, mem, KN03_SYS_SCC_0,
-//		    KN03_INTR_SCC_0 +8, machine->display_md.in_use, 0, 1);
-//		machine->md_int.dec_ioasic_data->dma_func[2] =
-//		    dev_scc_dma_func;
-//		machine->md_int.dec_ioasic_data->dma_func_extra[3] =
-//		    dev_scc_init(machine, mem, KN03_SYS_SCC_1,
-//		    KN03_INTR_SCC_1 +8, machine->display_md.in_use, 1, 1);
+		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn03.0x%x",
+		    machine->path, machine->bootstrap_cpu, KN03_INT_ASIC,
+		    KN03_INTR_SCC_1);
+		kmin_ioasic->scc[1] = dev_scc_init(machine, mem, KN03_SYS_SCC_1,
+		    tmpstr, machine->display_md.in_use, 1, 1);
 
-fatal("TODO: mc146818 irq\n");
-abort();
-//		dev_mc146818_init(machine, mem, KN03_SYS_CLOCK, KN03_INT_RTC,
-//		    MC146818_DEC, 1);
-fatal("TODO: asc init rewrite\n");
-abort();
-//		dev_asc_init(machine, mem, KN03_SYS_SCSI,
-//		    KN03_INTR_SCSI +8, NULL, DEV_ASC_DEC, NULL, NULL);
+		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i",
+		    machine->path, machine->bootstrap_cpu, KN03_INT_RTC);
+		dev_mc146818_init(machine, mem, KN03_SYS_CLOCK, tmpstr,
+		    MC146818_DEC, 1);
+
+		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn03.0x%x",
+		    machine->path, machine->bootstrap_cpu, KN03_INT_ASIC,
+		    KN03_INTR_SCSI);
+		dev_asc_init(machine, mem, KN03_SYS_SCSI, tmpstr,
+		    NULL, DEV_ASC_DEC, dec_ioasic_scsi_dma, kmin_ioasic);
 
 		/*
 		 *  TURBOchannel slots 0, 1, and 2 are free for
 		 *  option cards.  These are by default filled with
-		 *  zero or more graphics boards.
-		 *
-		 *  TODO: irqs 
+		 *  zero or more graphics boards.  Their interrupts
+		 *  are bits of the IOASIC's system interrupt register.
 		 */
-fatal("TODO: turbochannel rewrite init\n");
-abort();
-#if 0
+
+		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn03.0x%x",
+		    machine->path, machine->bootstrap_cpu, KN03_INT_ASIC,
+		    KN03_INTR_TC_0);
 		dev_turbochannel_init(machine, mem, 0,
 		    KN03_PHYS_TC_0_START, KN03_PHYS_TC_0_END,
 		    machine->n_gfx_cards >= 1?
 			turbochannel_default_gfx_card : "",
-		    KN03_INTR_TC_0 +8);
+		    tmpstr);
 
+		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn03.0x%x",
+		    machine->path, machine->bootstrap_cpu, KN03_INT_ASIC,
+		    KN03_INTR_TC_1);
 		dev_turbochannel_init(machine, mem, 1,
 		    KN03_PHYS_TC_1_START, KN03_PHYS_TC_1_END,
 		    machine->n_gfx_cards >= 2?
 			turbochannel_default_gfx_card : "",
-		    KN03_INTR_TC_1 +8);
+		    tmpstr);
 
+		snprintf(tmpstr, sizeof(tmpstr), "%s.cpu[%i].%i.kn03.0x%x",
+		    machine->path, machine->bootstrap_cpu, KN03_INT_ASIC,
+		    KN03_INTR_TC_2);
 		dev_turbochannel_init(machine, mem, 2,
 		    KN03_PHYS_TC_2_START, KN03_PHYS_TC_2_END,
 		    machine->n_gfx_cards >= 3?
 			turbochannel_default_gfx_card : "",
-		    KN03_INTR_TC_2 +8);
-#endif
-
-		/*  TODO: interrupts  */
-		/*  shared (turbochannel) interrupts are +8  */
+		    tmpstr);
 
 		framebuffer_console_name = "osconsole=0,3";	/* fb,keyb(?) */
 		serial_console_name      = "osconsole=3";	/* ? */
