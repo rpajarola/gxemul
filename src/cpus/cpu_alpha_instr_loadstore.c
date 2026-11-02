@@ -176,17 +176,19 @@ static void LS_N(struct cpu *cpu, struct alpha_instr_call *ic)
 #endif
 
 #ifdef LS_LLSC
+	/*  The lock is on a 32-byte block (the 21064's cache block); a
+	    store conditional to another block fails.  */
 #ifdef LS_LOAD
-	/*  TODO: cache-line size!  */
-	cpu->cd.alpha.load_linked_addr = addr & ~63;
+	cpu->cd.alpha.load_linked_addr = addr & ~31;
 	cpu->cd.alpha.ll_flag = 1;
 #else
-	/*  TODO: only invalidate per cache line, not everything!  */
-	if (cpu->cd.alpha.ll_flag == 1) {
+	if (cpu->cd.alpha.ll_flag == 1 &&
+	    (addr & ~31) == cpu->cd.alpha.load_linked_addr) {
 		int i;
 		for (i=0; i<cpu->machine->ncpus; i++)
 			cpu->machine->cpus[i]->cd.alpha.ll_flag = 0;
 	} else {
+		cpu->cd.alpha.ll_flag = 0;
 		*((uint64_t *)ic->arg[0]) = 0;
 		return;
 	}

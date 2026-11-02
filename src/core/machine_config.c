@@ -1385,6 +1385,7 @@ uint64_t machine_config_rom_address(const char *type)
 {
 	switch (machine_config_machine_type(type)) {
 	case MACHINE_PMAX:	return 0xbfc00000ULL;
+	case MACHINE_DEC3000:	return 0x1e0000000ULL;	/*  (the FEPROM)  */
 	}
 	return 0;
 }
@@ -2664,8 +2665,13 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	    emulation):  */
 	if (machine_config_uses_rom(c)) {
 		char *f = rom_to_load(c, c->rom);
-		s = xprintf("0x%llx:%s", (unsigned long long)
-		    machine_config_rom_address(c->type), f);
+		if (machine_config_machine_type(c->type) == MACHINE_DEC3000)
+			/*  A firmware update file, or ROM images, which the
+			    machine's serial ROM emulation takes apart:  */
+			s = xstrdup(f);
+		else
+			s = xprintf("0x%llx:%s", (unsigned long long)
+			    machine_config_rom_address(c->type), f);
 		machine_config_add_string(&n_loads, &loads, s);
 		free(s);
 		free(f);

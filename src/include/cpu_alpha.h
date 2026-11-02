@@ -388,10 +388,12 @@ struct alpha_cpu {
 	uint64_t		bc_tag;
 
 	/*  Cycle counter: CC<63:32> is cc_offset, CC<31:0> counts cycles
-	    (one per instruction) while cc_enabled.  */
+	    while cc_enabled: at the machine's clock rate in host time (so
+	    that it agrees with the time of day clock), or one per
+	    instruction if the clock rate isn't known. See ev4_cycles().  */
 	uint64_t		cc_offset;
 	uint32_t		cc_base;
-	uint64_t		cc_base_ninstrs;
+	uint64_t		cc_base_cycles;
 	int			cc_enabled;
 
 	/*  Modes for which entries were added to the translation tables
@@ -454,6 +456,7 @@ int ev4_interrupt_pending(struct cpu *cpu);
 void ev4_check_interrupts(struct cpu *cpu);
 void ev4_machine_check(struct cpu *cpu, uint64_t paddr, int writeflag);
 uint64_t ev4_read_cc(struct cpu *cpu);
+uint64_t ev4_cycles(struct cpu *cpu);
 void ev4_tlbdump(struct cpu *cpu);
 
 /*  cpu_alpha_fp.c:  */

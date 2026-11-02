@@ -120,6 +120,7 @@ struct dec3000_data {
 	uint32_t		imr;		/*  <5:0>, 1 = disabled  */
 	uint32_t		ir_errors;	/*  <31:19>  */
 	uint32_t		tc_lines;	/*  <8:0>  */
+	int64_t			tcreset_end;	/*  in instructions  */
 	uint32_t		mcr[8];
 	uint32_t		sgmap[32768];
 	struct interrupt	irq_io;		/*  cpu irq_h[3]  */
@@ -141,6 +142,11 @@ struct dec3000_data {
 	uint32_t		tcds_sda[2], tcds_dic[2];
 	uint32_t		tcds_dud0[2], tcds_dud1[2];
 	uint32_t		tcds_buf[2][32];
+
+	/*  AMD 79C30A (ISDN/audio), registers only:  */
+	uint8_t			isdn_cr;		/*  indirect address  */
+	int			isdn_idx;
+	uint8_t			isdn_ind[256][16];
 
 	/*  LANCE stub:  */
 	uint16_t		lance_rap;
@@ -359,6 +365,48 @@ static void lance_stub(struct dec3000_data *d, uint32_t off, uint32_t *val,
 }
 
 
+/*
+ *  The AMD 79C30A's registers, so that they can be written and read back:
+ *  direct registers 0..7 at 4-byte steps; CR (0) selects an indirect
+ *  register, whose bytes are then read and written through DR (1). The
+ *  data is on byte lane 1 (IOBUS HI), but reads give it on lanes 0 and 1,
+ *  and a write with nothing on lane 1 takes lane 0. TODO: the codec, the
+ *  D channel, interrupts.
+ */
+static void isdn_access(struct dec3000_data *d, uint32_t off, uint32_t *val,
+	int writeflag)
+{
+	int reg = (off >> 2) & 7;
+	uint8_t b = 0;
+
+	if (writeflag)
+		b = (*val & 0xff00)? (*val >> 8) : *val;
+
+	switch (reg) {
+	case 0:	/*  W: CR, R: IR (interrupt register)  */
+		if (writeflag) {
+			d->isdn_cr = b;
+			d->isdn_idx = 0;
+		} else
+			b = 0;
+		break;
+	case 1:	/*  DR  */
+		if (writeflag)
+			d->isdn_ind[d->isdn_cr][d->isdn_idx] = b;
+		else
+			b = d->isdn_ind[d->isdn_cr][d->isdn_idx];
+		d->isdn_idx = (d->isdn_idx + 1) & 15;
+		break;
+	default:
+		/*  Status and buffer registers: nothing pending.  */
+		b = 0;
+	}
+
+	if (!writeflag)
+		*val = b | (b << 8);
+}
+
+
 static int ioctl_access(struct dec3000_data *d, struct cpu *cpu,
 	uint32_t off, uint32_t *val, int bytemask, int writeflag)
 {
@@ -389,9 +437,7 @@ static int ioctl_access(struct dec3000_data *d, struct cpu *cpu,
 		    val, bytemask, writeflag);
 		return 1;
 	case IOCTL_ISDN:
-		/*  TODO: 79C30A. Reads as nothing interesting.  */
-		if (!writeflag)
-			*val = 0;
+		isdn_access(d, off, val, writeflag);
 		return 1;
 	}
 	return 0;
@@ -405,8 +451,19 @@ static int ioctl_access(struct dec3000_data *d, struct cpu *cpu,
 
 #define	TCDS_CIR_DMA_EN(ch)	(0x100 << (ch))
 #define	TCDS_CIR_GPI		0xf0
+/*
+ *  The 53C94 interrupts are CIR<19:18> (enabled by IMER<3:2>), as in the
+ *  SPM and in OSF/1's pdmaflam.h. <21:20> are "reserved" in the SPM, but
+ *  the console's SCSI test enables them (IMER<5:4>) and waits for <20>
+ *  after a selection, with DMA off; so they are set by a 53C94 interrupt
+ *  too, when enabled (OSF/1 doesn't enable them), as well as by a DMA
+ *  read prefetch.
+ */
 #define	TCDS_CIR_SCSI_INT(ch)	(0x40000 << (ch))
+#define	TCDS_IMER_SCSI_INT(ch)	(0x4 << (ch))
 #define	TCDS_DIC_WRITE		0x80	/*  DMA to memory  */
+#define	TCDS_DIC_PREFETCH	0x40
+#define	TCDS_CIR_PREFETCH(ch)	(0x100000 << (ch))
 
 struct tcds_chan {
 	struct dec3000_data	*d;
@@ -418,10 +475,15 @@ static void update_tcds_irq(struct dec3000_data *d)
 	int ch;
 
 	/*  The 53C94 interrupts are levels; with their enable bits, they
-	    (re)set CIR<19:18>.  */
-	for (ch = 0; ch < 2; ch++)
-		if (d->asc_irq[ch] && (d->tcds_imer & (4 << ch)))
+	    (re)set their CIR bits.  */
+	for (ch = 0; ch < 2; ch++) {
+		if (!d->asc_irq[ch])
+			continue;
+		if (d->tcds_imer & TCDS_IMER_SCSI_INT(ch))
 			d->tcds_cir |= TCDS_CIR_SCSI_INT(ch);
+		if (d->tcds_imer & (0x10 << ch))
+			d->tcds_cir |= TCDS_CIR_PREFETCH(ch);
+	}
 
 	set_tc_line(d, TC_LINE_SCSI,
 	    (d->tcds_cir & d->tcds_imer & 0xffff0000) != 0);
@@ -544,6 +606,37 @@ static size_t tcds_dma(void *extra, unsigned char *data, size_t len,
 }
 
 
+/*
+ *  DMA read prefetch: with DMA enabled towards the SCSI bus and prefetch
+ *  on, the ASIC fills its DMA buffer from memory and then says so in
+ *  CIR<21:20> (see TCDS_CIR_SCSI_INT).
+ */
+static void tcds_prefetch(struct dec3000_data *d, int ch)
+{
+	struct cpu *cpu = d->machine->cpus[d->machine->bootstrap_cpu];
+	uint64_t addr, paddr;
+	unsigned char buf[128];
+	int i;
+
+	if (!(d->tcds_cir & TCDS_CIR_DMA_EN(ch)) ||
+	    (d->tcds_dic[ch] & (TCDS_DIC_WRITE | TCDS_DIC_PREFETCH)) !=
+	    TCDS_DIC_PREFETCH)
+		return;
+
+	addr = ((uint64_t) d->tcds_sda[ch] << 2) & ~(uint64_t)3;
+	if (!tc_dma_addr(d, 6, addr, &paddr))
+		return;
+	cpu->memory_rw(cpu, cpu->mem, paddr, buf, sizeof(buf), MEM_READ,
+	    PHYSICAL | NO_EXCEPTIONS);
+	for (i = 0; i < 32; i++)
+		d->tcds_buf[ch][i] = buf[4*i] | (buf[4*i+1] << 8) |
+		    (buf[4*i+2] << 16) | ((uint32_t)buf[4*i+3] << 24);
+
+	d->tcds_cir |= TCDS_CIR_PREFETCH(ch);
+	update_tcds_irq(d);
+}
+
+
 static int tcds_access(struct dec3000_data *d, struct cpu *cpu,
 	uint32_t off, uint32_t *val, int writeflag)
 {
@@ -565,6 +658,8 @@ static int tcds_access(struct dec3000_data *d, struct cpu *cpu,
 					    (*val | 0xffff) & 0xffff0000) |
 					    (*val & 0xff0f);
 					update_tcds_irq(d);
+					tcds_prefetch(d, 0);
+					tcds_prefetch(d, 1);
 				} else
 					*val = d->tcds_cir | TCDS_CIR_GPI;
 			} else if ((off & 0xffc) == 4) {
@@ -587,9 +682,10 @@ static int tcds_access(struct dec3000_data *d, struct cpu *cpu,
 				*val = d->tcds_sda[ch];
 			break;
 		case 0x04:
-			if (writeflag)
+			if (writeflag) {
 				d->tcds_dic[ch] = *val & 0xc3;
-			else
+				tcds_prefetch(d, ch);
+			} else
 				*val = d->tcds_dic[ch];
 			break;
 		case 0x08:
@@ -630,9 +726,22 @@ static int tcds_access(struct dec3000_data *d, struct cpu *cpu,
  *  TURBOchannel ASIC CSRs (slot 6, offsets 0x2000000 and up)
  */
 
+#define	IR_RESET		0x00400000
+
+/*  Emulated time, in CPU cycles (as the cycle counter):  */
+static int64_t now(struct dec3000_data *d)
+{
+	return ev4_cycles(d->machine->cpus[d->machine->bootstrap_cpu]);
+}
+
 static uint32_t read_ir(struct dec3000_data *d)
 {
-	return (d->ir_errors & IR_ERRORS) | (d->tc_lines & 0x1ff);
+	uint32_t ir = (d->ir_errors & IR_ERRORS) | (d->tc_lines & 0x1ff);
+
+	/*  A TURBOchannel reset takes 250 ms.  */
+	if (now(d) < d->tcreset_end)
+		ir |= IR_RESET;
+	return ir;
 }
 
 static int tc_csr_access(struct dec3000_data *d, uint32_t off,
@@ -644,20 +753,37 @@ static int tc_csr_access(struct dec3000_data *d, uint32_t off,
 		switch (off & 0x38) {
 		case 0x00:
 		case 0x20:
-			if (writeflag)
-				d->ioslot = *val;
-			else
+			/*  The PBS bits <26:0> are written at 0x00, the byte
+			    mask and valid bits <31:27> at 0x20 (the
+			    "alternate address"); both read the whole.  */
+			if (writeflag) {
+				if ((off & 0x38) == 0)
+					d->ioslot = (d->ioslot & 0xf8000000) |
+					    (*val & 0x07ffffff);
+				else
+					d->ioslot = (d->ioslot & 0x07ffffff) |
+					    (*val & 0xf8000000);
+			} else
 				*val = d->ioslot;
 			return 1;
 		case 0x08:
 			if (writeflag)
-				d->tcconfig = *val & 0x11f;
+				d->tcconfig = *val;	/*  (all bits read back)  */
 			else
 				*val = d->tcconfig;
 			return 1;
 		case 0x10:
 		case 0x18:
 			if (writeflag) {
+				/*  A write to either one unlocks both (and,
+				    as the console's test expects, they read
+				    back what was written, without the lock
+				    bit).  */
+				if ((off & 0x38) == 0x10)
+					d->fadr = *val;
+				else
+					d->tcereg = *val & ~0x80;
+				d->tcereg &= ~0x80;
 				d->err_locked = 0;
 				return 1;
 			}
@@ -722,10 +848,12 @@ static int tc_csr_access(struct dec3000_data *d, uint32_t off,
 	}
 
 	if (off >= 0xa00000 && off < 0xa20000) {
-		/*  TCRESET  */
-		if (writeflag)
-			debugmsg(SUBSYS_DEVICE, "dec3000", VERBOSITY_INFO,
-			    "TURBOchannel reset");
+		/*  TCRESET: doesn't respond to reads.  */
+		if (!writeflag)
+			return 0;
+		debugmsg(SUBSYS_DEVICE, "dec3000", VERBOSITY_INFO,
+		    "TURBOchannel reset");
+		d->tcreset_end = now(d) + d->machine->emulated_hz / 4;
 		return 1;
 	}
 

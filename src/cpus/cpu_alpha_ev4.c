@@ -49,6 +49,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "cpu.h"
 #include "machine.h"
@@ -666,13 +667,45 @@ static uint64_t read_iccsr(struct cpu *cpu)
 }
 
 
+/*
+ *  ev4_cycles():
+ *
+ *  CPU cycles since the emulator started: the machine's clock rate times
+ *  the host time, so that timing loops and clock calibration (against the
+ *  RTC, which keeps host time) work as on real hardware. Without a clock
+ *  rate, one cycle per instruction. Never goes backwards.
+ */
+uint64_t ev4_cycles(struct cpu *cpu)
+{
+	static struct timespec start;
+	static uint64_t last;
+	struct timespec ts;
+	uint64_t hz = cpu->machine->emulated_hz, c;
+
+	if (hz == 0)
+		return cpu->ninstrs + cpu->n_translated_instrs;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	if (start.tv_sec == 0 && start.tv_nsec == 0)
+		start = ts;
+	c = (uint64_t)(ts.tv_sec - start.tv_sec) * hz +
+	    (uint64_t)((ts.tv_nsec - start.tv_nsec) * (double)hz / 1e9);
+
+	/*  (A counter read twice in a row must not be the same, or loops
+	    that wait for it to change are slow.)  */
+	if (c <= last)
+		c = last + 1;
+	last = c;
+	return c;
+}
+
 uint64_t ev4_read_cc(struct cpu *cpu)
 {
 	uint32_t count = cpu->cd.alpha.cc_base;
 
 	if (cpu->cd.alpha.cc_enabled)
-		count += (uint32_t)(cpu->ninstrs + cpu->n_translated_instrs -
-		    cpu->cd.alpha.cc_base_ninstrs);
+		count += (uint32_t)(ev4_cycles(cpu) -
+		    cpu->cd.alpha.cc_base_cycles);
 
 	return (cpu->cd.alpha.cc_offset << 32) | count;
 }
@@ -680,7 +713,7 @@ uint64_t ev4_read_cc(struct cpu *cpu)
 static void set_cc_counter(struct cpu *cpu, uint32_t count, int enabled)
 {
 	cpu->cd.alpha.cc_base = count;
-	cpu->cd.alpha.cc_base_ninstrs = cpu->ninstrs + cpu->n_translated_instrs;
+	cpu->cd.alpha.cc_base_cycles = ev4_cycles(cpu);
 	cpu->cd.alpha.cc_enabled = enabled;
 }
 
@@ -1006,8 +1039,10 @@ int ev4_hw_ldst(struct cpu *cpu, uint32_t iword, uint64_t addr,
 
 	if (store) {
 		if (phy && alt) {
-			/*  Store conditional:  */
-			if (!cpu->cd.alpha.ll_flag) {
+			/*  Store conditional (same 32-byte block):  */
+			if (!cpu->cd.alpha.ll_flag || (addr & ~31ULL) !=
+			    cpu->cd.alpha.load_linked_addr) {
+				cpu->cd.alpha.ll_flag = 0;
 				*reg = 0;
 				return 1;
 			}
@@ -1040,7 +1075,7 @@ int ev4_hw_ldst(struct cpu *cpu, uint32_t iword, uint64_t addr,
 	}
 
 	if (phy && alt) {
-		cpu->cd.alpha.load_linked_addr = addr;
+		cpu->cd.alpha.load_linked_addr = addr & ~31ULL;
 		cpu->cd.alpha.ll_flag = 1;
 	}
 

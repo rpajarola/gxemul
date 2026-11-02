@@ -209,15 +209,45 @@ Everything below is in `media/` (not in git).
   contents *without* their 0x40-byte header to 0x4000 (system) and
   0x44000 (I/O) and starts at 0x4000 in PALmode. Takes an updater file or
   extracted images as the file to load.
-  - Status: V3.3 console decompresses, initializes its PALcode, probes the
-    TC slots, prints on the serial console, then dies with "System
-    Machine Check Abort": a memory bitmap init uses a memory size of 0.
-    The serial ROM hands parameters to the console in at, ra, t10,
-    a1..a4, s1, s2, t6, t7 (the console saves them at physical 0x5a000:
-    [0]=t10 [8]=at [0x10]=a4 [0x20]=t6 [0x28]=t7 [0x30]=s1 [0x38]=s2
-    [0x50]=ra [0x58]=a3 [0x60]=a2 [0x68]=a1); which is which (memory
-    size, CPU speed, SROM version...) is the next thing to work out.
-  - TODO: SCSI (TCDS + 53C94), LANCE, ISDN stub, FEPROM programming.
+  - Serial ROM hand-off (found from the console code): `at` = memory
+    banks, one byte per bank with the size code in bits <7:6> (1 = 8 MB,
+    2 = 32 MB, 3 = 128 MB); `a4` = memory size in MB. The other registers
+    (ra, t10, a1..a3, s1, s2, t6, t7) are still unknown and passed as 0;
+    the SROM version shows as "sV;.?".
+  - A machine config file (`gxemul machine.json`, type "dec3000", model
+    "400", "rom" = an updater or concatenated ROM images, "nvram" = a
+    file) keeps the console's NVRAM between runs.
+  - Status (V3.3): power-up tests run, the console reaches `>>>`, `show
+    config`, `show device` and `show error` work. Self-test results:
+    - ASIC: OK.
+    - NVR: only "WRONG FREQUENCY, CHECK OSCILLATOR" (a warning): the
+      console's calibration gives 12-18 MHz instead of 133. The cycle
+      counter now runs on host time at the machine's clock rate, so the
+      measurement must use something else (probably counted loop
+      iterations against the RTC, i.e. the emulator's speed). Not
+      understood yet.
+    - MEM: "test LLSC addr = 00200000" fails (store conditionals now
+      check the locked 32-byte block; not enough).
+    - SCSI: the 53C94 register test fails on details of dev_asc (reads
+      from an empty FIFO, Gross Error on FIFO overflow); fixes for those,
+      plus interrupt-line tracking, a selection timeout delay, and bus
+      reset interrupts not cleared by later commands, are in
+      `experiments/dec3000_dev_asc_wip.patch`. With them, the test gets
+      further but then loops in bus resets with 16 s delays: after a
+      selection timeout the console expects its per-target state to be 9
+      (code at 0x9d518 in the V3.3 console) and otherwise aborts (SETATN,
+      bus reset). To be continued.
+    - TCDS interrupt bits: OSF/1 (`pdmaflam.h`) uses CIR<19:18> for the
+      53C94s, as the SPM says; the console's test also waits for CIR<20>
+      with IMER<4> enabled. Both are set (CIR<21:20> only when IMER<5:4>
+      enable them).
+    - ISDN: a register-level 79C30A model is there, but the test's
+      indirect register 0xa2 still reads back 0 (register layout or byte
+      lane not right yet).
+    - SCC: needs the IOCTL's serial DMA (comm port transmit/receive).
+    - NI: needs the LANCE (dev_le with IOCTL DMA).
+  - TODO: SCSI boot from disk/CD, LANCE, SCC DMA, FEPROM programming,
+    the SROM version and other hand-off registers.
 
 ## Things to get from the real machines (when they run)
 
