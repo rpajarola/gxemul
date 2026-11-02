@@ -126,9 +126,8 @@ onto a disk image in GXemul.
 <p><a href="20050317-example.png"><img src="20050317-example_small.png"></a>
 
 <p>NetBSD/pmax installs on the 5000/200 from its CD, with the machine's
-<a href="#setup">real ROMs</a>. This was tested with NetBSD 10.1. (NetBSD
-11.0's CD does not boot in GXemul yet: its boot loader loads the kernel,
-but then jumps to its boot information instead of the kernel.)
+<a href="#setup">real ROMs</a>. This was tested with NetBSD 10.1; for
+NetBSD 11.0, see <a href="#netbsd11">below</a>.
 
 <p><ol>
   <li>Download the CD image,
@@ -173,6 +172,33 @@ but then jumps to its boot information instead of the kernel.)
 <p>Log in as <tt>root</tt>, and type <tt>startx</tt> to start X. Without
 the display (<tt>"enabled": false</tt>, and no ROM in slot 0), the
 console is the serial line, in the terminal GXemul runs in.
+
+<p><a name="netbsd11"></a>NetBSD 11.0's CD does not boot, in GXemul or on
+a real DECstation: its installation kernel is so big that loading it
+overwrites the boot loader (NetBSD's
+<a href="https://gnats.netbsd.org/45147">PR port-pmax/45147</a>). The
+installed system's kernel is smaller, and boots. So install 11.0 with
+the 10.1 installer, from the 11.0 CD:
+
+<p><ol>
+  <li>Add both CDs to the <tt>machine.json</tt> above, the 11.0 CD as
+	<tt>rz4</tt> (sysinst takes the sets from the first CD-ROM
+	drive) and the 10.1 CD as <tt>rz5</tt>:<pre>
+  "drives": [ { "file": "disk.img", "kind": "disk", "id": 0 },
+              { "file": "NetBSD-11.0-pmax.iso", "kind": "cdrom", "id": 4, "readonly": true },
+              { "file": "NetBSD-10.1-pmax.iso", "kind": "cdrom", "id": 5, "readonly": true } ],
+</pre>
+  <li>Boot the 10.1 installer from the second CD, and install as
+	above:<pre>
+	&gt;&gt;<b>boot 5/rz5/netbsd</b>
+</pre>
+	(sysinst calls the result NetBSD 10.1, but the sets, the kernel,
+	and the boot loader on the disk are 11.0's.)
+  <li>Boot the disk the same way as 10.1:<pre>
+	&gt;&gt;<b>boot 5/rz0/netbsd -a</b>
+</pre>
+	The first boot waits a minute for entropy.
+</ol>
 
 <p><br>
 <a name="openbsdpmaxinstall"><h3>OpenBSD/pmax:</h3></a>
@@ -541,65 +567,51 @@ machine uses.)
 <p><br>
 <a name="declinux"><h3>Debian GNU/Linux for DECstation:</h3></a>
 
-<p>It is possible to run Debian GNU/Linux for DECstation in the emulator,
-on an emulated 5000/200 ("3max"). However, just choosing any 
-Linux/DECstation kernel at random for the installation will not work.
+<p>Debian GNU/Linux 3.1 ("sarge") installs on a 5000/1xx (3MIN) from its
+netinst CD, with the machine's real ROMs. It doesn't work on the 5000/200:
+its Linux 2.4 kernel has no keyboard driver for the 5000/200's DZ serial
+chip ("<tt>lk201: support for DZ11 not yet ready</tt>"), and its DZ driver
+copies up to 4 KB of output into a buffer of a few hundred bytes, which overwrites
+other kernel data and crashes the installer.
 
-<p><ul>
-  <li>Linux 2.4/DECstation DZ serial console output doesn't work too well in
-	GXemul. Linux oopses randomly, which may be due to bugs in GXemul,
-	but may also be due to bugs in the serial controller code in Linux.
-	(The speed at which serial interrupts are generated can be
-	lowered with the <tt>-U</tt> command line option, but it only
-	reduces the risk, it doesn't take away the oopses completely.)
-  <li>The Linux 2.6/DECstation DZ serial console driver doesn't work at 
-	all in the emulator, and I'm not really sure it would work on a
-	real 5000/200 either. Hopefully this will be fixed in Linux in
-	the future.
-  <li>To get around the serial console problem, the obvious solution is to
-	use a graphical framebuffer instead. Old Debian install kernels
-	supported the graphical framebuffer on the 3max, but not the
-	keyboard. (This has been fixed now, it seems.)
-  <li>For quite some time, the MIPS linux cvs tree has had support for the
-	framebuffer and keyboard, but it did not include Debian's
-	patches for networking, which made it unusable for network
-	installs. (Possibly fixed now.)
-  <li>The kernel has to be for 5000/200. This rules out using
-	the default kernel on netinst ISO images provided by Debian.
-	These ISO images boot directly into a kernel which is meant
-	for a different DECstation model.
-  <li>The kernel has to have an initrd which more or less matches the
-	version of Debian that will be installed.
-</ul>
+<p>The 5000/1xx's ROM is <tt>kn02_ba_5.7j.bin</tt> (KN02-BA V5.7j); its
+SCSI controller and Ethernet are built in, and the PMAG-BA framebuffer
+(<tt>pmag_ba_5.3a.bin</tt>) goes in slot 0. The ROM's self-test reports
+a few failures (cache, cursor and clock tests that GXemul doesn't pass
+yet) and then waits at the <tt>&gt;&gt;</tt> prompt instead of booting
+by itself.
 
-<p>Luckily, a precompiled install kernel has been made available by David 
-Muse, for Debian for R3000 DECstations, which has support for framebuffer, 
-keyboard, and networking, which works pretty well. Thanks David. :-)
-
-<p>The following steps should let you install Debian GNU/Linux for 
-DECstation onto a harddisk image in the emulator:
-
-<p>
-<ol>
-  <li>Create an empty harddisk image, which will be the root disk
-	that Debian installs itself onto:<pre>
-	<b>dd if=/dev/zero of=debian_pmax.img bs=1024 count=1 seek=6000000</b>
-
+<p><ol>
+  <li>Download the CD image,
+	<a href="https://cdimage.debian.org/cdimage/archive/3.1_r6a/mipsel/iso-cd/debian-31r6a-mipsel-netinst.iso">debian-31r6a-mipsel-netinst.iso</a>,
+	and make a folder for the machine, with the ROM images, an empty
+	disk image, and this <tt>machine.json</tt>:<pre>
+{
+  "gxemul": 1,
+  "name": "Debian 3.1",
+  "machine": { "type": "decstation", "model": "3min", "memory_mb": 128 },
+  "boot": { "prom_emulation": false, "rom": "kn02_ba_5.7j.bin", "nvram": "nvram.bin" },
+  "drives": [ { "file": "disk.img", "kind": "disk", "id": 0 },
+              { "file": "debian-31r6a-mipsel-netinst.iso", "kind": "cdrom", "id": 4, "readonly": true } ],
+  "display": { "enabled": true },
+  "slots": { "0": "pmag_ba_5.3a.bin" }
+}
 </pre>
-  <li>Download David Muse' install kernel, and a Debian Netinstall CD-ROM:<pre>
-	<a href="http://www.firstworks.com/mips-linux-2.4.31/vmlinux-2.4.31">http://www.firstworks.com/mips-linux-2.4.31/vmlinux-2.4.31</a>
-	<a href="http://cdimage.debian.org/cdimage/archive/3.1_r6a/mipsel/iso-cd/">http://cdimage.debian.org/cdimage/archive/3.1_r6a/mipsel/iso-cd</a>/<a href="http://cdimage.debian.org/cdimage/archive/3.1_r6a/mipsel/iso-cd/debian-31r6a-mipsel-netinst.iso">debian-31r6a-mipsel-netinst.iso</a>
-
-	MD5 (vmlinux-2.4.31) = c88dc0a26b91e3646698179c18e8169b
-	MD5 (debian-31r6a-mipsel-netinst.iso) = db1bf2f8e5b24f820f37034ec1d20bdc
-</pre>
-  <p>
-  <li>Start the installation like this:<pre>
-	<b>gxemul -X -e3max -d debian_pmax.img -d debian-31r6a-mipsel-netinst.iso vmlinux-2.4.31</b>
+	<pre>
+	$ <b>truncate -s 2000M disk.img</b>
+	$ <b>gxemul machine.json</b>
 </pre>
 
-	<p>If everything goes well, you will see Linux' boot messages, and then
-	arrive at the language chooser.
+  <li>Boot the installer from the CD. On the 5000/1xx, the built-in SCSI
+	controller is slot 3, and the CD's boot loader (delo) takes a
+	partition number and a label:<pre>
+	&gt;&gt;<b>boot 3/rz4 1/linux-kn02</b>
+</pre>
+	Linux takes a minute to start, and the installer a few more. If
+	you add parameters, give them all, since they replace delo's:
+	<tt>boot 3/rz4 1/linux-kn02 initrd=/boot/initrd.gz
+	ramdisk_size=8192 console=ttyS2</tt> installs on the serial
+	console (without the display, and without slot 0).
 
 <p>
 <a href="debian-1.png"><img src="debian-1-small.png"></a>
@@ -607,79 +619,44 @@ DECstation onto a harddisk image in the emulator:
 <a href="debian-3.png"><img src="debian-3-small.png"></a>
 <a href="debian-4.png"><img src="debian-4-small.png"></a>
 
-	<p>There will be a warning about the keyboard
-	layout. Don't mind this. Continue, and then select <b>Detect
-	and mount CD-ROM</b> in the next menu.
+  <li>Install: the keyboard layout step fails (there is no layout for
+	the LK201); continue with <b>Detect and mount CD-ROM</b>. The
+	network is configured with DHCP. Choose <b>Erase entire disk</b>,
+	with all files in one partition. Installing the base system from
+	the CD takes about an hour. delo goes on <tt>/dev/sda</tt>.
 
-<p>
-<a href="debian-5.png"><img src="debian-5-small.png"></a>
-<a href="debian-6.png"><img src="debian-6-small.png"></a>
-<a href="debian-7.png"><img src="debian-7-small.png"></a>
-<a href="debian-8.png"><img src="debian-8-small.png"></a>
-
-	<p>
-	There will also be a warning about lack of loadable modules. Don't
-	mind this either, continue anyway by choosing <b>Yes</b>.
-	<p>
-	When you reach the network configuration part of the install, choose
-	<b>Configure network manually</b> and enter the following values:<pre>
-	IP address:                 <b>10.0.0.1</b>
-	Netmask:                    <b>255.0.0.0</b>
-	Gateway:                    <b>10.0.0.254</b>
-	Name server addresses:      <b>10.0.0.254</b>
-
+  <li>The installer reboots to the ROM. Boot the disk:<pre>
+	&gt;&gt;<b>boot 3/rz0</b>
 </pre>
-	<p>Choose <b>Erase entire disk</b> in the partitioner.
-
-	<p>Wait for the base system to be installed. This takes almost forever,
-	so you can go fetch several <a href="http://en.wikipedia.org/wiki/Jolt_Cola">Jolts</a>
-	or cups of coffee in the meanwhile.
-
-<p>
-<a href="debian-9.png"><img src="debian-9-small.png"></a>
-<a href="debian-10.png"><img src="debian-10-small.png"></a>
-<a href="debian-11.png"><img src="debian-11-small.png"></a>
-<a href="debian-12.png"><img src="debian-12-small.png"></a>
-
-	<p>Congratulations! The first phase of the installation is now completed.
-	Reboot using the following command line:<pre>
-	<b>gxemul -X -e3max -o 'root=/dev/sda1' -d debian_pmax.img vmlinux-2.4.31</b>
-
+	The second part of the installation asks for the keymap (choose
+	<b>Keep kernel keymap</b>), the time zone, root's password, and a
+	user. The CD isn't accepted as an apt source, and "stable" on the
+	archive isn't sarge any more: cancel the apt configuration, choose
+	<b>Finish configuring the base system</b>, and then point apt at
+	the archive:<pre>
+	# <b>echo deb http://archive.debian.org/debian sarge main &gt; /etc/apt/sources.list</b>
+	# <b>apt-get update</b>
 </pre>
-	<p>The post-install step takes quite some time as well. A perfect opportunity
-	for more coffee.
-
-	<p>When asked about whether the hardware clock is set to GMT or
-	not, answer Yes.
-
-	<p>When asked about "Apt configuration", choose <b>http</b> as the method
-	to use for accessing the Debian archive.
-
-<p>
-<a href="debian-13.png"><img src="debian-13-small.png"></a>
-<a href="debian-14.png"><img src="debian-14-small.png"></a>
-<a href="debian-15.png"><img src="debian-15-small.png"></a>
-
-	<p>Downloading the packages takes almost forever. Be patient.
-
-	<p>Congratulations (again)! You are now fully done with the installation.
-
 </ol>
 
-<p><br>Debian GNU/Linux for DECstation is now installed and ready to be used.
-Use this command to boot from the installed disk image:<pre>
-	<b>gxemul -X -e3max -o 'root=/dev/sda1' -d debian_pmax.img vmlinux-2.4.31</b>
-
+<p>If the system was installed on the serial console, its delo label
+boots with <tt>console=ttyS2</tt>, and the logins on the virtual
+consoles are switched off. For the framebuffer and keyboard, add a label
+without it to <tt>/etc/delo.conf</tt>, and remove the <tt>#</tt> in
+front of the <tt>1:2345:respawn:/sbin/getty 38400 tty1</tt> line in
+<tt>/etc/inittab</tt>:<pre>
+label=fb
+  image=/vmlinux
+  append="root=/dev/sda1"
+</pre>
+<pre>
+	&gt;&gt;<b>setenv boot "3/rz0 1/fb"</b>
+	&gt;&gt;<b>boot</b>
 </pre>
 
 
 
 
-
-
-
-
-<p><br>
 <a name="declinuxredhat"></a>
 <h3>Redhat Linux for DECstation:</h3>
 
