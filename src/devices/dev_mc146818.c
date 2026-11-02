@@ -469,7 +469,9 @@ DEVICE_ACCESS(mc146818)
 	struct mc_data *d = (struct mc_data *) extra;
 	struct tm *tmp;
 	time_t timet;
+#ifdef MC146818_DEBUG
 	size_t i;
+#endif
 
 	/*  NOTE/TODO: This access function only handles 8-bit accesses!  */
 
@@ -641,9 +643,6 @@ DEVICE_ACCESS(mc146818)
 			}
 
 			if (d->interrupt_hz != d->old_interrupt_hz) {
-				debug("[ rtc changed to interrupt at %i Hz ]\n",
-				    d->interrupt_hz);
-
 				d->old_interrupt_hz = d->interrupt_hz;
 
 				if (d->timer == NULL)
@@ -674,8 +673,6 @@ DEVICE_ACCESS(mc146818)
 			break;
 		case MC_REGC*4:
 			d->reg[MC_REGC * 4] = data[0];
-			debug("[ mc146818: write to MC_REGC, data[0] = "
-			    "0x%02x ]\n", data[0]);
 			break;
 		case 0x128:
 			d->reg[relative_addr] = data[0];
@@ -689,13 +686,8 @@ DEVICE_ACCESS(mc146818)
 			}
 			break;
 		default:
+			/*  Other registers and the NVRAM.  */
 			d->reg[relative_addr] = data[0];
-
-			debug("[ mc146818: unimplemented write to "
-			    "relative_addr = %08lx: ", (long)relative_addr);
-			for (i=0; i<len; i++)
-				debug("%02x ", data[i]);
-			debug("]\n");
 		}
 	} else {
 		/*  READ:  */
@@ -752,8 +744,7 @@ DEVICE_ACCESS(mc146818)
 			/*  NOTE: Acking is done below, _after_ the
 			    register has been read.  */
 			break;
-		default:debug("[ mc146818: read from relative_addr = "
-			    "%04x ]\n", (int)relative_addr);
+		default:;
 		}
 
 		data[0] = d->reg[relative_addr];

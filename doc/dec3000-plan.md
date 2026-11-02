@@ -204,7 +204,7 @@ Everything below is in `media/` (not in git).
 - M3 (started): machine `dec3000 -e 400` (`machine_dec3000.c`,
   `dev_dec3000.c`): TURBOchannel dense/sparse decoder, TC ASIC CSRs
   (IOSLOT, TCCONFIG, FADR/TCEREG, MCRs, IMR/IR, S/G map), IOCTL registers,
-  FEPROM, ESAR, SCCs and RTC (reused DECstation models), LANCE stub, empty
+  FEPROM, ESAR, SCCs and RTC (reused DECstation models), LANCE, empty
   slots time out with a machine check. Emulated serial ROM: copies the ROM
   contents *without* their 0x40-byte header to 0x4000 (system) and
   0x44000 (I/O) and starts at 0x4000 in PALmode. Takes an updater file or
@@ -244,10 +244,21 @@ Everything below is in `media/` (not in git).
     - ISDN: a register-level 79C30A model is there, but the test's
       indirect register 0xa2 still reads back 0 (register layout or byte
       lane not right yet).
-    - SCC: needs the IOCTL's serial DMA (comm port transmit/receive).
-    - NI: needs the LANCE (dev_le with IOCTL DMA).
-  - TODO: SCSI boot from disk/CD, LANCE, SCC DMA, FEPROM programming,
-    the SROM version and other hand-off registers.
+    - SCC: OK. IOCTL SCC DMA (comm port and printer port, transmit and
+      receive, as on the 3MIN's IOASIC but with 34-bit pointers). Needed
+      in dev_scc: a reset discards the receive FIFO, a disabled receiver
+      gets nothing in loopback (the polled loopback test leaves a
+      character behind otherwise), and an LK401 that answers commands
+      even without a framebuffer (`dev_scc_kbd_present()`), as the
+      console tests the keyboard line. Loopback output is no longer
+      echoed to the terminal.
+    - NI: OK. dev_le through the IOCTL's LANCE DMA pointer
+      (`dev_le_dma_init()`, shared with the 3MIN), the same gap16/gap2
+      layout. The console's tests need CSR1<0> to read back and 8-byte
+      frames in loopback.
+  - TODO: SCSI boot from disk/CD, FEPROM programming, ISDN DMA, the LANCE
+    reset and DMA enable bits in SSR, the SROM version and other hand-off
+    registers.
 
 ## Things to get from the real machines (when they run)
 

@@ -224,8 +224,8 @@ static void scc_clear_ip(struct scc_data *d, int bits)
  *  scc_channel_reset():
  *
  *  Resets a channel (from a WR9 channel or hardware reset): interrupts,
- *  the receiver, transmitter, and baud rate generator are disabled, and
- *  no interrupts are pending.
+ *  the receiver, transmitter, and baud rate generator are disabled, no
+ *  interrupts are pending, and received characters are discarded.
  */
 static void scc_channel_reset(struct scc_data *d, int port)
 {
@@ -234,6 +234,9 @@ static void scc_channel_reset(struct scc_data *d, int port)
 	w[SCC_WR1] = w[SCC_WR3] = w[SCC_WR5] = w[SCC_WR14] = 0;
 	w[SCC_WR4] |= 0x04;		/*  asynchronous, 1 stop bit  */
 	w[SCC_WR15] = 0xf8;
+
+	/*  The receive FIFO is discarded.  */
+	d->cur_rx_queue_pos_read[port] = d->cur_rx_queue_pos_write[port];
 
 	d->scc_register_r[port * N_SCC_REGS + SCC_RR0] =
 	    SCC_RR0_TX_EMPTY | SCC_RR0_TX_UNDERRUN;
@@ -424,13 +427,17 @@ static void scc_tx(struct scc_data *d, int port, int ch)
 		k = scc_by_nr[1];
 
 	/*  In local loopback, the receiver is not connected to the line,
-	    so the keyboard's and mouse's replies would not be received:  */
-	if (!loopback || (line != DCKBD_PORT && line != DCMOUSE_PORT))
+	    so the keyboard's and mouse's replies would not be received.
+	    (The chip still drives TxD then, but as all lines share the
+	    emulator's terminal, self-test patterns aren't shown.)  */
+	if (!loopback)
 		lk201_tx_data(&k->lk201, line, ch);
 
 	scc_tx_underrun(d, port);
 
-	if (loopback)
+	/*  A disabled receiver doesn't receive what is looped back.  */
+	if (loopback && d->scc_register_w[port * N_SCC_REGS + SCC_WR3] &
+	    SCC_WR3_RX_ENABLE)
 		rx_enqueue(d, port, ch);
 }
 
@@ -461,6 +468,22 @@ int dev_scc_dma_rx(void *e)
 		scc_clear_ip(d, SCC_RR3_RX_IP_B);
 
 	return ch;
+}
+
+
+/*
+ *  dev_scc_kbd_present():
+ *
+ *  Without a framebuffer, the keyboard line is normally printed to the
+ *  terminal. With this, an LK201 is attached to it anyway, which answers
+ *  commands (self-test, ID) but gets no keys, so that firmware which tests
+ *  the keyboard (the DEC 3000 console) finds one.
+ */
+void dev_scc_kbd_present(void *e)
+{
+	struct scc_data *d = (struct scc_data *) e;
+
+	d->lk201.kbd_present = 1;
 }
 
 

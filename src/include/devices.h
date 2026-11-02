@@ -313,6 +313,9 @@ void dev_le_init(struct machine *machine, struct memory *mem,
 	const char *irq_path, int len);
 void dev_le_ioasic_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, const char *irq_path, struct dec_ioasic_data *ioasic);
+const uint8_t *dev_le_dma_init(struct machine *machine, struct memory *mem,
+	uint64_t baseaddr, const char *irq_path, struct cpu *cpu,
+	uint64_t (*dma_base)(void *), void *dma);
 
 /*  dev_mc146818.c:  */
 #define	DEV_MC146818_LENGTH		0x0000000000000100
@@ -396,6 +399,7 @@ void dev_scc_dma_tx(void *e, int ch);
 int dev_scc_dma_rx(void *e);
 void *dev_scc_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, char* irq_path, int use_fb, int scc_nr, int addrmul);
+void dev_scc_kbd_present(void *e);
 
 /*  dev_sfb.c:  */
 #define	DEV_SFB_LENGTH		0x400000
@@ -528,6 +532,7 @@ struct vr41xx_data *dev_vr41xx_init(struct machine *machine,
 /*  lk201.c:  */
 struct lk201_data {
         int                     use_fb;
+	int			kbd_present;	/*  answers commands without fb  */
 	int			console_handle;
 
         int                     (*space_available_in_queue)(void *,int);

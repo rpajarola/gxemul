@@ -487,7 +487,7 @@ void lk201_tx_data(struct lk201_data *d, int port, int idata)
 {
 	switch (port) {
 	case DCKBD_PORT:		/*  port 0  */
-		if (!d->use_fb) {
+		if (!d->use_fb && !d->kbd_present) {
 			/*  Simply print the character to stdout:  */
 			console_putchar(d->console_handle, idata);
 		} else {

@@ -91,6 +91,11 @@
 #define	IOCTL_ISDN		0x240000
 
 /*  IOCTL registers (offset >> 4):  */
+#define	IOCTL_LDP		(0x020 >> 4)	/*  LANCE DMA pointer  */
+#define	IOCTL_COMM_TX		(0x030 >> 4)	/*  SCC DMA pointers  */
+#define	IOCTL_COMM_RX		(0x040 >> 4)
+#define	IOCTL_PRT_TX		(0x050 >> 4)
+#define	IOCTL_PRT_RX		(0x060 >> 4)
 #define	IOCTL_SSR		(0x100 >> 4)
 #define	IOCTL_SIR		(0x110 >> 4)
 #define	IOCTL_SIMR		(0x120 >> 4)
@@ -99,6 +104,23 @@
 
 #define	SSR_ROM_SINGLE		(1 << 26)
 #define	SSR_ROM_SELECT		(1 << 9)	/*  TODO: and <7>?  */
+#define	SSR_LANCE_DMA		(1 << 16)
+#define	SIR_ALT_CONSOLE		(1 << 3)
+
+/*
+ *  SCC DMA, for channel B of SCC 0 (communication port) and of SCC 1
+ *  (printer port): enables in SSR, events in SIR.
+ */
+static const struct {
+	int		tx_ptr, rx_ptr;
+	uint32_t	tx_en, rx_en;
+	uint32_t	tx_end, rx_half, rx_overrun;
+} scc_dma_bits[2] = {
+	{ IOCTL_COMM_TX, IOCTL_COMM_RX, 1U << 31, 1 << 30,
+	  1U << 31, 1 << 29, 1 << 28 },
+	{ IOCTL_PRT_TX, IOCTL_PRT_RX, 1 << 29, 1 << 28,
+	  1 << 27, 1 << 25, 1 << 24 }
+};
 
 
 struct dec3000_data {
@@ -132,6 +154,8 @@ struct dec3000_data {
 	uint32_t		ioctl_reg[N_IOCTL_REGS];
 	uint32_t		sir_dev;	/*  SIR<15:0>, from devices  */
 	unsigned char		esar[32];
+	void			*scc[2];
+	struct cpu		*cpu;		/*  for DMA  */
 
 	/*  TCDS:  */
 	struct memory		*scsi_mem[2];
@@ -148,9 +172,6 @@ struct dec3000_data {
 	int			isdn_idx;
 	uint8_t			isdn_ind[256][16];
 
-	/*  LANCE stub:  */
-	uint16_t		lance_rap;
-	uint16_t		lance_csr[4];
 };
 
 
@@ -303,6 +324,133 @@ static void rom_access(struct dec3000_data *d, uint32_t off, uint32_t *val,
 }
 
 
+/*
+ *  IOCTL DMA pointers hold physical address <28:2> in bits <31:5> and
+ *  <33:29> in bits <4:0>.
+ */
+static uint64_t dma_ptr_to_addr(uint32_t ptr)
+{
+	return ((ptr >> 3) & 0x1ffffffc) | ((uint64_t)(ptr & 0x1f) << 29);
+}
+
+static uint32_t dma_addr_to_ptr(uint64_t addr)
+{
+	return ((addr & 0x1ffffffc) << 3) | ((addr >> 29) & 0x1f);
+}
+
+
+/*
+ *  SCC DMA: one character per longword, in byte 1. Transmit DMA sends
+ *  from the pointer to the end of its 4 KB page, then sets the page end
+ *  interrupt, which also stops it until software clears it. Receive DMA
+ *  stores each received character, sets the half page interrupt when the
+ *  pointer gets to the middle of a page, and stops with an overrun at the
+ *  end of the page, until software clears that. Characters are sent at
+ *  once (a loopback receiver gets them at once too), so transmit DMA ends
+ *  as soon as it is enabled.
+ */
+static void scc_dma_rx(struct dec3000_data *d, int i)
+{
+	uint32_t *sir = &d->ioctl_reg[IOCTL_SIR];
+	uint32_t *ptr = &d->ioctl_reg[scc_dma_bits[i].rx_ptr];
+	unsigned char word[4];
+	uint64_t addr;
+	int ch;
+
+	if (!(d->ioctl_reg[IOCTL_SSR] & scc_dma_bits[i].rx_en) ||
+	    (*sir & scc_dma_bits[i].rx_overrun))
+		return;
+
+	addr = dma_ptr_to_addr(*ptr);
+	while ((ch = dev_scc_dma_rx(d->scc[i])) >= 0) {
+		memset(word, 0, sizeof(word));
+		word[1] = ch;
+		d->cpu->memory_rw(d->cpu, d->cpu->mem, addr, word,
+		    sizeof(word), MEM_WRITE, NO_EXCEPTIONS | PHYSICAL);
+		addr += sizeof(word);
+		if ((addr & 0xfff) == 0x800)
+			*sir |= scc_dma_bits[i].rx_half;
+		if ((addr & 0xfff) == 0) {
+			*sir |= scc_dma_bits[i].rx_overrun |
+			    scc_dma_bits[i].rx_half;
+			break;
+		}
+	}
+	*ptr = dma_addr_to_ptr(addr);
+}
+
+static void scc_dma(struct dec3000_data *d)
+{
+	uint32_t *sir = &d->ioctl_reg[IOCTL_SIR];
+	unsigned char word[4];
+	uint64_t addr;
+	int i;
+
+	for (i = 0; i < 2; i++) {
+		uint32_t *ptr = &d->ioctl_reg[scc_dma_bits[i].tx_ptr];
+
+		if (d->scc[i] == NULL || d->cpu == NULL)
+			continue;
+
+		if (d->ioctl_reg[IOCTL_SSR] & scc_dma_bits[i].tx_en &&
+		    !(*sir & scc_dma_bits[i].tx_end)) {
+			addr = dma_ptr_to_addr(*ptr);
+			do {
+				d->cpu->memory_rw(d->cpu, d->cpu->mem, addr,
+				    word, sizeof(word), MEM_READ,
+				    NO_EXCEPTIONS | PHYSICAL);
+				dev_scc_dma_tx(d->scc[i], word[1]);
+				addr += sizeof(word);
+				scc_dma_rx(d, i);
+			} while (addr & 0xfff);
+			*ptr = dma_addr_to_ptr(addr);
+			*sir |= scc_dma_bits[i].tx_end;
+		}
+
+		scc_dma_rx(d, i);
+	}
+
+	update_ioctl_irq(d);
+}
+
+
+DEVICE_TICK(dec3000)
+{
+	struct dec3000_data *d = (struct dec3000_data *) extra;
+
+	if (d->ioctl_reg[IOCTL_SSR] & (scc_dma_bits[0].rx_en |
+	    scc_dma_bits[1].rx_en))
+		scc_dma(d);
+}
+
+
+/*  The base of the LANCE's 128 KB of memory: LDP<31:20,4:0>.  */
+static uint64_t lance_dma_base(void *extra)
+{
+	struct dec3000_data *d = (struct dec3000_data *) extra;
+
+	return dma_ptr_to_addr(d->ioctl_reg[IOCTL_LDP]) & ~(uint64_t)0x1ffff;
+}
+
+static void lance_access(struct dec3000_data *d, struct cpu *cpu,
+	uint32_t off, uint32_t *val, int bytemask, int writeflag)
+{
+	unsigned char w[2];
+
+	off = IOCTL_LANCE | (off & 4);
+	if (writeflag) {
+		if ((bytemask & 3) != 3)
+			return;
+		w[0] = *val; w[1] = *val >> 8;
+		sub_access(d->ioctl_mem, cpu, off, w, 2, MEM_WRITE);
+	} else {
+		w[0] = w[1] = 0;
+		sub_access(d->ioctl_mem, cpu, off, w, 2, MEM_READ);
+		*val = w[0] | (w[1] << 8);
+	}
+}
+
+
 static void ioctl_regs_access(struct dec3000_data *d, uint32_t off,
 	uint32_t *val, int writeflag)
 {
@@ -334,34 +482,8 @@ static void ioctl_regs_access(struct dec3000_data *d, uint32_t off,
 		debugmsg(SUBSYS_DEVICE, "dec3000", VERBOSITY_DEBUG,
 		    "SSR = 0x%08x", *val);
 
-	update_ioctl_irq(d);
-}
-
-
-/*  The LANCE, for now only so that its registers can be read and written.
-    TODO: dev_le with IOCTL DMA.  */
-static void lance_stub(struct dec3000_data *d, uint32_t off, uint32_t *val,
-	int writeflag)
-{
-	if ((off & 4) == 4) {
-		/*  RAP  */
-		if (writeflag)
-			d->lance_rap = *val & 3;
-		else
-			*val = d->lance_rap;
-		return;
-	}
-
-	/*  RDP  */
-	if (writeflag) {
-		if (d->lance_rap == 0) {
-			/*  CSR0: STOP resets; other bits aren't emulated.  */
-			if (*val & 4)
-				d->lance_csr[0] = 4;
-		} else
-			d->lance_csr[d->lance_rap] = *val;
-	} else
-		*val = d->lance_csr[d->lance_rap];
+	/*  Enables, pointers and cleared SIR events may start DMA.  */
+	scc_dma(d);
 }
 
 
@@ -422,7 +544,8 @@ static int ioctl_access(struct dec3000_data *d, struct cpu *cpu,
 			*val = d->esar[(off >> 2) & 31];
 		return 1;
 	case IOCTL_LANCE:
-		lance_stub(d, off, val, writeflag);
+		/*  RDP at 0, RAP at 4, 16 bits on byte lanes 0 and 1.  */
+		lance_access(d, cpu, off, val, bytemask, writeflag);
 		return 1;
 	case IOCTL_SCC0:
 	case IOCTL_SCC1:
@@ -1042,7 +1165,6 @@ struct dec3000_data *dev_dec3000_init(struct machine *machine,
 {
 	struct dec3000_data *d;
 	char tmp[300];
-	unsigned char ether[6] = { 0x08, 0x00, 0x2b, 0x30, 0x00, 0x01 };
 	int i, banks;
 
 	CHECK_ALLOCATION(d = (struct dec3000_data *) calloc(1, sizeof(*d)));
@@ -1079,12 +1201,24 @@ struct dec3000_data *dev_dec3000_init(struct machine *machine,
 	for (i = 0; i < 16; i++)
 		add_ioctl_irq_line(d, i);
 
+	d->cpu = machine->cpus[0];
+
+	/*  Without graphics, the serial line is the "alternate console".  */
+	if (!machine->display_md.in_use)
+		d->sir_dev |= SIR_ALT_CONSOLE;
+
 	snprintf(tmp, sizeof(tmp), "%s.dec3000.6", machine->path);
-	dev_scc_init(machine, d->ioctl_mem, IOCTL_SCC0, tmp,
+	d->scc[0] = dev_scc_init(machine, d->ioctl_mem, IOCTL_SCC0, tmp,
 	    machine->display_md.in_use, 0, 1);
 	snprintf(tmp, sizeof(tmp), "%s.dec3000.7", machine->path);
-	dev_scc_init(machine, d->ioctl_mem, IOCTL_SCC1, tmp,
+	d->scc[1] = dev_scc_init(machine, d->ioctl_mem, IOCTL_SCC1, tmp,
 	    machine->display_md.in_use, 1, 1);
+	dev_scc_kbd_present(d->scc[1]);
+	machine_add_tickfunction(machine, dev_dec3000_tick, d, 14);
+
+	snprintf(tmp, sizeof(tmp), "%s.dec3000.8", machine->path);
+	make_esar(d, dev_le_dma_init(machine, d->ioctl_mem, IOCTL_LANCE, tmp,
+	    d->cpu, lance_dma_base, d));
 
 	snprintf(tmp, sizeof(tmp), "%s.1", cpu_irq);
 	dev_mc146818_init(machine, d->ioctl_mem, IOCTL_RTC, tmp,
@@ -1115,8 +1249,6 @@ struct dec3000_data *dev_dec3000_init(struct machine *machine,
 		dev_asc_set_target_offset(d->asc[i], 8 * i);
 	}
 
-	make_esar(d, ether);
-	d->lance_csr[0] = 4;			/*  STOP  */
 
 	return d;
 }
