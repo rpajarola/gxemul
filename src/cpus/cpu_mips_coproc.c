@@ -706,8 +706,14 @@ void coproc_register_write(struct cpu *cpu,
 		case COP0_ENTRYLO1:
 			unimpl = 0;
 			if (cpu->cd.mips.cpu_type.mmu_model == MMU3K) {
-				fatal("Attempt to access ENTRYLO1 with MMU3K?\n");
-				exit(1);
+				/*
+				 *  There is no register 3 on the R2000/R3000;
+				 *  writes are ignored.  (Linux writes to it to
+				 *  find out if the CPU is an R3081, which has
+				 *  its Config register there.)
+				 */
+				tmp = cp->reg[COP0_ENTRYLO1];
+				break;
 			}
 			// Both MIPS III (such as R4000) and MIPS32/MIPS64 (?)
 			if (cpu->cd.mips.cpu_type.mmu_model != MMU3K) {

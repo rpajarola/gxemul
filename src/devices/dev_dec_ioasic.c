@@ -615,6 +615,17 @@ DEVICE_ACCESS(dec_ioasic)
 		}
 		break;
 
+	case IOASIC_CTR:
+		/*
+		 *  The free-running counter.  Linux 2.4 uses it for the time
+		 *  of day on R3000 machines (it measures how fast it runs, and
+		 *  hangs if it doesn't run at all); the number of instructions
+		 *  run so far will do, like the R4000's Count register.
+		 */
+		if (writeflag == MEM_READ)
+			odata = (uint32_t) cpu->ninstrs;
+		break;
+
 	/*  The DECstation 5000/125's PROM uses these for cache testing. TODO.  */
 	case 0x0f004:
 	case 0x1f008:

@@ -5578,3 +5578,13 @@ Changelog for GXemul:
 		stopped: the KN02's ROM printed ?RTC at every power-on and
 		reset the clock, and Ultrix said that the battery backup
 		clock wasn't valid.
+20261101	Linux 2.4 (Debian 3.1) runs on the DECstation 5000/1xx: a write
+		to cop0 register 3 on an R3000 (Linux checks for an R3081's
+		Config register there) is ignored instead of stopping the
+		emulator; the IOASIC's free-running counter counts (Linux
+		uses it for the time of day); the MC146818's periodic flag is
+		set at the periodic rate even without periodic interrupts
+		(Linux polls it to measure the counter, which took minutes);
+		and the Z8530's RR1 reads 0x07, all sent and the asynchronous
+		mode's residue code, like an idle chip (Linux waited forever
+		for its bit 2 whenever the terminal settings changed).
