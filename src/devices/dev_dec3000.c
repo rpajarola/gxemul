@@ -577,10 +577,9 @@ static int ioctl_access(struct dec3000_data *d, struct cpu *cpu,
 /*
  *  The 53C94 interrupts are CIR<19:18> (enabled by IMER<3:2>), as in the
  *  SPM and in OSF/1's pdmaflam.h. <21:20> are "reserved" in the SPM, but
- *  the console's SCSI test enables them (IMER<5:4>) and waits for <20>
- *  after a selection, with DMA off; so they are set by a 53C94 interrupt
- *  too, when enabled (OSF/1 doesn't enable them), as well as by a DMA
- *  read prefetch.
+ *  the console enables them (IMER<5:4>) and takes 53C94 interrupts that
+ *  way, with the chip's registers latched in DIC (see tcds_latch()).
+ *  They are also set by a DMA read prefetch.
  */
 #define	TCDS_CIR_SCSI_INT(ch)	(0x40000 << (ch))
 #define	TCDS_IMER_SCSI_INT(ch)	(0x4 << (ch))
@@ -604,18 +603,45 @@ static void update_tcds_irq(struct dec3000_data *d)
 			continue;
 		if (d->tcds_imer & TCDS_IMER_SCSI_INT(ch))
 			d->tcds_cir |= TCDS_CIR_SCSI_INT(ch);
-		if (d->tcds_imer & (0x10 << ch))
-			d->tcds_cir |= TCDS_CIR_PREFETCH(ch);
 	}
 
 	set_tc_line(d, TC_LINE_SCSI,
 	    (d->tcds_cir & d->tcds_imer & 0xffff0000) != 0);
 }
 
+/*
+ *  The other way of taking 53C94 interrupts, which the console uses
+ *  (enabled by IMER<5:4>, with CIR<21:20> "reserved" in the SPM): the
+ *  TCDS reads the chip's STAT, STEP, FFLAG and INTR registers, which
+ *  acknowledges the interrupt, and latches them in DIC<31:8> (INTR in
+ *  <31:24>, STEP in <23:21>, FFLAG in <20:16>, STAT in <15:8>; "reserved"
+ *  in the SPM too), then sets CIR<20+ch>. The console then reads them
+ *  from DIC instead of from the 53C94.
+ */
+static void tcds_latch(struct dec3000_data *d, int ch)
+{
+	struct cpu *cpu = d->cpu;
+	unsigned char stat = 0, step = 0, fflag = 0, intr = 0;
+
+	sub_access(d->scsi_mem[ch], cpu, 4 * 4, &stat, 1, MEM_READ);
+	sub_access(d->scsi_mem[ch], cpu, 6 * 4, &step, 1, MEM_READ);
+	sub_access(d->scsi_mem[ch], cpu, 7 * 4, &fflag, 1, MEM_READ);
+	sub_access(d->scsi_mem[ch], cpu, 5 * 4, &intr, 1, MEM_READ);
+
+	d->tcds_dic[ch] = (d->tcds_dic[ch] & 0xff) | ((uint32_t)intr << 24) |
+	    ((uint32_t)(step & 7) << 21) | ((uint32_t)(fflag & 0x1f) << 16) |
+	    ((uint32_t)stat << 8);
+	d->tcds_cir |= TCDS_CIR_PREFETCH(ch);
+}
+
 static void scsi_irq_assert(struct interrupt *interrupt)
 {
 	struct dec3000_data *d = (struct dec3000_data *) interrupt->extra;
-	d->asc_irq[interrupt->line] = 1;
+	int ch = interrupt->line;
+
+	d->asc_irq[ch] = 1;
+	if (d->tcds_imer & (0x10 << ch))
+		tcds_latch(d, ch);
 	update_tcds_irq(d);
 }
 static void scsi_irq_deassert(struct interrupt *interrupt)
@@ -702,14 +728,19 @@ static size_t tcds_dma(void *extra, unsigned char *data, size_t len,
 	}
 
 	if (writeflag) {
-		/*  Partial first longword:  */
+		/*
+		 *  Partial first longword: byte i at bits <8i+7:8i>, valid
+		 *  if bit i is set (bit 0 is always clear). That is what the
+		 *  SPM's text says and what the console uses; its bit table
+		 *  (bit 0 for byte 1, etc.) is wrong.
+		 */
 		d->tcds_dud0[ch] = 0;
 		if (addr & 3) {
 			for (i = addr & 3; i < 4 && (size_t)(i - (addr & 3))
 			    < len; i++)
 				d->tcds_dud0[ch] |= ((uint32_t)
 				    data[i - (addr & 3)] << (8 * i)) |
-				    (1 << (i - 1));
+				    (1 << i);
 		}
 		/*  Partial last longword:  */
 		d->tcds_dud1[ch] = 0;
@@ -789,6 +820,10 @@ static int tcds_access(struct dec3000_data *d, struct cpu *cpu,
 				/*  IMER  */
 				if (writeflag) {
 					d->tcds_imer = *val;
+					for (ch = 0; ch < 2; ch++)
+						if (d->asc_irq[ch] &&
+						    d->tcds_imer & (0x10 << ch))
+							tcds_latch(d, ch);
 					update_tcds_irq(d);
 				} else
 					*val = d->tcds_imer;
@@ -1078,12 +1113,19 @@ DEVICE_ACCESS(dec3000_io)
 		}
 	}
 
+	/*
+	 *  A timeout is not a bus error for the CPU: the TURBOchannel ASIC
+	 *  latches it (FADR, TCEREG, IR) and raises the error interrupt,
+	 *  which the PALcode turns into a system machine check, with the
+	 *  cause from IR and TCEREG (OSF/1's badaddr() probes expect
+	 *  TC_TIMEOUT_RD that way, not the processor machine check that a
+	 *  BIU hard error gives). It is taken right after the access.
+	 */
 	if (!ok) {
 		tc_timeout(d, tc, slot, writeflag);
 		if (writeflag == MEM_READ)
 			memset(data, 0xff, len);
-		/*  The CPU gets a machine check (see memory_rw.c).  */
-		return 0;
+		cpu->cd.alpha.irq_now = 1;
 	}
 	return 1;
 }
@@ -1247,6 +1289,7 @@ struct dec3000_data *dev_dec3000_init(struct machine *machine,
 		d->asc[i] = dev_asc_init(machine, d->scsi_mem[i], 0, name,
 		    NULL, DEV_ASC_DEC, tcds_dma, c);
 		dev_asc_set_target_offset(d->asc[i], 8 * i);
+		dev_asc_set_real_sel_timeout(d->asc[i], 25);
 	}
 
 

@@ -243,19 +243,31 @@ Everything below is in `media/` (not in git).
       understood yet.
     - MEM: "test LLSC addr = 00200000" fails (store conditionals now
       check the locked 32-byte block; not enough).
-    - SCSI: the 53C94 register test fails on details of dev_asc (reads
-      from an empty FIFO, Gross Error on FIFO overflow); fixes for those,
-      plus interrupt-line tracking, a selection timeout delay, and bus
-      reset interrupts not cleared by later commands, are in
-      `experiments/dec3000_dev_asc_wip.patch`. With them, the test gets
-      further but then loops in bus resets with 16 s delays: after a
-      selection timeout the console expects its per-target state to be 9
-      (code at 0x9d518 in the V3.3 console) and otherwise aborts (SETATN,
-      bus reset). To be continued.
-    - TCDS interrupt bits: OSF/1 (`pdmaflam.h`) uses CIR<19:18> for the
-      53C94s, as the SPM says; the console's test also waits for CIR<20>
-      with IMER<4> enabled. Both are set (CIR<21:20> only when IMER<5:4>
-      enable them).
+    - SCSI: OK, with a disk and the V1.2 CD attached (drives on a
+      DEC 3000 default to SCSI). What it took:
+      - dev_asc: reading an empty FIFO returns a byte and leaves it
+        empty, a write to a full FIFO is a gross error, the interrupt pin
+        follows NCRSTAT_INT, commands don't clear a bus reset interrupt,
+        programmed-I/O data in (one byte per Transfer Information; the
+        console reads INQUIRY data that way). Optionally
+        (`dev_asc_set_real_sel_timeout()`, DEC 3000 only), a selection of
+        an absent target times out after the programmed timeout (NCR_TIMEOUT
+        * 8192 * CCF clocks, ~270 ms here) in host time, instead of at once.
+      - TCDS: the console takes 53C94 interrupts through IMER<5:4>/CIR<21:20>
+        ("reserved" in the SPM) and reads the chip's state from DIC<31:8>
+        ("reserved" too): the ASIC latches INTR<31:24>, STEP<23:21>,
+        FFLAG<20:16> and STAT<15:8> there, reading INTR acknowledges the
+        interrupt (`tcds_latch()`). Without that, the console's watchdog
+        aborted every selection with SETATN and a bus reset (16 s each,
+        8 minutes for the test). OSF/1 uses CIR<19:18> (`pdmaflam.h`).
+      - DUD0's mask is bit i for byte i (bit 0 always clear), as the SPM's
+        text says and the console uses; the SPM's bit table is wrong.
+    - TC timeouts: not a bus error for the CPU (no BIU_STAT HERR, no
+      processor machine check). The TC ASIC raises the error interrupt
+      (irq_h[4]), taken right after the access, and the PALcode makes a
+      system machine check (0x660) with the cause from IR and TCEREG:
+      TC_TIMEOUT_RD (0x14) for reads, which OSF/1's badaddr() probes
+      require (a BIU hard error gives 0x84, and a panic).
     - ISDN: a register-level 79C30A model is there, but the test's
       indirect register 0xa2 still reads back 0 (register layout or byte
       lane not right yet).
@@ -271,8 +283,14 @@ Everything below is in `media/` (not in git).
       (`dev_le_dma_init()`, shared with the 3MIN), the same gap16/gap2
       layout. The console's tests need CSR1<0> to read back and 8-byte
       frames in loopback.
-  - TODO: SCSI boot from disk/CD, FEPROM programming, ISDN DMA, the LANCE
-    reset and DMA enable bits in SSR, the real serial ROM version.
+  - OSF/1 V1.2 boots from the CD (`boot dka400`) to the installation
+    menu: the kernel finds scc0, asc0/asc1 (rz0 disk, rz4 CD), ln0, and
+    says "DEC3000 - M400 system". Its warnings: the TOY clock in 12-hour
+    mode and a lost battery backup (RTC setup), swap device not found
+    (expected before installing).
+  - TODO: install to disk and boot from it, the RTC warnings, FEPROM
+    programming, ISDN DMA, the LANCE reset and DMA enable bits in SSR, the
+    real serial ROM version.
 
 ## Things to get from the real machines (when they run)
 

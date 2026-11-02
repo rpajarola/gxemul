@@ -816,12 +816,14 @@ static void alpha_fen(struct cpu *cpu, struct alpha_instr_call *ic)
 /*
  *  Called after a memory access in the slow path: if the access went to
  *  a physical address where nothing is, take the machine check now that
- *  the instruction is done.
+ *  the instruction is done; likewise an error interrupt that a device
+ *  raised because of the access (irq_now).
  */
 static void alpha_check_mchk(struct cpu *cpu, struct alpha_instr_call *ic)
 {
-	if (!cpu->cd.alpha.mchk_pending)
+	if (!cpu->cd.alpha.mchk_pending && !cpu->cd.alpha.irq_now)
 		return;
+	cpu->cd.alpha.irq_now = 0;
 	SYNCH_PC;
 	cpu->pc += sizeof(uint32_t);
 	ev4_check_interrupts(cpu);

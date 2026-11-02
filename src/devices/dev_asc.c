@@ -58,6 +58,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <string.h>
 
 #include "cpu.h"
@@ -104,6 +105,18 @@ struct asc_data {
 	/*  Added to SCSI target IDs to get disk image IDs (for a second
 	    SCSI bus, e.g. 8 for IDs 8..15).  */
 	int		target_offset;
+
+	/*
+	 *  A selection of a target that isn't there normally ends at once
+	 *  (disconnect interrupt). With real_sel_timeout, it ends after the
+	 *  selection timeout set by NCR_TIMEOUT and NCR_CCF, in host time
+	 *  (sel_timeout_at, in microseconds, 0 if none is pending): the DEC
+	 *  3000 console's self-test only expects the interrupt once it has
+	 *  noted that it started the selection.
+	 */
+	int		real_sel_timeout;
+	int64_t		sel_timeout_at;
+	int		clock_mhz;
 
 	void		*turbochannel;
 	struct interrupt irq;
@@ -157,15 +170,48 @@ static int dev_asc_select(struct cpu *cpu, struct asc_data *d, int from_id,
 	int to_id, int dmaflag, int n_messagebytes);
 
 
+static int64_t host_usec(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+
+/*  Timeout = NCR_TIMEOUT * 8192 * CCF clock periods (CCF 0 means 8).  */
+static int64_t sel_timeout_usec(struct asc_data *d)
+{
+	int ccf = d->reg_wo[NCR_CCF] & 7;
+
+	if (ccf == 0)
+		ccf = 8;
+	return (int64_t)d->reg_wo[NCR_TIMEOUT] * 8192 * ccf / d->clock_mhz;
+}
+
+
 DEVICE_TICK(asc)
 {
 	struct asc_data *d = (struct asc_data *) extra;
-	int new_assert = d->reg_ro[NCR_STAT] & NCRSTAT_INT;
+	int new_assert;
 
-	if (new_assert && !d->irq_asserted)
+	if (d->sel_timeout_at != 0 && host_usec() >= d->sel_timeout_at) {
+		d->sel_timeout_at = 0;
+		d->reg_ro[NCR_STAT] |= NCRSTAT_INT;
+		d->reg_ro[NCR_INTR] |= NCRINTR_DIS;
+	}
+
+	new_assert = d->reg_ro[NCR_STAT] & NCRSTAT_INT;
+
+	/*  The interrupt pin follows NCRSTAT_INT (which a chip reset also
+	    clears). irq_asserted is updated first: what the pin is
+	    connected to may read the interrupt register at once.  */
+	if (new_assert && !d->irq_asserted) {
+		d->irq_asserted = 1;
 		INTERRUPT_ASSERT(d->irq);
-
-	d->irq_asserted = new_assert;
+	} else if (!new_assert && d->irq_asserted) {
+		d->irq_asserted = 0;
+		INTERRUPT_DEASSERT(d->irq);
+	}
 }
 
 
@@ -190,6 +236,7 @@ static void dev_asc_fifo_flush(struct asc_data *d)
  */
 static void dev_asc_reset(struct asc_data *d)
 {
+	d->sel_timeout_at = 0;
 	d->cur_state = STATE_DISCONNECTED;
 	d->atn = 0;
 
@@ -217,8 +264,13 @@ static int dev_asc_fifo_read(struct asc_data *d)
 {
 	int res = d->fifo[d->fifo_out];
 
-	if (d->fifo_in == d->fifo_out)
-		fatal("dev_asc: WARNING! FIFO overrun!\n");
+	/*  Reading an empty FIFO returns a byte, but leaves it empty (the
+	    DEC 3000 console's self-test does this, and then checks the FIFO
+	    flags).  */
+	if (d->n_bytes_in_fifo <= 0) {
+		debug("[ dev_asc: read from an empty FIFO ]\n");
+		return res;
+	}
 
 	d->fifo_out = (d->fifo_out + 1) % ASC_FIFO_LEN;
 	d->n_bytes_in_fifo --;
@@ -234,12 +286,16 @@ static int dev_asc_fifo_read(struct asc_data *d)
  */
 static void dev_asc_fifo_write(struct asc_data *d, unsigned char data)
 {
+	/*  A write to a full FIFO is lost, and is a gross error.  */
+	if (d->n_bytes_in_fifo >= ASC_FIFO_LEN) {
+		debug("[ dev_asc: write to a full FIFO ]\n");
+		d->reg_ro[NCR_STAT] |= NCRSTAT_GE;
+		return;
+	}
+
 	d->fifo[d->fifo_in] = data;
 	d->fifo_in = (d->fifo_in + 1) % ASC_FIFO_LEN;
 	d->n_bytes_in_fifo ++;
-
-	if (d->fifo_in == d->fifo_out)
-		fatal("dev_asc: WARNING! FIFO overrun on write!\n");
 }
 
 
@@ -258,6 +314,7 @@ static void dev_asc_newxfer(struct asc_data *d)
 	}
 
 	d->xferp = scsi_transfer_alloc();
+	d->incoming_data_addr = 0;
 #if 0
 	d->xferp->get_data_out = dev_asc_get_data_out;
 	d->xferp->gdo_extra = (void *) d;
@@ -284,29 +341,23 @@ static int dev_asc_transfer(struct cpu *cpu, struct asc_data *d, int dmaflag)
 	if (d->cur_phase == PHASE_DATA_IN) {
 		/*  Data coming into the controller from external device:  */
 		if (!dmaflag) {
-			if (d->xferp->data_in == NULL) {
-				fatal("no incoming data?\n");
+			/*
+			 *  Programmed I/O: each Transfer Information moves
+			 *  one byte into the FIFO (the DEC 3000 console reads
+			 *  INQUIRY data this way). incoming_data_addr is how
+			 *  far into data_in this transfer has got; after the
+			 *  last byte, the target goes to the status phase.
+			 */
+			if (d->xferp->data_in == NULL ||
+			    d->incoming_data_addr >= (int)d->xferp->data_in_len) {
+				fatal("[ asc: no incoming data? ]\n");
 				res = 0;
 			} else {
-/*  TODO  */
-fatal("TODO..............\n");
-				len = d->reg_wo[NCR_TCL] +
-				    d->reg_wo[NCR_TCM] * 256;
-
-				len--;
-				ch = d->incoming_data[d->incoming_data_addr];
-				debug(" %02x", ch);
-
-				d->incoming_data_addr ++;
+				ch = d->xferp->data_in[d->incoming_data_addr++];
 				dev_asc_fifo_write(d, ch);
-
-				if (len == 0) {
-					free(d->incoming_data);
-					d->incoming_data = NULL;
-				}
-
-				d->reg_ro[NCR_TCL] = len & 255;
-				d->reg_ro[NCR_TCM] = (len >> 8) & 255;
+				if (d->incoming_data_addr <
+				    (int)d->xferp->data_in_len)
+					all_done = 0;
 			}
 		} else {
 			/*  Copy from the incoming data into dma memory:  */
@@ -920,8 +971,8 @@ DEVICE_ACCESS(asc)
 		if (!quiet_mode)
 			debug(" ");
 
-		/*  TODO:  Perhaps turn off others here too?  */
-		d->reg_ro[NCR_INTR] &= ~NCRINTR_SBR;
+		/*  (The interrupt register's bits, including a SCSI bus
+		    reset's, are cleared by reading it, not by commands.)  */
 
 		if (idata & NCRCMD_DMA) {
 			if (!quiet_mode)
@@ -1113,9 +1164,16 @@ DEVICE_ACCESS(asc)
 				 *  This is good enough to fool Ultrix, NetBSD,
 				 *  OpenBSD and Linux to continue detection of
 				 *  other IDs, without giving any warnings.
+				 *  (Optionally, the disconnect interrupt
+				 *  comes after the selection timeout.)
 				 */
-				d->reg_ro[NCR_STAT] |= NCRSTAT_INT;
-				d->reg_ro[NCR_INTR] |= NCRINTR_DIS;
+				if (d->real_sel_timeout)
+					d->sel_timeout_at = host_usec() +
+					    sel_timeout_usec(d);
+				else {
+					d->reg_ro[NCR_STAT] |= NCRSTAT_INT;
+					d->reg_ro[NCR_INTR] |= NCRINTR_DIS;
+				}
 				d->reg_ro[NCR_STEP] &= ~7;
 				d->reg_ro[NCR_STEP] |= 0;
 				dev_asc_fifo_flush(d);
@@ -1306,5 +1364,20 @@ void *dev_asc_init(struct machine *machine, struct memory *mem,
 void dev_asc_set_target_offset(void *asc, int offset)
 {
 	((struct asc_data *) asc)->target_offset = offset;
+}
+
+
+/*
+ *  dev_asc_set_real_sel_timeout():
+ *
+ *  Selections of absent targets time out after the programmed selection
+ *  timeout, for a chip clocked at clock_mhz, instead of at once.
+ */
+void dev_asc_set_real_sel_timeout(void *asc, int clock_mhz)
+{
+	struct asc_data *d = (struct asc_data *) asc;
+
+	d->real_sel_timeout = 1;
+	d->clock_mhz = clock_mhz;
 }
 

@@ -402,6 +402,9 @@ struct alpha_cpu {
 
 	/*  Set by a memory access to nothing (-> machine check):  */
 	int			mchk_pending;
+	int			irq_now;	/*  take interrupts after this
+						    instruction (a device just
+						    raised an error interrupt)  */
 
 	/*  OSF1 PALcode specific:  */
 	uint64_t		ps;		/*  Processor Status  */
