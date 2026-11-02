@@ -1284,26 +1284,48 @@ void dev_dec3000_set_rom(struct dec3000_data *d, int sys,
  */
 #define	ROM_HEADER_SIZE		0x40
 
+/*  ra's serial ROM version encoding (see below), as ASCII "0X0Y".  */
+static uint64_t srom_version(int major, int minor)
+{
+	int x = '0' + major + 4, y = '0' + minor + (major == 1? 3 : 0);
+
+	return 0x30 | (x << 8) | (0x30 << 16) | ((uint64_t)y << 24);
+}
+
 uint64_t dev_dec3000_srom(struct dec3000_data *d, struct cpu *cpu)
 {
 	uint64_t banks = 0;
 	int i;
 
 	/*
-	 *  The serial ROM's results, in registers (the console saves them
-	 *  in its PALcode's data, and reads them from there):
+	 *  The serial ROM's results, in registers. Its PALcode reset entry
+	 *  saves them at 0x5a000 (t10 at +0x00, at +0x08, a4 +0x10, a5
+	 *  +0x18, t6 +0x20, t7 +0x28, s1 +0x30, s2 +0x38, s0 +0x48 if it
+	 *  is 0x70000, ra +0x50, a3 +0x58, a2 +0x60, a1 +0x68; +0x40, +0x70
+	 *  and +0x78 come from BIU_STAT, PAL_TEMP18 and DC_STAT), and the
+	 *  console copies some of them into its data (found from the V3.3
+	 *  console code):
 	 *
 	 *	at	memory banks: byte n for bank n, size code in bits
 	 *		<7:6> (1 = 8 MB, 2 = 32 MB, 3 = 128 MB, 0 = none)
 	 *	a4	memory size in MB
-	 *
-	 *  (Found from the console code; the other registers, ra, t10,
-	 *  a1..a3, s1, s2, t6, t7, are not known yet and are left 0.)
+	 *	ra	the serial ROM version, "sVM.m" on the CPU line: ASCII
+	 *		digits in bytes 1 and 3, encoded (on the 400) as
+	 *		M + 4 and, for M = 1 only, m + 3. The console falls
+	 *		back to "0?0?" (shown as "sV;.?") if byte 1 is not a
+	 *		digit. The real 400's value isn't known; V2.0 is used.
+	 *	t10	memory error information: its lowest set bit number
+	 *		(mod 8) shows up in the MEM status when a memory test
+	 *		fails (probably banks the serial ROM found bad); 0.
+	 *	a1..a3	copied into the console's data next to a4 and ra;
+	 *		no effect seen. t6, t7, s1, s2, a5: no effect seen.
+	 *		All 0.
 	 */
 	for (i = 0; i < d->n_banks && i < 8; i++)
 		banks |= (uint64_t)0x80 << (8 * i);
 	cpu->cd.alpha.r[ALPHA_AT] = banks;
 	cpu->cd.alpha.r[ALPHA_A4] = d->n_banks * 32;
+	cpu->cd.alpha.r[ALPHA_RA] = srom_version(2, 0);
 
 	/*  (Called after each ROM file is loaded.)  */
 	if (d->have_sysrom)

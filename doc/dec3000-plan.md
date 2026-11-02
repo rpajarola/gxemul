@@ -209,11 +209,26 @@ Everything below is in `media/` (not in git).
   contents *without* their 0x40-byte header to 0x4000 (system) and
   0x44000 (I/O) and starts at 0x4000 in PALmode. Takes an updater file or
   extracted images as the file to load.
-  - Serial ROM hand-off (found from the console code): `at` = memory
-    banks, one byte per bank with the size code in bits <7:6> (1 = 8 MB,
-    2 = 32 MB, 3 = 128 MB); `a4` = memory size in MB. The other registers
-    (ra, t10, a1..a3, s1, s2, t6, t7) are still unknown and passed as 0;
-    the SROM version shows as "sV;.?".
+  - Serial ROM hand-off (found from the console code; the PALcode reset
+    entry at 0x5a0b4 saves the registers at 0x5a000):
+    - `at` = memory banks, one byte per bank with the size code in bits
+      <7:6> (1 = 8 MB, 2 = 32 MB, 3 = 128 MB); `a4` = memory size in MB.
+    - `ra` = serial ROM version: ASCII digits in bytes 1 and 3, shown as
+      "sVM.m" with M = byte1 - 4 and, only when M is 1, m = byte3 - 3
+      (on the 400; other models have other offsets). Anything that isn't
+      a digit gives "sV;.?". The real value is unknown; V2.0 is passed.
+    - `t10` = memory error information: the number of its lowest set bit
+      (mod 8) becomes the middle digit of the MEM status code when a
+      memory test fails. 0 for good memory.
+    - `a1`..`a3` are copied into the console's data (with a4 and ra);
+      `t6`, `t7`, `s1`, `s2`, `a5` are saved too. Markers in them changed
+      nothing visible in the power-up tests or `show config`; passed as 0.
+    - Not the serial ROM's: +0x40, +0x70, +0x78 of the save area come from
+      BIU_STAT<9>, PAL_TEMP18 and DC_STAT<2:0>.
+    - The NVR test's "calculated" frequency is the console's own
+      measurement against the RTC (expected: 133 MHz for system type 4,
+      code 1), not a hand-off value: it depends on the emulator's speed
+      (12-21 MHz, varying with host load).
   - A machine config file (`gxemul machine.json`, type "dec3000", model
     "400", "rom" = an updater or concatenated ROM images, "nvram" = a
     file) keeps the console's NVRAM between runs.
@@ -257,8 +272,7 @@ Everything below is in `media/` (not in git).
       layout. The console's tests need CSR1<0> to read back and 8-byte
       frames in loopback.
   - TODO: SCSI boot from disk/CD, FEPROM programming, ISDN DMA, the LANCE
-    reset and DMA enable bits in SSR, the SROM version and other hand-off
-    registers.
+    reset and DMA enable bits in SSR, the real serial ROM version.
 
 ## Things to get from the real machines (when they run)
 
