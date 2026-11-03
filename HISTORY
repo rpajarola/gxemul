@@ -5602,3 +5602,8 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.14  ==============
 
+20261103	The Windows build no longer needs libwinpthread-1.dll (1.0.14
+		had no Windows package because of it).
+
+==============  RELEASE 1.0.15  ==============
+
