@@ -5599,3 +5599,6 @@ Changelog for GXemul:
 		framebuffer, and a serial console line of its own (a telnet
 		port) when the keyboard has the main console. MC146818: the
 		DEC 3000 TOY starts in 24-hour mode, with year 70.
+
+==============  RELEASE 1.0.14  ==============
+
