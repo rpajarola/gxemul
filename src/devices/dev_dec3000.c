@@ -572,6 +572,9 @@ static int ioctl_access(struct dec3000_data *d, struct cpu *cpu,
  *  TURBOchannel dual SCSI ASIC (TCDS, slot 6, offsets below 0x2000000)
  */
 
+/*  The 53C94s' command latency (see dev_asc_set_irq_latency()):  */
+#define	ASC_IRQ_LATENCY		100000		/*  instructions  */
+
 #define	TCDS_CIR_DMA_EN(ch)	(0x100 << (ch))
 #define	TCDS_CIR_GPI		0xf0
 /*
@@ -786,7 +789,9 @@ static void tcds_prefetch(struct dec3000_data *d, int ch)
 		d->tcds_buf[ch][i] = buf[4*i] | (buf[4*i+1] << 8) |
 		    (buf[4*i+2] << 16) | ((uint32_t)buf[4*i+3] << 24);
 
-	d->tcds_cir |= TCDS_CIR_PREFETCH(ch);
+	/*  (Only if enabled, as for every CIR bit: OSF/1 doesn't.)  */
+	if (d->tcds_imer & (0x10 << ch))
+		d->tcds_cir |= TCDS_CIR_PREFETCH(ch);
 	update_tcds_irq(d);
 }
 
@@ -1290,6 +1295,9 @@ struct dec3000_data *dev_dec3000_init(struct machine *machine,
 		    NULL, DEV_ASC_DEC, tcds_dma, c);
 		dev_asc_set_target_offset(d->asc[i], 8 * i);
 		dev_asc_set_real_sel_timeout(d->asc[i], 25);
+		/*  OSF/1's CAM layer reuses a command's CCB too early if the
+		    command completes (almost) at once.  */
+		dev_asc_set_irq_latency(d->asc[i], ASC_IRQ_LATENCY);
 	}
 
 

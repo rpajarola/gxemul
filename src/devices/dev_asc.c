@@ -115,6 +115,14 @@ struct asc_data {
 	 *  noted that it started the selection.
 	 */
 	int		real_sel_timeout;
+	/*
+	 *  Optionally, the interrupt for a command comes at the earliest
+	 *  irq_latency instructions after the command was written (cmd_at),
+	 *  as a real command takes time; the DEC 3000's OSF/1 CAM layer
+	 *  breaks when commands complete almost at once.
+	 */
+	int64_t		irq_latency;
+	int64_t		cmd_at;
 	int64_t		sel_timeout_at;
 	int		clock_mhz;
 
@@ -205,6 +213,10 @@ DEVICE_TICK(asc)
 	/*  The interrupt pin follows NCRSTAT_INT (which a chip reset also
 	    clears). irq_asserted is updated first: what the pin is
 	    connected to may read the interrupt register at once.  */
+	if (new_assert && !d->irq_asserted && d->irq_latency > 0 &&
+	    cpu->ninstrs - d->cmd_at < d->irq_latency)
+		return;
+
 	if (new_assert && !d->irq_asserted) {
 		d->irq_asserted = 1;
 		INTERRUPT_ASSERT(d->irq);
@@ -968,6 +980,7 @@ DEVICE_ACCESS(asc)
 	d->reg_ro[12] = d->reg_wo[12];
 
 	if (regnr == NCR_CMD && writeflag == MEM_WRITE) {
+		d->cmd_at = cpu->ninstrs;
 		if (!quiet_mode)
 			debug(" ");
 
@@ -1364,6 +1377,18 @@ void *dev_asc_init(struct machine *machine, struct memory *mem,
 void dev_asc_set_target_offset(void *asc, int offset)
 {
 	((struct asc_data *) asc)->target_offset = offset;
+}
+
+
+/*
+ *  dev_asc_set_irq_latency():
+ *
+ *  Interrupts for a command come at the earliest after this many
+ *  instructions (see irq_latency).
+ */
+void dev_asc_set_irq_latency(void *asc, int64_t ninstrs)
+{
+	((struct asc_data *) asc)->irq_latency = ninstrs;
 }
 
 

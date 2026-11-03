@@ -336,8 +336,10 @@ DEVICE_TICK(scc)
 
 	for (i=0; i<N_SCC_PORTS; i++) {
 		d->scc_register_r[i * N_SCC_REGS + SCC_RR0] |= SCC_RR0_TX_EMPTY;
-		d->scc_register_r[i * N_SCC_REGS + SCC_RR1] = 0;
-		    /*  No receive errors  */
+		/*  No receive errors; All Sent (bit 0), as characters
+		    are sent at once (OSF/1 waits for it when it closes a
+		    tty).  */
+		d->scc_register_r[i * N_SCC_REGS + SCC_RR1] = SCC_RR1_ALL_SENT;
 
 		d->scc_register_r[i * N_SCC_REGS + SCC_RR0] &=
 		    ~SCC_RR0_RX_AVAIL;

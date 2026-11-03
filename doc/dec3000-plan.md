@@ -283,14 +283,34 @@ Everything below is in `media/` (not in git).
       (`dev_le_dma_init()`, shared with the 3MIN), the same gap16/gap2
       layout. The console's tests need CSR1<0> to read back and 8-byte
       frames in loopback.
-  - OSF/1 V1.2 boots from the CD (`boot dka400`) to the installation
-    menu: the kernel finds scc0, asc0/asc1 (rz0 disk, rz4 CD), ln0, and
-    says "DEC3000 - M400 system". Its warnings: the TOY clock in 12-hour
-    mode and a lost battery backup (RTC setup), swap device not found
-    (expected before installing).
-  - TODO: install to disk and boot from it, the RTC warnings, FEPROM
-    programming, ISDN DMA, the LANCE reset and DMA enable bits in SSR, the
-    real serial ROM version.
+  - **OSF/1 V1.2 installs and runs multi-user** (BASIC installation from
+    the CD, both phases, kernel build, `login:`). What it needs:
+    - Drives the installer knows: the disk must identify as a DEC disk in
+      /etc/disktab with a matching size, e.g. `"vendor": "DEC", "product":
+      "RZ26"` and an image of exactly 2050860 sectors (57 x 14 x 2570,
+      `truncate -s 1050040320 rz26.img`); the CD as `"vendor": "DEC",
+      "product": "RRD42"` (finder(8) leaves RRD drives out of the system
+      disk table; as an unknown "RZxx" the kernel treated it as a disk
+      and issued a 32 MB read at open). Unknown disks are not listed.
+    - 53C94 interrupts come at the earliest 100000 instructions after the
+      command (`dev_asc_set_irq_latency()`): with near-instant completion,
+      OSF/1's CAM layer (ccmn_ccbwait() returns as soon as the CCB status
+      changes) released and reused CCBs that were still on the callback
+      queue, and xpt_callback_thread() looped forever on a stale one.
+    - The TCDS DMA prefetch bit CIR<20+ch> is only set when IMER enables
+      it (OSF/1 doesn't; it printed "Unexpected prefetch interrupt").
+    - SCC RR1 says All Sent (characters go out at once).
+    - Recipe: `boot dka400`, 1 (BASIC), select the RZ26, `y`; phase 1
+      halts; `boot -fl a dka0` runs phase 2 (subset loading takes a
+      while, its output appears when each subset is done), then answers
+      for configuration (name, root password, time zone, date with a
+      two-digit year, e.g. 96...); it builds a kernel and reboots
+      (single-user: Ctrl-D for multi-user).
+    - Warnings at boot: the TOY clock in 12-hour mode and a lost battery
+      backup (RTC setup), to be fixed.
+  - TODO: the RTC warnings, boot to multi-user without Ctrl-D (probably the
+    boot flags), FEPROM programming, ISDN DMA, the LANCE reset and DMA
+    enable bits in SSR, the real serial ROM version, networking.
 
 ## Things to get from the real machines (when they run)
 
