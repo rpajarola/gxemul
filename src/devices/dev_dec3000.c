@@ -73,6 +73,8 @@
 
 /*  TURBOchannel interrupt lines (IOSLOT/IR bit numbers):  */
 #define	TC_LINE_SCSI		6
+#define	TC_FIRST_OPTION_SLOT	3	/*  TC0..TC2 are slots 3..5 (400)  */
+#define	N_OPTION_SLOTS		3
 #define	TC_LINE_IOCTL		7
 
 /*  IR error bits:  */
@@ -156,6 +158,10 @@ struct dec3000_data {
 	unsigned char		esar[32];
 	void			*scc[2];
 	struct cpu		*cpu;		/*  for DMA  */
+
+	/*  TURBOchannel option cards (TC0..TC2), at TC address 0 of their
+	    own address spaces (NULL for an empty slot):  */
+	struct memory		*slot_mem[N_OPTION_SLOTS];
 
 	/*  TCDS:  */
 	struct memory		*scsi_mem[2];
@@ -1035,6 +1041,52 @@ static int tc_csr_access(struct dec3000_data *d, uint32_t off,
  */
 
 /*
+ *  An access to an option card: a longword, or (sparse writes) the bytes
+ *  that the byte mask enables. Real cards decode their slot coarsely and
+ *  answer everywhere in it, so where gxemul's model of the card has
+ *  nothing, reads give 0 and writes are ignored.
+ */
+static int option_access(struct memory *mem, struct cpu *cpu, uint32_t off,
+	uint32_t *val, int bytemask, int writeflag)
+{
+	unsigned char buf[4];
+	int i;
+
+	off &= ~3;
+	if (!writeflag) {
+		memset(buf, 0, sizeof(buf));
+		if (!sub_access(mem, cpu, off, buf, 4, MEM_READ))
+			memset(buf, 0, sizeof(buf));
+		*val = buf[0] | (buf[1] << 8) | (buf[2] << 16) |
+		    ((uint32_t)buf[3] << 24);
+		return 1;
+	}
+
+	for (i = 0; i < 4; i++)
+		buf[i] = *val >> (8 * i);
+	if ((bytemask & 0xf) == 0xf) {
+		sub_access(mem, cpu, off, buf, 4, MEM_WRITE);
+		return 1;
+	}
+	for (i = 0; i < 4; i++)
+		if (bytemask & (1 << i))
+			sub_access(mem, cpu, off + i, buf + i, 1, MEM_WRITE);
+	return 1;
+}
+
+static void option_irq_assert(struct interrupt *interrupt)
+{
+	struct dec3000_data *d = (struct dec3000_data *) interrupt->extra;
+	set_tc_line(d, interrupt->line, 1);
+}
+static void option_irq_deassert(struct interrupt *interrupt)
+{
+	struct dec3000_data *d = (struct dec3000_data *) interrupt->extra;
+	set_tc_line(d, interrupt->line, 0);
+}
+
+
+/*
  *  A longword access on the TURBOchannel. bytemask: bit n set = byte n is
  *  written. Returns 0 if nothing responds (timeout).
  */
@@ -1052,8 +1104,13 @@ static int tc_access(struct dec3000_data *d, struct cpu *cpu, int slot,
 		return ioctl_access(d, cpu, off, val, bytemask, writeflag);
 	}
 
-	/*  Option slots 3..5 (TC0..TC2), and slots 0..2 (500 models only):
-	    nothing there.  */
+	/*  Option slots 3..5 (TC0..TC2); slots 0..2 are on 500 models only.  */
+	if (slot >= TC_FIRST_OPTION_SLOT &&
+	    slot < TC_FIRST_OPTION_SLOT + N_OPTION_SLOTS &&
+	    d->slot_mem[slot - TC_FIRST_OPTION_SLOT] != NULL)
+		return option_access(d->slot_mem[slot - TC_FIRST_OPTION_SLOT],
+		    cpu, off, val, bytemask, writeflag);
+
 	return 0;
 }
 
@@ -1264,6 +1321,7 @@ struct dec3000_data *dev_dec3000_init(struct machine *machine,
 	d->scc[1] = dev_scc_init(machine, d->ioctl_mem, IOCTL_SCC1, tmp,
 	    machine->display_md.in_use, 1, 1);
 	dev_scc_kbd_present(d->scc[1]);
+	dev_scc_serial_console(d->scc[1], machine);
 	machine_add_tickfunction(machine, dev_dec3000_tick, d, 14);
 
 	snprintf(tmp, sizeof(tmp), "%s.dec3000.8", machine->path);
@@ -1273,6 +1331,37 @@ struct dec3000_data *dev_dec3000_init(struct machine *machine,
 	snprintf(tmp, sizeof(tmp), "%s.1", cpu_irq);
 	dev_mc146818_init(machine, d->ioctl_mem, IOCTL_RTC, tmp,
 	    MC146818_DEC, 1);
+
+	/*
+	 *  Option cards: a graphics card in the first slots when there is a
+	 *  display, and a card in each slot that has an option ROM image
+	 *  (whose header says which card it is). The default graphics card
+	 *  is the HX (PMAGB-BA): the console firmware has a driver for it,
+	 *  and OSF/1 on Alpha has none for the older PMAG-BA (CFB).
+	 */
+	for (i = 0; i < N_OPTION_SLOTS; i++) {
+		struct interrupt templ;
+		char name[300];
+		int phys = TC_FIRST_OPTION_SLOT + i;
+
+		if (!(machine->display_md.in_use && i < machine->n_gfx_cards) &&
+		    machine->tc_rom_filename[i] == NULL)
+			continue;
+
+		snprintf(name, sizeof(name), "%s.dec3000.tc%i",
+		    machine->path, i);
+		memset(&templ, 0, sizeof(templ));
+		templ.line = phys;
+		templ.name = name;
+		templ.extra = d;
+		templ.interrupt_assert = option_irq_assert;
+		templ.interrupt_deassert = option_irq_deassert;
+		interrupt_handler_register(&templ);
+
+		d->slot_mem[i] = memory_new(0);
+		dev_turbochannel_init(machine, d->slot_mem[i], i, 0,
+		    0x7ffffff, "PMAGB-BA", name);
+	}
 
 	/*  The dual SCSI ASIC's 53C94s:  */
 	for (i = 0; i < 2; i++) {

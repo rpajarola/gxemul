@@ -446,6 +446,13 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 			d->add_to_rx_queue(d->add_data, ch, port);
 	}
 
+	/*  The serial console line's own input (with a framebuffer):  */
+	while (d->serial_handle >= 0 &&
+	    d->space_available_in_queue(d->add_data, DCPRINTER_PORT) &&
+	    console_charavail(d->serial_handle))
+		d->add_to_rx_queue(d->add_data,
+		    console_readchar(d->serial_handle), DCPRINTER_PORT);
+
 	/*
 	 *  An escape sequence that nothing follows for a while was typed: a
 	 *  lone ESC is Esc (Ctrl+[), and Esc and O in vi are Ctrl+[ and O:
@@ -580,8 +587,14 @@ void lk201_tx_data(struct lk201_data *d, int port, int idata)
 		}
 		debug(" ]\n");
 		break;
-	case DCCOMM_PORT:		/*  port 2  */
 	case DCPRINTER_PORT:		/*  port 3  */
+		/*  (With a framebuffer, maybe the serial console's own.)  */
+		if (d->serial_handle >= 0) {
+			console_putchar(d->serial_handle, idata);
+			break;
+		}
+		/*  FALLTHROUGH  */
+	case DCCOMM_PORT:		/*  port 2  */
 		/*  Simply print the character to stdout:  */
 		console_putchar(d->console_handle, idata);
 	}
@@ -608,6 +621,7 @@ void lk201_init(struct lk201_data *d, int use_fb,
 	d->mouse_mode = 0;
 	d->mouse_revision = 0;	/*  0..15  */
 	d->console_handle = console_handle;
+	d->serial_handle = -1;
 
 	/*
 	 *  Power up self-test result, as per

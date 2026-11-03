@@ -326,8 +326,38 @@ Everything below is in `media/` (not in git).
     - Console input: SCC receive DMA delivers typed characters one per
       tick. OSF/1 switches receive buffers at the half page interrupt and
       lost characters of pasted lines that came in at once.
+  - **Framebuffer: HX (PMAGB-BA) in the TC option slots.** With the
+    display on (`-X`, or `"display": {"enabled": true}`), slot TC0 (and
+    TC1/TC2 with more cards) holds an HX, gxemul's `dev_sfb`. The console
+    firmware has its own HX driver (no option ROM code needed; with
+    gxemul's fake ROM the self-test shows `TC0 ?? 300`, harmless) and
+    uses the screen and LK401 keyboard as its console; OSF/1 attaches
+    `fb0 at tc0 slot 0` (1280x1024) and the console stays there. Typed
+    input goes to the keyboard through the main console (telnet port
+    4001 with `-x`/telnet on), the serial console line gets its own
+    port ("SCC serial console").
+    - Not the PMAG-BA (CFB): OSF/1 for Alpha has no driver for it
+      (`fb_data.c`'s entry is `#ifndef __alpha`), it took it for an
+      HX-like card and wrote to the SFB ASIC at 0x100000. Its MIPS option
+      ROM code crashes the console's interpreter as well.
+    - A slot card answers its whole slot (reads 0, writes ignored where
+      gxemul's model has nothing), as real cards decode coarsely.
+    - A kernel built at installation without the display has no fb
+      driver: boot `genvmunix` (`boot -flags i dka0`, then `genvmunix`),
+      and rebuild the kernel with the HX present (`doconfig`, keep the
+      name ALPHA, replace it, `cp /sys/ALPHA/vmunix /vmunix`).
+    - X: the BASIC installation has none. From the CD (`mount -r -d
+      /dev/rz4c /mnt`, the CD's file system is marked dirty): `setld -l
+      /mnt/ALPHA/BASE OSFX11120 OSFSER120 OSFMITFONT120 OSFFONT120
+      OSFFONT15120 OSFDECW120` and `setld -l /mnt/ALPHA/UPDATE
+      OSFX11121`. After that, multi-user boots to the xdm login, and a
+      DECwindows session (session manager, mwm) runs. The mouse is only
+      tested as far as the X cursor.
+    - Headless testing: `SDL_VIDEODRIVER=dummy` and the control socket's
+      `screendump`.
   - TODO: FEPROM programming, ISDN DMA, the LANCE reset and DMA
-    enable bits in SSR, the real serial ROM version, networking.
+    enable bits in SSR, the real serial ROM version, the HX option ROM's self-test
+    (TC0 ?? 300 with the fake ROM), mouse input under X.
 
 ## Things to get from the real machines (when they run)
 

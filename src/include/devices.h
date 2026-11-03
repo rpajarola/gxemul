@@ -402,6 +402,7 @@ int dev_scc_dma_rx(void *e);
 void *dev_scc_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, char* irq_path, int use_fb, int scc_nr, int addrmul);
 void dev_scc_kbd_present(void *e);
+void dev_scc_serial_console(void *e, struct machine *machine);
 
 /*  dev_sfb.c:  */
 #define	DEV_SFB_LENGTH		0x400000
@@ -536,6 +537,8 @@ struct lk201_data {
         int                     use_fb;
 	int			kbd_present;	/*  answers commands without fb  */
 	int			console_handle;
+	int			serial_handle;	/*  with fb: the serial console
+						    line's own, or -1  */
 
         int                     (*space_available_in_queue)(void *,int);
         void                    (*add_to_rx_queue)(void *,int,int);

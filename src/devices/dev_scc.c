@@ -489,6 +489,25 @@ void dev_scc_kbd_present(void *e)
 }
 
 
+/*
+ *  dev_scc_serial_console():
+ *
+ *  With a framebuffer, the keyboard gets what is typed into the main
+ *  console. This gives the serial console line (channel B of SCC 1, the
+ *  printer port) a console of its own (e.g. a telnet port), for when the
+ *  firmware keeps its console on the serial line although a graphics card
+ *  is present (the DEC 3000's, e.g. with "set console serial").
+ */
+void dev_scc_serial_console(void *e, struct machine *machine)
+{
+	struct scc_data *d = (struct scc_data *) e;
+
+	if (d->use_fb)
+		d->lk201.serial_handle = console_start_slave(machine,
+		    "SCC serial console", 1);
+}
+
+
 DEVICE_ACCESS(scc)
 {
 	struct scc_data *d = (struct scc_data *) extra;
