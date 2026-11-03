@@ -1,0 +1,60 @@
+Alpha instruction tests
+=======================
+
+Self-checking tests of the Alpha user-mode instruction set, as the 21064
+(EV4) implements it. Each test program executes many instructions with
+operands from a table and prints the results in hex; the output is compared
+line by line with reference output in expected/.
+
+Files:
+
+  gen_tests.py      generates the test programs (NAME.S) and a description
+                    of every result line (NAME.list)
+  fpmodel.py        exact reference model for the floating point tests
+  rt_gxemul.S       runtime for gxemul's "testalpha" machine
+  rt_linux.S        runtime for Linux user mode (to get reference output
+                    from QEMU)
+  common.S          prints the results
+  build_tests.sh    assembles and links everything
+  run_tests.py      runs the tests in gxemul and compares
+  make_expected.py  makes expected/ from QEMU output and fpmodel.py
+  expected/         reference output
+
+Running the tests needs an Alpha cross assembler and linker (GNU binutils
+for alpha-linux-gnu; on Debian/Ubuntu the binutils-alpha-linux-gnu
+package):
+
+  ALPHA_AS=alpha-linux-gnu-as ALPHA_LD=alpha-linux-gnu-ld \
+      test/alpha/build_tests.sh /tmp/alphatests
+  test/alpha/run_tests.py /tmp/alphatests
+
+Remaking the reference output also needs qemu-alpha (qemu-user):
+
+  for t in $(cat /tmp/alphatests/tests.txt); do
+      qemu-alpha -cpu ev4-alpha-cpu /tmp/alphatests/$t.linux \
+          > /tmp/alphatests/$t.qemu
+  done
+  test/alpha/make_expected.py /tmp/alphatests test/alpha/expected
+
+Where the references come from:
+
+  o  Integer and IEEE tests: QEMU's EV4 model. fpmodel.py checks the IEEE
+     results too, and its value is used where they disagree (the only
+     disagreement is the sign of an underflowed result without /U: QEMU
+     keeps the sign, the 21064 gives a true zero, +0; to be confirmed on
+     real hardware).
+  o  VAX tests: fpmodel.py only. QEMU's VAX floating point is wrong, and
+     it has no D_floating (fp_vax crashes in QEMU at the first CVTGD,
+     which is expected).
+
+Tests named *_inf use IEEE rounding towards plus or minus infinity, which
+the 21064 leaves to software (FEN exception); they run on a 21164.
+
+Only cases that cannot trap are tested in the generated tests. Trapping
+behaviour (overflow, invalid operands, /SUI inexact, unaligned accesses,
+reserved opcodes, FEN) and the 21064 privileged architecture (PALmode,
+IPRs, translation buffers, interrupts, machine checks) are tested by
+pal_ev4.S, which is its own small PALcode and runs on the "testalphapal"
+machine. Its result lines are described in pal_ev4.list; the expected
+values were worked out by hand from the 21064 Hardware Reference Manual.
+build_tests.sh runs it through cpp (set CPP to use another one).

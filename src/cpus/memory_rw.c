@@ -373,6 +373,13 @@ not just the device in question.
 					    EXCEPTION_IBE : EXCEPTION_DBE,
 					    0, vaddr, 0, 0, 0, 0);
 #endif
+#ifdef MEM_ALPHA
+					if (cpu->cd.alpha.ev4_palcode) {
+						ev4_machine_check(cpu,
+						    orig_paddr, writeflag);
+						goto do_return_ok;
+					}
+#endif
 #ifdef MEM_M88K
 					/*  TODO: This is enough for
 					    OpenBSD/mvme88k's badaddr()
@@ -435,6 +442,15 @@ not just the device in question.
 		} else
 #endif /* MIPS */
 		{
+#ifdef MEM_ALPHA
+			/*  21064 with real PALcode: a machine check.  */
+			if (cpu->cd.alpha.ev4_palcode && !no_exceptions) {
+				ev4_machine_check(cpu, paddr, writeflag);
+				if (writeflag == MEM_READ)
+					memset(data, 0xff, len);
+				goto do_return_ok;
+			}
+#endif
 			if (paddr >= mem->physical_max && !no_exceptions)
 				if (memory_warn_about_unimplemented_addr
 				    (cpu, mem, writeflag, paddr, len))

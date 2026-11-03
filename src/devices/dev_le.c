@@ -124,8 +124,11 @@ struct le_data {
 
 	unsigned char	*sram;
 
-	/*  On a 3MIN, the IOASIC whose DMA the LANCE uses instead of SRAM:  */
-	struct dec_ioasic_data *ioasic;
+	/*  On a 3MIN or DEC 3000, the DMA controller (IOASIC, IOCTL) whose
+	    pointer gives the LANCE's memory, instead of SRAM:  */
+	void		*dma;
+	struct cpu	*dma_cpu;
+	uint64_t	(*dma_base)(void *);
 
 	/*  Initialization block:  */
 	uint32_t	init_block_addr;
@@ -156,16 +159,16 @@ struct le_data {
 /*
  *  le_ioasic_dma():
  *
- *  Reads or writes LANCE memory on a 3MIN, which is in main memory, at
- *  the IOASIC's LANCE_DMAPTR.  gap16 selects the mapping of buffer data,
+ *  Reads or writes LANCE memory on a 3MIN or DEC 3000, which is in main
+ *  memory, at the IOASIC's (IOCTL's) LANCE_DMAPTR.  gap16 selects the mapping of buffer data,
  *  with addr the start of the buffer; otherwise, it's the mapping of
  *  single words (see the top of this file).
  */
 static void le_ioasic_dma(struct le_data *d, uint32_t addr,
 	unsigned char *buf, size_t len, int writeflag, int gap16)
 {
-	struct cpu *cpu = d->ioasic->cpu;
-	uint64_t base = dec_ioasic_dma_ptr_to_addr(d->ioasic->lance_dmaptr);
+	struct cpu *cpu = d->dma_cpu;
+	uint64_t base = d->dma_base(d->dma);
 
 	while (len > 0) {
 		uint64_t paddr;
@@ -200,7 +203,7 @@ static void le_read_buf(struct le_data *d, uint32_t addr,
 {
 	size_t i;
 
-	if (d->ioasic != NULL) {
+	if (d->dma != NULL) {
 		le_ioasic_dma(d, addr, buf, len, 0, 1);
 		return;
 	}
@@ -213,7 +216,7 @@ static void le_write_buf(struct le_data *d, uint32_t addr,
 {
 	size_t i;
 
-	if (d->ioasic != NULL) {
+	if (d->dma != NULL) {
 		le_ioasic_dma(d, addr, (unsigned char *) buf, len, 1, 1);
 		return;
 	}
@@ -229,7 +232,7 @@ static void le_write_buf(struct le_data *d, uint32_t addr,
  */
 static uint64_t le_read_16bit(struct le_data *d, int addr)
 {
-	if (d->ioasic != NULL) {
+	if (d->dma != NULL) {
 		unsigned char w[2];
 		le_ioasic_dma(d, addr, w, 2, 0, 0);
 		return w[0] + (w[1] << 8);
@@ -251,7 +254,7 @@ static uint64_t le_read_16bit(struct le_data *d, int addr)
  */
 static void le_write_16bit(struct le_data *d, int addr, uint16_t x)
 {
-	if (d->ioasic != NULL) {
+	if (d->dma != NULL) {
 		unsigned char w[2] = { (unsigned char) x,
 		    (unsigned char) (x >> 8) };
 		le_ioasic_dma(d, addr, w, 2, 1, 0);
@@ -283,7 +286,7 @@ static void le_chip_init(struct le_data *d)
 	uint16_t tmp;
 	uint8_t macaddr[6];
 
-	d->init_block_addr = (d->reg[1] & 0xffff) + ((d->reg[2] & 0xff) << 16);
+	d->init_block_addr = (d->reg[1] & 0xfffe) + ((d->reg[2] & 0xff) << 16);
 	if (d->init_block_addr & 1)
 		debugmsg(d->subsys, "initialization block", VERBOSITY_WARNING,
 		    "WARNING! address not word aligned?");
@@ -502,7 +505,9 @@ static void le_tx(struct net *net, struct le_data *d)
 			return;
 		if ((tx_descr[2] & 0xf000) != 0xf000)
 			return;
-		if (buflen < 12 || buflen > 1900) {
+		/*  (The DEC 3000 console's loopback test uses 8 bytes.)  */
+		if (buflen < (d->mode & LE_MODE_LOOP? 1 : 12) ||
+		    buflen > 1900) {
 			debugmsg(d->subsys, "tx", VERBOSITY_WARNING, "buflen = %i", buflen);
 			return;
 		}
@@ -624,7 +629,9 @@ static void le_rx(struct net *net, struct le_data *d)
 			return;
 		if ((rx_descr[2] & 0xf000) != 0xf000)
 			return;
-		if (buflen < 12 || buflen > 1900) {
+		/*  (The DEC 3000 console's loopback test uses 8 bytes.)  */
+		if (buflen < (d->mode & LE_MODE_LOOP? 1 : 12) ||
+		    buflen > 1900) {
 			debugmsg(d->subsys, "rx", VERBOSITY_WARNING, "buflen = %i", buflen);
 			return;
 		}
@@ -878,8 +885,10 @@ void le_register_write(struct le_data *d, int r, uint32_t x)
 		d->reg[r] |= (x & LE_INEA);
 		break;
 
-	case 1:	/*  CSR1: the init block address is word aligned  */
-		d->reg[r] = x & 0xfffe;
+	case 1:	/*  CSR1: all 16 bits read back (the DEC 3000 console's
+		    register test checks bit 0), though the init block is
+		    word aligned  */
+		d->reg[r] = x & 0xffff;
 		break;
 	case 2:	/*  CSR2: only the high 8 bits of the address  */
 		d->reg[r] = x & 0x00ff;
@@ -1155,15 +1164,40 @@ void dev_le_init(struct machine *machine, struct memory *mem, uint64_t baseaddr,
  *  baseaddr, its memory in main memory (see the top of this file), and
  *  its station address ROM read through the IOASIC.
  */
+static uint64_t le_ioasic_base(void *extra)
+{
+	struct dec_ioasic_data *ioasic = (struct dec_ioasic_data *) extra;
+
+	return dec_ioasic_dma_ptr_to_addr(ioasic->lance_dmaptr);
+}
+
 void dev_le_ioasic_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, const char *irq_path, struct dec_ioasic_data *ioasic)
+{
+	ioasic->esar = dev_le_dma_init(machine, mem, baseaddr, irq_path,
+	    ioasic->cpu, le_ioasic_base, ioasic);
+}
+
+
+/*
+ *  dev_le_dma_init():
+ *
+ *  A LANCE with its registers (RDP, RAP) at baseaddr and baseaddr + 4,
+ *  and its memory in main memory at dma_base(dma), mapped as the IOASIC
+ *  maps it (see the top of this file). Returns the station address ROM
+ *  (32 bytes), for the DMA controller to provide.
+ */
+const uint8_t *dev_le_dma_init(struct machine *machine, struct memory *mem,
+	uint64_t baseaddr, const char *irq_path, struct cpu *cpu,
+	uint64_t (*dma_base)(void *), void *dma)
 {
 	char *name2;
 	size_t nlen = 55;
 	struct le_data *d = le_new(machine, irq_path);
 
-	d->ioasic = ioasic;
-	ioasic->esar = d->rom;
+	d->dma = dma;
+	d->dma_cpu = cpu;
+	d->dma_base = dma_base;
 
 	CHECK_ALLOCATION(name2 = (char *) malloc(nlen));
 	snprintf(name2, nlen, "le [%02x:%02x:%02x:%02x:%02x:%02x]",
@@ -1173,5 +1207,7 @@ void dev_le_ioasic_init(struct machine *machine, struct memory *mem,
 	    dev_le_access, (void *)d, DM_DEFAULT, NULL);
 
 	machine_add_tickfunction(machine, dev_le_tick, d, LE_TICK_SHIFT);
+
+	return d->rom;
 }
 

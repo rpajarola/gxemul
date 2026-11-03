@@ -1385,6 +1385,7 @@ uint64_t machine_config_rom_address(const char *type)
 {
 	switch (machine_config_machine_type(type)) {
 	case MACHINE_PMAX:	return 0xbfc00000ULL;
+	case MACHINE_DEC3000:	return 0x1e0000000ULL;	/*  (the FEPROM)  */
 	}
 	return 0;
 }
@@ -1467,8 +1468,9 @@ int machine_config_max_gfx_cards(const struct machine_config *c)
  *
  *  Lists the TURBOchannel slots that have a card in them, which can be
  *  given an option ROM image (for a real system ROM to use the card), as
- *  machine_pmax.c sets them up: graphics cards (one, or "cards", with the
- *  framebuffer on), and on the 5000/200, the SCSI and Ethernet interfaces.
+ *  machine_pmax.c and dev_dec3000.c set them up: graphics cards (one, or
+ *  "cards", with the framebuffer on), and on the 5000/200, the SCSI and
+ *  Ethernet interfaces.
  *  Returns how many there are (at most MC_MAX_SLOTS), or -1 if the machine
  *  has no TURBOchannel.
  */
@@ -1482,10 +1484,19 @@ int machine_config_slots(const struct machine_config *c,
 		free(err);
 		return -1;
 	}
-	if (type != MACHINE_PMAX)
+	if (type != MACHINE_PMAX && type != MACHINE_DEC3000)
 		return -1;
 
 	cards = !c->display ? 0 : c->gfx_cards < 0 ? 1 : c->gfx_cards;
+	if (type == MACHINE_DEC3000) {
+		/*  The 400's option slots TC0..TC2 (dev_dec3000.c):  */
+		for (i = 0; i < cards && i < 3; i++) {
+			slots[n].slot = i;
+			slots[n++].device =
+			    "HX (PMAGB-BA) framebuffer";
+		}
+		return n;
+	}
 	switch (subtype) {
 	case MACHINE_DEC_3MAX_5000:
 	case MACHINE_DEC_3MIN_5000:
@@ -1493,7 +1504,7 @@ int machine_config_slots(const struct machine_config *c,
 		for (i = 0; i < cards && i < 3; i++) {
 			slots[n].slot = i;
 			slots[n++].device =
-			    "PMAG-BA framebuffer, or HX with a PMAGB-BA ROM";
+			    "HX (PMAGB-BA) framebuffer";
 		}
 		if (subtype == MACHINE_DEC_3MAX_5000) {
 			slots[n].slot = 5;
@@ -1507,7 +1518,7 @@ int machine_config_slots(const struct machine_config *c,
 		for (i = 1; i < cards && i < 3; i++) {
 			slots[n].slot = i - 1;
 			slots[n++].device =
-			    "PMAG-BA framebuffer, or HX with a PMAGB-BA ROM";
+			    "HX (PMAGB-BA) framebuffer";
 		}
 		slots[n].slot = 2;
 		slots[n++].device = "PMAG-DV framebuffer (built in)";
@@ -2664,8 +2675,13 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	    emulation):  */
 	if (machine_config_uses_rom(c)) {
 		char *f = rom_to_load(c, c->rom);
-		s = xprintf("0x%llx:%s", (unsigned long long)
-		    machine_config_rom_address(c->type), f);
+		if (machine_config_machine_type(c->type) == MACHINE_DEC3000)
+			/*  A firmware update file, or ROM images, which the
+			    machine's serial ROM emulation takes apart:  */
+			s = xstrdup(f);
+		else
+			s = xprintf("0x%llx:%s", (unsigned long long)
+			    machine_config_rom_address(c->type), f);
 		machine_config_add_string(&n_loads, &loads, s);
 		free(s);
 		free(f);

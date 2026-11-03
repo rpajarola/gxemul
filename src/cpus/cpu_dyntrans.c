@@ -204,6 +204,10 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 	/*  Note: Do not cause interrupts while single-stepping. It is
 	    so horribly annoying.  */
 	if (!single_step) {
+#ifdef DYNTRANS_ALPHA
+		if (cpu->cd.alpha.ev4_palcode)
+			ev4_check_interrupts(cpu);
+#endif
 #ifdef DYNTRANS_ARM
 		if (cpu->cd.arm.irq_asserted && !(cpu->cd.arm.cpsr & ARM_FLAG_I))
 			arm_exception(cpu, ARM_EXCEPTION_IRQ);
@@ -1781,7 +1785,11 @@ cpu->cd.DYNTRANS_ARCH.vph_tlb_entry[r].valid);
 	 *  Check for breakpoints.
 	 */
 	if (!single_step_breakpoint && !cpu->translation_readahead) {
+#ifdef DYNTRANS_ALPHA
+		MODE_uint_t curpc = alpha_pc_to_arch(cpu, cpu->pc);
+#else
 		MODE_uint_t curpc = cpu->pc;
+#endif
 		int i;
 		for (i=0; i<cpu->machine->breakpoints.n; i++)
 			if (curpc == (MODE_uint_t)
@@ -1799,7 +1807,7 @@ cpu->cd.DYNTRANS_ARCH.vph_tlb_entry[r].valid);
 #else
 				fatal("BREAKPOINT: pc = 0x%" PRIx64"\n(The "
 				    "instruction has not yet executed.)\n",
-				    (uint64_t)cpu->pc);
+				    (uint64_t)curpc);
 #endif
 #ifdef DYNTRANS_DELAYSLOT
 				if (cpu->delay_slot != NOT_DELAYED)

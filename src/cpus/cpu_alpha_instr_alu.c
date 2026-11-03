@@ -201,7 +201,8 @@ void ALU_N(struct cpu *cpu, struct alpha_instr_call *ic)
 #endif
 		    ;
 	int i;
-	for (i=7; i>=0; i--) {
+	/*  Bit i of the result is the comparison of byte i:  */
+	for (i=0; i<8; i++) {
 		if ((uint8_t)ra >= (uint8_t)rb)
 			rc |= (1 << i);
 		rb >>= 8; ra >>= 8;

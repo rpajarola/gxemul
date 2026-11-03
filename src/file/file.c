@@ -90,6 +90,7 @@ static int n_executables_loaded = 0;
 #include "file_android.c"
 #include "file_aout.c"
 #include "file_ecoff.c"
+#include "file_ecoff_alpha.c"
 #include "file_elf.c"
 #include "file_macho.c"
 #include "file_raw.c"
@@ -178,6 +179,11 @@ void file_load(struct machine *machine, struct memory *mem,
 		exit(1);
 	}
 
+	/*  DEC 3000 firmware (a ROM image, or a firmware update file)?  */
+	if (machine->machine_type == MACHINE_DEC3000 &&
+	    dec3000_load_rom(machine, filename, entrypointp))
+		goto ret;
+
 	/*  Is it an ELF?  */
 	if (buf[0] == 0x7f && buf[1]=='E' && buf[2]=='L' && buf[3]=='F') {
 		file_load_elf(machine, mem, filename,
@@ -265,6 +271,14 @@ void file_load(struct machine *machine, struct memory *mem,
 	    buf[2] == 0xed && buf[3] == 0xfe) {
 		file_load_macho(machine, mem, filename, entrypointp,
 		    arch, byte_orderp, buf[0] == 0xcf, 1);
+		goto ret;
+	}
+
+	/*  Alpha ECOFF (64-bit headers, little-endian):  */
+	if (buf[0] + 256*buf[1] == ECOFF_MAGIC_ALPHA ||
+	    buf[0] + 256*buf[1] == ECOFF_MAGIC_ALPHA_COMPRESSED) {
+		file_load_ecoff_alpha(machine, mem, filename, entrypointp,
+		    gpp, byte_orderp);
 		goto ret;
 	}
 

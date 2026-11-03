@@ -57,6 +57,8 @@ static const char *alpha_regname[N_ALPHA_REGS] = ALPHA_REG_NAMES;
 
 void alpha_irq_interrupt_assert(struct interrupt *interrupt);
 void alpha_irq_interrupt_deassert(struct interrupt *interrupt);
+void ev4_irq_interrupt_assert(struct interrupt *interrupt);
+void ev4_irq_interrupt_deassert(struct interrupt *interrupt);
 
 
 /*
@@ -124,6 +126,22 @@ int alpha_cpu_new(struct cpu *cpu, struct memory *mem,
 		interrupt_handler_register(&templ);
 	}
 
+	/*  The 21064's six interrupt pins, irq_h[5:0] (with real PALcode),
+	    as "<cpu path>.0" .. "<cpu path>.5":  */
+	for (i = 0; i < 6; i++) {
+		struct interrupt templ;
+		char name[300];
+
+		snprintf(name, sizeof(name), "%s.%i", cpu->path, i);
+		memset(&templ, 0, sizeof(templ));
+		templ.line = i;
+		templ.name = name;
+		templ.extra = cpu;
+		templ.interrupt_assert = ev4_irq_interrupt_assert;
+		templ.interrupt_deassert = ev4_irq_interrupt_deassert;
+		interrupt_handler_register(&templ);
+	}
+
 	return 1;
 }
 
@@ -174,9 +192,12 @@ void alpha_cpu_register_dump(struct cpu *cpu, int gprs, int coprocs)
 	int i, x = cpu->cpu_id;
 
 	if (gprs) {
+		uint64_t pc = alpha_pc_to_arch(cpu, cpu->pc);
 		symbol = get_symbol_name(&cpu->machine->symbol_context,
-		    cpu->pc, &offset);
-		debug("cpu%i:\t pc = 0x%016" PRIx64, x, (uint64_t) cpu->pc);
+		    pc, &offset);
+		debug("cpu%i:\t pc = 0x%016" PRIx64, x, pc);
+		if (cpu->cd.alpha.ev4_palcode && cpu->cd.alpha.palmode)
+			debug(" (PALmode)");
 		debug("  <%s>\n", symbol != NULL? symbol : " no symbol ");
 		for (i=0; i<N_ALPHA_REGS; i++) {
 			int r = (i >> 1) + ((i & 1) << 4);
@@ -205,6 +226,8 @@ void alpha_cpu_register_dump(struct cpu *cpu, int gprs, int coprocs)
  */
 void alpha_cpu_tlbdump(struct cpu* cpu, int rawflag)
 {
+	if (cpu->cd.alpha.ev4_palcode)
+		ev4_tlbdump(cpu);
 }
 
 
@@ -221,6 +244,25 @@ void alpha_irq_interrupt_deassert(struct interrupt *interrupt)
 {
 	struct cpu *cpu = (struct cpu *) interrupt->extra;
 	cpu->cd.alpha.irq_asserted = 0;
+}
+
+
+/*
+ *  ev4_irq_interrupt_assert():
+ *  ev4_irq_interrupt_deassert():
+ *
+ *  The 21064's irq_h[5:0] pins (seen in HIRR). The interrupt is taken
+ *  between instruction batches (see ev4_check_interrupts()).
+ */
+void ev4_irq_interrupt_assert(struct interrupt *interrupt)
+{
+	struct cpu *cpu = (struct cpu *) interrupt->extra;
+	cpu->cd.alpha.irq_lines |= 1 << interrupt->line;
+}
+void ev4_irq_interrupt_deassert(struct interrupt *interrupt)
+{
+	struct cpu *cpu = (struct cpu *) interrupt->extra;
+	cpu->cd.alpha.irq_lines &= ~(1 << interrupt->line);
 }
 
 
@@ -268,7 +310,7 @@ int alpha_cpu_disassemble_instr(struct cpu *cpu, unsigned char *ib,
 	char palcode_name[30];
 
 	if (running)
-		dumpaddr = cpu->pc;
+		dumpaddr = alpha_pc_to_arch(cpu, cpu->pc);
 
 	symbol = get_symbol_name(&cpu->machine->symbol_context,
 	    dumpaddr, &offset);
@@ -659,6 +701,36 @@ int alpha_cpu_disassemble_instr(struct cpu *cpu, unsigned char *ib,
 		if (symbol != NULL)
 			debug("\t<%s>", symbol);
 		debug("\n");
+		break;
+	case 0x19:
+	case 0x1d:
+		/*  21064: PAL, ABX, IBX bits and the index  */
+		debug("hw_m%spr\t%s,", opcode == 0x19? "f" : "t",
+		    alpha_regname[ra]);
+		if (iw & 0x80)
+			debug("pal_temp%i", (int)(iw & 31));
+		else
+			debug("%s%s%i", iw & 0x40? "abox:" : "",
+			    iw & 0x20? "ibox:" : "", (int)(iw & 31));
+		debug("\n");
+		break;
+	case 0x1b:
+	case 0x1f:
+		debug("hw_%s%s%s%s%s\t%s,", opcode == 0x1b? "ld" : "st",
+		    iw & 0x1000? "q" : "l", iw & 0x8000? "/p" : "",
+		    iw & 0x4000? "/a" : "", iw & 0x2000? "/r" : "",
+		    alpha_regname[ra]);
+		imm = iw & 0xfff;
+		if (imm & 0x800)
+			imm -= 0x1000;
+		if (imm < 0)
+			debug("-0x%x", -imm);
+		else
+			debug("0x%x", imm);
+		debug("(%s)\n", alpha_regname[rb]);
+		break;
+	case 0x1e:
+		debug("hw_rei\n");
 		break;
 	default:debug("UNIMPLEMENTED opcode 0x%x\n", opcode);
 	}

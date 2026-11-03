@@ -113,6 +113,14 @@ uint64_t dec_ioasic_dma_ptr_to_addr(uint32_t ptr);
 size_t dec_ioasic_scsi_dma(void *dma_controller_data, unsigned char *data,
 	size_t len, int writeflag);
 int dev_dec_ioasic_access(struct cpu *cpu, struct memory *mem, uint64_t relative_addr, unsigned char *data, size_t len, int writeflag, void *);
+/*  dev_dec3000.c:  */
+struct dec3000_data;
+struct dec3000_data *dev_dec3000_init(struct machine *machine,
+	struct memory *mem, uint64_t ram_size, const char *cpu_irq);
+void dev_dec3000_set_rom(struct dec3000_data *d, int sys,
+	const unsigned char *image, size_t len);
+uint64_t dev_dec3000_srom(struct dec3000_data *d, struct cpu *cpu);
+
 struct dec_ioasic_data *dev_dec_ioasic_init(struct cpu *cpu, struct memory *mem, uint64_t baseaddr, int rackmount_flag, struct interrupt* irq);
 
 /*  dev_asc.c:  */
@@ -121,7 +129,10 @@ struct dec_ioasic_data *dev_dec_ioasic_init(struct cpu *cpu, struct memory *mem,
 #define	DEV_ASC_DEC		1
 #define	DEV_ASC_PICA		2
 int dev_asc_access(struct cpu *cpu, struct memory *mem, uint64_t relative_addr, unsigned char *data, size_t len, int writeflag, void *);
-void dev_asc_init(struct machine *machine, struct memory *mem, uint64_t baseaddr,
+void dev_asc_set_target_offset(void *asc, int offset);
+void dev_asc_set_real_sel_timeout(void *asc, int clock_mhz);
+void dev_asc_set_irq_latency(void *asc, int64_t ninstrs);
+void *dev_asc_init(struct machine *machine, struct memory *mem, uint64_t baseaddr,
 	const char *irq_path, void *turbochannel, int mode,
 	size_t (*dma_controller)(void *dma_controller_data,
 		unsigned char *data, size_t len, int writeflag),
@@ -304,6 +315,9 @@ void dev_le_init(struct machine *machine, struct memory *mem,
 	const char *irq_path, int len);
 void dev_le_ioasic_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, const char *irq_path, struct dec_ioasic_data *ioasic);
+const uint8_t *dev_le_dma_init(struct machine *machine, struct memory *mem,
+	uint64_t baseaddr, const char *irq_path, struct cpu *cpu,
+	uint64_t (*dma_base)(void *), void *dma);
 
 /*  dev_mc146818.c:  */
 #define	DEV_MC146818_LENGTH		0x0000000000000100
@@ -387,6 +401,8 @@ void dev_scc_dma_tx(void *e, int ch);
 int dev_scc_dma_rx(void *e);
 void *dev_scc_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, char* irq_path, int use_fb, int scc_nr, int addrmul);
+void dev_scc_kbd_present(void *e);
+void dev_scc_serial_console(void *e, struct machine *machine);
 
 /*  dev_sfb.c:  */
 #define	DEV_SFB_LENGTH		0x400000
@@ -519,7 +535,10 @@ struct vr41xx_data *dev_vr41xx_init(struct machine *machine,
 /*  lk201.c:  */
 struct lk201_data {
         int                     use_fb;
+	int			kbd_present;	/*  answers commands without fb  */
 	int			console_handle;
+	int			serial_handle;	/*  with fb: the serial console
+						    line's own, or -1  */
 
         int                     (*space_available_in_queue)(void *,int);
         void                    (*add_to_rx_queue)(void *,int,int);

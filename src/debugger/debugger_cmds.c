@@ -250,7 +250,7 @@ static void debugger_cmd_dump(struct machine *m, char *args)
 	addr_start = last_dump_addr;
 
 	if (addr_start == MAGIC_UNTOUCHED)
-		addr_start = c->pc;
+		addr_start = CPU_ARCH_PC(c);
 
 	addr_end = addr_start + 16 * 16;
 
@@ -1057,7 +1057,7 @@ static void debugger_cmd_unassemble(struct machine *m, char *args)
 	addr_start = last_unasm_addr;
 
 	if (addr_start == MAGIC_UNTOUCHED)
-		addr_start = c->pc;
+		addr_start = CPU_ARCH_PC(c);
 
 	addr_end = addr_start + 1000;
 

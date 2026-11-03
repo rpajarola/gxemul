@@ -99,6 +99,16 @@ static void default_test(struct machine *machine, struct cpu *cpu)
 		    ".irq[0x%x]", SH4_INTEVT_IRQ15);
 		break;
 
+	case ARCH_ALPHA:
+		/*  With real PALcode, the CPU has six interrupt pins; the
+		    interrupt controller is on irq_h[2].  */
+		if (cpu->cd.alpha.ev4_palcode)
+			snprintf(end_of_base_irq, sizeof(end_of_base_irq),
+			    ".2");
+		else
+			end_of_base_irq[0] = '\0';
+		break;
+
 	default:
 		end_of_base_irq[0] = '\0';
 	}
@@ -139,6 +149,76 @@ static void default_test(struct machine *machine, struct cpu *cpu)
 	snprintf(tmpstr, sizeof(tmpstr), "rtc addr=0x%" PRIx64" irq=%s.irqc.4",
 	    (uint64_t) DEV_RTC_ADDRESS, base_irq);
 	device_add(machine, tmpstr);
+}
+
+
+MACHINE_SETUP(barealpha)
+{
+	machine->machine_name = strdup("Generic \"bare\" Alpha machine");
+}
+
+
+MACHINE_SETUP(testalpha)
+{
+	machine->machine_name = strdup("Alpha test machine");
+
+	default_test(machine, cpu);
+}
+
+
+MACHINE_SETUP(testalphapal)
+{
+	machine->machine_name = strdup("Alpha test machine, 21064 with real"
+	    " PALcode");
+
+	/*  The program is loaded (at KSEG addresses) and started in PALmode
+	    at the physical address of its entry point, as after a reset.  */
+	cpu->cd.alpha.ev4_palcode = 1;
+	default_test(machine, cpu);
+}
+
+
+MACHINE_DEFAULT_CPU(testalphapal)
+{
+	machine->cpu_name = strdup("21064");
+}
+
+
+MACHINE_REGISTER(testalphapal)
+{
+	MR_DEFAULT(testalphapal, "Test-machine for Alpha, with real PALcode",
+	    MACHINE_TESTALPHAPAL);
+
+	machine_entry_add_alias(me, "testalphapal");
+}
+
+
+MACHINE_DEFAULT_CPU(barealpha)
+{
+	machine->cpu_name = strdup("21064");
+}
+
+
+MACHINE_DEFAULT_CPU(testalpha)
+{
+	machine->cpu_name = strdup("21064");
+}
+
+
+MACHINE_REGISTER(barealpha)
+{
+	MR_DEFAULT(barealpha, "Generic \"bare\" Alpha machine",
+	    MACHINE_BAREALPHA);
+
+	machine_entry_add_alias(me, "barealpha");
+}
+
+
+MACHINE_REGISTER(testalpha)
+{
+	MR_DEFAULT(testalpha, "Test-machine for Alpha", MACHINE_TESTALPHA);
+
+	machine_entry_add_alias(me, "testalpha");
 }
 
 

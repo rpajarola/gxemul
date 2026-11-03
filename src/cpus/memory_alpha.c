@@ -43,6 +43,9 @@
 int alpha_translate_v2p(struct cpu *cpu, uint64_t vaddr,
 	uint64_t *return_paddr, int flags)
 {
+	if (cpu->cd.alpha.ev4_palcode)
+		return ev4_translate(cpu, vaddr, return_paddr, flags);
+
 	uint64_t base = cpu->cd.alpha.pcb.apcb_ptbr << ALPHA_PAGESHIFT;
 	uint64_t userMode = cpu->cd.alpha.ps & ALPHA_PSL_USERMODE;
 	// uint64_t vptptr = cpu->cd.alpha.vptptr;

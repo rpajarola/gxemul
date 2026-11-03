@@ -63,11 +63,20 @@ static void LS_GENERIC_N(struct cpu *cpu, struct alpha_instr_call *ic)
 	addr &= ~7;
 #endif
 
+	/*  The PC is needed if there is an exception:  */
+	SYNCH_PC;
+
 #ifdef LS_LOAD
 	/*  Load:  */
 	if (!cpu->memory_rw(cpu, cpu->mem, addr, data, sizeof(data),
 	    MEM_READ, CACHE_DATA)) {
-		fatal("store failed: TODO\n");
+		if (cpu->cd.alpha.ev4_palcode) {
+			/*  Continue at the PALcode entry point.  */
+			cpu->n_translated_instrs --;
+			alpha_pc_to_pointers(cpu);
+			return;
+		}
+		fatal("load failed: TODO\n");
 		exit(1);
 	}
 
@@ -109,6 +118,11 @@ static void LS_GENERIC_N(struct cpu *cpu, struct alpha_instr_call *ic)
 
 	if (!cpu->memory_rw(cpu, cpu->mem, addr, data, sizeof(data),
 	    MEM_WRITE, CACHE_DATA)) {
+		if (cpu->cd.alpha.ev4_palcode) {
+			cpu->n_translated_instrs --;
+			alpha_pc_to_pointers(cpu);
+			return;
+		}
 		fatal("store failed: TODO\n");
 		exit(1);
 	}
@@ -120,6 +134,9 @@ static void LS_GENERIC_N(struct cpu *cpu, struct alpha_instr_call *ic)
 #endif
 
 #endif
+
+	/*  Access to nothing?  */
+	alpha_check_mchk(cpu, ic);
 }
 #endif
 
@@ -159,17 +176,19 @@ static void LS_N(struct cpu *cpu, struct alpha_instr_call *ic)
 #endif
 
 #ifdef LS_LLSC
+	/*  The lock is on a 32-byte block (the 21064's cache block); a
+	    store conditional to another block fails.  */
 #ifdef LS_LOAD
-	/*  TODO: cache-line size!  */
-	cpu->cd.alpha.load_linked_addr = addr & ~63;
+	cpu->cd.alpha.load_linked_addr = addr & ~31;
 	cpu->cd.alpha.ll_flag = 1;
 #else
-	/*  TODO: only invalidate per cache line, not everything!  */
-	if (cpu->cd.alpha.ll_flag == 1) {
+	if (cpu->cd.alpha.ll_flag == 1 &&
+	    (addr & ~31) == cpu->cd.alpha.load_linked_addr) {
 		int i;
 		for (i=0; i<cpu->machine->ncpus; i++)
 			cpu->machine->cpus[i]->cd.alpha.ll_flag = 0;
 	} else {
+		cpu->cd.alpha.ll_flag = 0;
 		*((uint64_t *)ic->arg[0]) = 0;
 		return;
 	}
@@ -190,7 +209,8 @@ static void LS_N(struct cpu *cpu, struct alpha_instr_call *ic)
 	    7
 #endif
 	    ) {
-		LS_GENERIC_N(cpu, ic);
+		/*  Not naturally aligned: unaligned access fault.  */
+		alpha_unaligned(cpu, ic, addr);
 		return;
 	}
 	else

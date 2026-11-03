@@ -5581,3 +5581,21 @@ Changelog for GXemul:
 		from a reserved port leaves the host from a reserved port
 		too, where the host lets a user bind one, for NFS servers
 		that require it. See doc/networking.html. (Antoni Sawicki)
+20261103	DEC 3000 Model 400 (Sandpiper, "-E dec3000 -e 400"): a new
+		Alpha machine that runs the real firmware (SRM console V3.3
+		and its PALcode, from a ROM image; see doc/dec3000-plan.md).
+		The Alpha CPU has the complete 21064 user instruction set and
+		privileged architecture (PALmode, IPRs, ITB/DTB, interrupts,
+		machine checks). The machine has the TURBOchannel ASIC, the
+		IOCTL (SCCs with DMA, LANCE, RTC, flash ROM, 79C30A), the dual
+		SCSI ASIC with two 53C94s, an HX (PMAGB-BA) framebuffer in
+		the option slots with the display on, and an NVRAM file.
+		DEC OSF/1 V1.2 installs from its CD and runs multi-user, with
+		networking, and with X (DECwindows) on the HX.
+		dev_asc: programmed-I/O data in, an optional real selection
+		timeout and interrupt latency. dev_scc: a reset discards
+		received characters, a disabled receiver ignores loopback,
+		RR1 says All Sent, a keyboard that answers without a
+		framebuffer, and a serial console line of its own (a telnet
+		port) when the keyboard has the main console. MC146818: the
+		DEC 3000 TOY starts in 24-hour mode, with year 70.
