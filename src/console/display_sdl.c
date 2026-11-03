@@ -126,6 +126,25 @@ struct sdl_window {
 static bool sdl_initialized = false;
 static struct fb_window *grabbed = NULL;
 
+/*
+ *  The scancode of the currently held key (so SDL_KEYUP can send
+ *  console_key_up()), and the scancode/repeat state of the most recent
+ *  SDL_KEYDOWN for an upcoming SDL_TEXTINPUT event.
+ */
+static SDL_Scancode held_scancode = SDL_SCANCODE_UNKNOWN;
+static struct machine *held_machine = NULL;
+static SDL_Scancode last_keydown_scancode = SDL_SCANCODE_UNKNOWN;
+static bool last_keydown_repeat = false;
+
+
+static void release_held_key(void)
+{
+	if (held_scancode != SDL_SCANCODE_UNKNOWN && held_machine != NULL)
+		console_key_up(held_machine->main_console_handle);
+	held_scancode = SDL_SCANCODE_UNKNOWN;
+	held_machine = NULL;
+}
+
 
 /*
  *  display_sdl_app_hints():
@@ -726,6 +745,9 @@ static void menu_open_bar(struct fb_window *win, int index, bool keyboard)
 
 	/*  The mouse goes back to the host while the menus are open:  */
 	ungrab();
+	release_held_key();
+	last_keydown_scancode = SDL_SCANCODE_UNKNOWN;
+	last_keydown_repeat = false;
 	sw->menu_depth = 1;
 	sw->menu_opener[0] = index;
 	sw->menu_highlight[0] = keyboard ? menu_selectable(win, 0, -1, 1) : -1;
@@ -1238,18 +1260,37 @@ static void text_input(struct machine *m, const char *text)
 	const unsigned char *p = (const unsigned char *) text;
 
 	while (*p != '\0') {
+		int c = -1;
+
 		if (*p < 0x80) {
-			console_makeavail(m->main_console_handle, *p++);
+			c = *p++;
 		} else if ((p[0] & 0xe0) == 0xc0 && (p[1] & 0xc0) == 0x80) {
-			int c = ((p[0] & 0x1f) << 6) | (p[1] & 0x3f);
-			if (c < 256)
-				console_makeavail(m->main_console_handle, c);
+			c = ((p[0] & 0x1f) << 6) | (p[1] & 0x3f);
+			if (c >= 256)
+				c = -1;
 			p += 2;
 		} else {
 			/*  Not in Latin-1:  */
 			p++;
 			while ((*p & 0xc0) == 0x80)
 				p++;
+		}
+
+		if (c >= 0) {
+			if (last_keydown_scancode != SDL_SCANCODE_UNKNOWN) {
+				if (!last_keydown_repeat ||
+				    held_scancode != last_keydown_scancode ||
+				    held_machine != m) {
+					release_held_key();
+					held_scancode = last_keydown_scancode;
+					held_machine = m;
+				}
+				console_key_hold(m->main_console_handle);
+				console_makeavail(m->main_console_handle, c);
+			} else {
+				release_held_key();
+				console_makeavail(m->main_console_handle, c);
+			}
 		}
 	}
 }
@@ -1263,12 +1304,14 @@ static void text_input(struct machine *m, const char *text)
  *  scancodes', for example for the DECstation's keyboard or the PC-style
  *  8042 controller.
  */
-static void key_down(struct fb_window *win, const SDL_Keysym *keysym)
+static void key_down(struct fb_window *win, const SDL_KeyboardEvent *kev)
 {
 	struct machine *m = win->machine;
+	const SDL_Keysym *keysym = &kev->keysym;
 	SDL_Keycode key = keysym->sym;
 	bool numlock = (keysym->mod & KMOD_NUM) != 0;
-	int ch = -1;
+	int ch = -1, dkey = -1;
+	bool modifier = false;
 
 	switch (key) {
 	case SDLK_RETURN:
@@ -1281,34 +1324,41 @@ static void key_down(struct fb_window *win, const SDL_Keysym *keysym)
 	case SDLK_F1:	case SDLK_F2:	case SDLK_F3:	case SDLK_F4:
 	case SDLK_F5:	case SDLK_F6:	case SDLK_F7:	case SDLK_F8:
 	case SDLK_F9:	case SDLK_F10:	case SDLK_F11:	case SDLK_F12:
-		display_key(m, DISPLAY_KEY_F1 + key - SDLK_F1);
+		dkey = DISPLAY_KEY_F1 + key - SDLK_F1;
 		break;
 
 	/*  Cursor keys, and the numeric keypad's when Num Lock is off:  */
-	case SDLK_UP:		display_key(m, DISPLAY_KEY_UP); break;
-	case SDLK_DOWN:		display_key(m, DISPLAY_KEY_DOWN); break;
-	case SDLK_LEFT:		display_key(m, DISPLAY_KEY_LEFT); break;
-	case SDLK_RIGHT:	display_key(m, DISPLAY_KEY_RIGHT); break;
-	case SDLK_HOME:		display_key(m, DISPLAY_KEY_HOME); break;
-	case SDLK_END:		display_key(m, DISPLAY_KEY_END); break;
-	case SDLK_PAGEUP:	display_key(m, DISPLAY_KEY_PAGE_UP); break;
-	case SDLK_INSERT:	display_key(m, DISPLAY_KEY_INSERT); break;
-	case SDLK_PAGEDOWN:	display_key(m, DISPLAY_KEY_PAGE_DOWN); break;
-	case SDLK_KP_8:	if (!numlock) display_key(m, DISPLAY_KEY_UP); break;
-	case SDLK_KP_2:	if (!numlock) display_key(m, DISPLAY_KEY_DOWN); break;
-	case SDLK_KP_4:	if (!numlock) display_key(m, DISPLAY_KEY_LEFT); break;
-	case SDLK_KP_6:	if (!numlock) display_key(m, DISPLAY_KEY_RIGHT); break;
-	case SDLK_KP_7:	if (!numlock) display_key(m, DISPLAY_KEY_HOME); break;
-	case SDLK_KP_1:	if (!numlock) display_key(m, DISPLAY_KEY_END); break;
-	case SDLK_KP_9:	if (!numlock) display_key(m, DISPLAY_KEY_PAGE_UP); break;
-	case SDLK_KP_3:	if (!numlock) display_key(m, DISPLAY_KEY_PAGE_DOWN); break;
+	case SDLK_UP:		dkey = DISPLAY_KEY_UP; break;
+	case SDLK_DOWN:		dkey = DISPLAY_KEY_DOWN; break;
+	case SDLK_LEFT:		dkey = DISPLAY_KEY_LEFT; break;
+	case SDLK_RIGHT:	dkey = DISPLAY_KEY_RIGHT; break;
+	case SDLK_HOME:		dkey = DISPLAY_KEY_HOME; break;
+	case SDLK_END:		dkey = DISPLAY_KEY_END; break;
+	case SDLK_PAGEUP:	dkey = DISPLAY_KEY_PAGE_UP; break;
+	case SDLK_INSERT:	dkey = DISPLAY_KEY_INSERT; break;
+	case SDLK_PAGEDOWN:	dkey = DISPLAY_KEY_PAGE_DOWN; break;
+	case SDLK_KP_8:	if (!numlock) dkey = DISPLAY_KEY_UP; break;
+	case SDLK_KP_2:	if (!numlock) dkey = DISPLAY_KEY_DOWN; break;
+	case SDLK_KP_4:	if (!numlock) dkey = DISPLAY_KEY_LEFT; break;
+	case SDLK_KP_6:	if (!numlock) dkey = DISPLAY_KEY_RIGHT; break;
+	case SDLK_KP_7:	if (!numlock) dkey = DISPLAY_KEY_HOME; break;
+	case SDLK_KP_1:	if (!numlock) dkey = DISPLAY_KEY_END; break;
+	case SDLK_KP_9:	if (!numlock) dkey = DISPLAY_KEY_PAGE_UP; break;
+	case SDLK_KP_3:	if (!numlock) dkey = DISPLAY_KEY_PAGE_DOWN; break;
 
 	case SDLK_LCTRL:	case SDLK_RCTRL:
 	case SDLK_LALT:		case SDLK_RALT:
 	case SDLK_LGUI:		case SDLK_RGUI:
+		modifier = true;
 		if ((keysym->mod & KMOD_CTRL) &&
 		    (keysym->mod & (KMOD_ALT | KMOD_GUI)))
 			ungrab();
+		break;
+
+	case SDLK_LSHIFT:	case SDLK_RSHIFT:
+	case SDLK_CAPSLOCK:	case SDLK_NUMLOCKCLEAR:
+	case SDLK_SCROLLLOCK:	case SDLK_MODE:
+		modifier = true;
 		break;
 
 	default:
@@ -1318,8 +1368,24 @@ static void key_down(struct fb_window *win, const SDL_Keysym *keysym)
 			ch = key & 0x1f;
 	}
 
-	if (ch >= 0)
-		console_makeavail(m->main_console_handle, ch);
+	if (ch >= 0 || dkey >= 0) {
+		if (!kev->repeat || held_scancode != keysym->scancode ||
+		    held_machine != m) {
+			release_held_key();
+			held_scancode = keysym->scancode;
+			held_machine = m;
+		}
+		last_keydown_scancode = SDL_SCANCODE_UNKNOWN;
+		last_keydown_repeat = false;
+		console_key_hold(m->main_console_handle);
+		if (dkey >= 0)
+			display_key(m, dkey);
+		else
+			console_makeavail(m->main_console_handle, ch);
+	} else if (!modifier) {
+		last_keydown_scancode = keysym->scancode;
+		last_keydown_repeat = (kev->repeat != 0);
+	}
 }
 
 
@@ -1342,6 +1408,9 @@ static void handle_event(const SDL_Event *ev)
 			present(win);
 			break;
 		case SDL_WINDOWEVENT_FOCUS_LOST:
+			release_held_key();
+			last_keydown_scancode = SDL_SCANCODE_UNKNOWN;
+			last_keydown_repeat = false;
 			ungrab();
 			break;
 		}
@@ -1350,7 +1419,16 @@ static void handle_event(const SDL_Event *ev)
 	case SDL_KEYDOWN:
 		if ((win = fb_window_of(ev->key.windowID)) != NULL &&
 		    !menu_key_event(win, &ev->key))
-			key_down(win, &ev->key.keysym);
+			key_down(win, &ev->key);
+		break;
+
+	case SDL_KEYUP:
+		if (ev->key.keysym.scancode == last_keydown_scancode) {
+			last_keydown_scancode = SDL_SCANCODE_UNKNOWN;
+			last_keydown_repeat = false;
+		}
+		if (ev->key.keysym.scancode == held_scancode)
+			release_held_key();
 		break;
 
 	case SDL_TEXTINPUT:

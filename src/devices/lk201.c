@@ -138,6 +138,14 @@ static int lk201_send_key(struct lk201_data *d, int key, bool shifted,
 	bool controlled)
 {
 	int n = 0;
+	int hold = d->hold_next;
+	d->hold_next = 0;
+
+	if (hold && d->key_down == key && d->shifted == (int)shifted &&
+	    d->controlled == (int)controlled) {
+		d->add_to_rx_queue(d->add_data, KEY_REPEAT, DCKBD_PORT);
+		return 1;
+	}
 
 	d->add_to_rx_queue(d->add_data, KEY_UP, DCKBD_PORT), n++;
 	if (shifted)
@@ -145,10 +153,33 @@ static int lk201_send_key(struct lk201_data *d, int key, bool shifted,
 	if (controlled)
 		d->add_to_rx_queue(d->add_data, KEY_CONTROL, DCKBD_PORT), n++;
 
-	/*  The key, and its release:  */
+	/*  The key, and its release (unless held):  */
 	d->add_to_rx_queue(d->add_data, key, DCKBD_PORT), n++;
-	d->add_to_rx_queue(d->add_data, KEY_UP, DCKBD_PORT), n++;
+	if (hold) {
+		d->key_down = key;
+		d->shifted = shifted;
+		d->controlled = controlled;
+	} else {
+		d->add_to_rx_queue(d->add_data, KEY_UP, DCKBD_PORT), n++;
+		d->key_down = 0;
+		d->shifted = 0;
+		d->controlled = 0;
+	}
 	return n;
+}
+
+
+static int lk201_send_key_up(struct lk201_data *d)
+{
+	d->hold_next = 0;
+	if (d->key_down == 0)
+		return 0;
+
+	d->add_to_rx_queue(d->add_data, KEY_UP, DCKBD_PORT);
+	d->key_down = 0;
+	d->shifted = 0;
+	d->controlled = 0;
+	return 1;
 }
 
 
@@ -265,7 +296,10 @@ int lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 	if (d->keyb_buf_pos > 0 && !lk201_escape_continues(d->keyb_buf + 1,
 	    d->keyb_buf_pos - 1, ch)) {
 		/*  What came before ch isn't a key's escape sequence:  */
+		int hold = d->hold_next;
+		d->hold_next = 0;
 		int n = lk201_type_escape(d);
+		d->hold_next = hold;
 		return n + lk201_convert_ascii_to_keybcode(d, ch);
 	}
 
@@ -278,7 +312,11 @@ int lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 			return 0;
 
 		d->keyb_buf_pos = 0;
-		return key > 0? lk201_send_key(d, key, false, false) : 0;
+		if (key <= 0) {
+			d->hold_next = 0;
+			return 0;
+		}
+		return lk201_send_key(d, key, false, false);
 	}
 
 	switch (ch) {
@@ -307,8 +345,10 @@ int lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 	}
 
 	/*  A character that no key types:  */
-	if (key < 0)
+	if (key < 0) {
+		d->hold_next = 0;
 		return 0;
+	}
 
 	return lk201_send_key(d, key, shifted, controlled);
 }
@@ -434,16 +474,34 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 	if (d->use_fb && d->keyb_delay > 0)
 		d->keyb_delay --;
 	while (d->space_available_in_queue(d->add_data, port) &&
-	    console_charavail(d->console_handle) &&
+	    (d->use_fb ? console_keyavail(d->console_handle) :
+	    console_charavail(d->console_handle)) &&
 	    (!d->use_fb || d->keyb_delay == 0)) {
-		unsigned char ch = console_readchar(d->console_handle);
 		if (d->use_fb) {
+			int key = console_readkey(d->console_handle);
+			if (key == CONSOLE_KEY_HOLD) {
+				d->hold_next = 1;
+				continue;
+			}
+			if (key == CONSOLE_KEY_UP) {
+				int n = 0;
+				if (d->keyb_buf_pos > 0)
+					n += lk201_type_escape(d);
+				n += lk201_send_key_up(d);
+				d->keyb_delay = LK201_TICKS_PER_BYTE * n;
+				continue;
+			}
+			if (key < 0)
+				break;
 			d->keyb_delay = LK201_TICKS_PER_BYTE *
-			    lk201_convert_ascii_to_keybcode(d, ch);
+			    lk201_convert_ascii_to_keybcode(d,
+			    (unsigned char) key);
 			if (d->keyb_buf_pos > 0)
 				d->keyb_esc_usec = lk201_usec();
-		} else
+		} else {
+			unsigned char ch = console_readchar(d->console_handle);
 			d->add_to_rx_queue(d->add_data, ch, port);
+		}
 	}
 
 	/*
@@ -451,7 +509,7 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 	 *  lone ESC is Esc (Ctrl+[), and Esc and O in vi are Ctrl+[ and O:
 	 */
 	if (d->use_fb && d->keyb_buf_pos > 0 && d->keyb_delay == 0 &&
-	    !console_charavail(d->console_handle) &&
+	    !console_keyavail(d->console_handle) &&
 	    d->space_available_in_queue(d->add_data, port) &&
 	    lk201_usec() - d->keyb_esc_usec >= LK201_ESCAPE_USEC)
 		d->keyb_delay = LK201_TICKS_PER_BYTE * lk201_type_escape(d);

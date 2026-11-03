@@ -144,7 +144,7 @@ struct console_handle {
 	int		backlog_head;
 	int		backlog_len;
 
-	unsigned char	fifo[CONSOLE_FIFO_LEN];
+	int		fifo[CONSOLE_FIFO_LEN];
 	int		fifo_head;
 	int		fifo_tail;
 
@@ -605,7 +605,57 @@ static int d_avail(int d)
 void console_makeavail(int handle, char ch)
 {
 	console_handles[handle].fifo[
-	    console_handles[handle].fifo_head] = ch;
+	    console_handles[handle].fifo_head] = (unsigned char) ch;
+	console_handles[handle].fifo_head = (
+	    console_handles[handle].fifo_head + 1) % CONSOLE_FIFO_LEN;
+
+	if (console_handles[handle].fifo_head ==
+	    console_handles[handle].fifo_tail)
+		fatal("[ WARNING: console fifo overrun, handle %i ]\n", handle);
+}
+
+
+/*
+ *  console_key_hold():
+ *
+ *  Mark the next key in the queue as held down until console_key_up().
+ */
+void console_key_hold(int handle)
+{
+	if (handle < 0 || handle >= n_console_handles)
+		return;
+
+	console_handles[handle].fifo[
+	    console_handles[handle].fifo_head] = CONSOLE_KEY_HOLD;
+	console_handles[handle].fifo_head = (
+	    console_handles[handle].fifo_head + 1) % CONSOLE_FIFO_LEN;
+
+	if (console_handles[handle].fifo_head ==
+	    console_handles[handle].fifo_tail)
+		fatal("[ WARNING: console fifo overrun, handle %i ]\n", handle);
+}
+
+
+/*
+ *  console_key_up():
+ *
+ *  Put a CONSOLE_KEY_UP event in the queue when a held key is released.
+ */
+void console_key_up(int handle)
+{
+	if (handle < 0 || handle >= n_console_handles)
+		return;
+
+	if (console_handles[handle].fifo_head !=
+	    console_handles[handle].fifo_tail) {
+		int prev = (console_handles[handle].fifo_head +
+		    CONSOLE_FIFO_LEN - 1) % CONSOLE_FIFO_LEN;
+		if (console_handles[handle].fifo[prev] == CONSOLE_KEY_UP)
+			return;
+	}
+
+	console_handles[handle].fifo[
+	    console_handles[handle].fifo_head] = CONSOLE_KEY_UP;
 	console_handles[handle].fifo_head = (
 	    console_handles[handle].fifo_head + 1) % CONSOLE_FIFO_LEN;
 
@@ -649,12 +699,19 @@ static int console_room_left_in_fifo(int handle)
 }
 
 
-/*
- *  console_charavail():
- *
- *  Returns the number of chararacters available in the fifo.
- */
-int console_charavail(int handle)
+static void console_strip_key_events(int handle)
+{
+	while (console_handles[handle].fifo_tail !=
+	    console_handles[handle].fifo_head &&
+	    console_handles[handle].fifo[console_handles[handle].fifo_tail] >=
+	    CONSOLE_KEY_UP) {
+		console_handles[handle].fifo_tail =
+		    (console_handles[handle].fifo_tail + 1) % CONSOLE_FIFO_LEN;
+	}
+}
+
+
+static void console_poll_input(int handle)
 {
 	while (console_stdin_avail(handle)) {
 		unsigned char ch[100];		/* = getchar(); */
@@ -711,6 +768,32 @@ int console_charavail(int handle)
 			console_makeavail(handle, ch[i]);
 		}
 	}
+}
+
+
+/*
+ *  console_keyavail():
+ *
+ *  Returns the number of entries (characters and key events) available
+ *  in the fifo.
+ */
+int console_keyavail(int handle)
+{
+	console_poll_input(handle);
+
+	return CONSOLE_FIFO_LEN - console_room_left_in_fifo(handle);
+}
+
+
+/*
+ *  console_charavail():
+ *
+ *  Returns the number of chararacters available in the fifo.
+ */
+int console_charavail(int handle)
+{
+	console_poll_input(handle);
+	console_strip_key_events(handle);
 
 	return CONSOLE_FIFO_LEN - console_room_left_in_fifo(handle);
 }
@@ -741,11 +824,32 @@ bool console_any_input_available(struct emul *emul)
 	}
 
 	if (emul->n_machines == 1) {
-		if (console_charavail(emul->machines[0]->main_console_handle))
+		if (console_keyavail(emul->machines[0]->main_console_handle))
 			somethingAvailable = true;
 	}
 
 	return somethingAvailable;
+}
+
+
+/*
+ *  console_readkey():
+ *
+ *  Returns 0..255, CONSOLE_KEY_HOLD, or CONSOLE_KEY_UP if available,
+ *  -1 otherwise.
+ */
+int console_readkey(int handle)
+{
+	int ch;
+
+	if (!console_keyavail(handle))
+		return -1;
+
+	ch = console_handles[handle].fifo[console_handles[handle].fifo_tail];
+	console_handles[handle].fifo_tail ++;
+	console_handles[handle].fifo_tail %= CONSOLE_FIFO_LEN;
+
+	return ch;
 }
 
 
@@ -764,6 +868,7 @@ int console_readchar(int handle)
 	ch = console_handles[handle].fifo[console_handles[handle].fifo_tail];
 	console_handles[handle].fifo_tail ++;
 	console_handles[handle].fifo_tail %= CONSOLE_FIFO_LEN;
+	console_strip_key_events(handle);
 
 	return ch;
 }

@@ -38,14 +38,22 @@
 
 #define	CONSOLE_OUTPUT_ONLY	-1
 
+/*  Special events in the console FIFO for held/released keys:  */
+#define	CONSOLE_KEY_UP		0x100
+#define	CONSOLE_KEY_HOLD	0x101
+
 struct emul;
 
 void console_deinit_main(void);
 void console_sigcont(int x);
 void console_makeavail(int handle, char ch);
+void console_key_hold(int handle);
+void console_key_up(int handle);
 int console_charavail(int handle);
+int console_keyavail(int handle);
 bool console_any_input_available(struct emul *emul);
 int console_readchar(int handle);
+int console_readkey(int handle);
 void console_putchar(int handle, int ch);
 void console_flush(void);
 void console_mouse_coordinate_update(int dx, int dy, int fb_nr);
