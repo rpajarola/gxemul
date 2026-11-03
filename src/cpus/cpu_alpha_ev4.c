@@ -49,6 +49,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 #include <time.h>
 
 #include "cpu.h"
@@ -677,19 +678,21 @@ static uint64_t read_iccsr(struct cpu *cpu)
  */
 uint64_t ev4_cycles(struct cpu *cpu)
 {
-	static struct timespec start;
+	static struct timeval start;
 	static uint64_t last;
-	struct timespec ts;
+	struct timeval tv;
 	uint64_t hz = cpu->machine->emulated_hz, c;
 
 	if (hz == 0)
 		return cpu->ninstrs + cpu->n_translated_instrs;
 
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	if (start.tv_sec == 0 && start.tv_nsec == 0)
-		start = ts;
-	c = (uint64_t)(ts.tv_sec - start.tv_sec) * hz +
-	    (uint64_t)((ts.tv_nsec - start.tv_nsec) * (double)hz / 1e9);
+	/*  (gettimeofday(), not clock_gettime(), which on Windows would
+	    need the winpthread DLL.)  */
+	gettimeofday(&tv, NULL);
+	if (start.tv_sec == 0 && start.tv_usec == 0)
+		start = tv;
+	c = (uint64_t)(tv.tv_sec - start.tv_sec) * hz +
+	    (uint64_t)((tv.tv_usec - start.tv_usec) * (double)hz / 1e6);
 
 	/*  (A counter read twice in a row must not be the same, or loops
 	    that wait for it to change are slow.)  */

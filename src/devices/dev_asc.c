@@ -58,6 +58,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 #include <time.h>
 #include <string.h>
 
@@ -180,10 +181,11 @@ static int dev_asc_select(struct cpu *cpu, struct asc_data *d, int from_id,
 
 static int64_t host_usec(void)
 {
-	struct timespec ts;
+	struct timeval tv;
 
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+	/*  (Not clock_gettime(), which on Windows needs winpthread.)  */
+	gettimeofday(&tv, NULL);
+	return (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
 }
 
 /*  Timeout = NCR_TIMEOUT * 8192 * CCF clock periods (CCF 0 means 8).  */
