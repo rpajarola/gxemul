@@ -2449,13 +2449,13 @@ static const struct {
  *  type_key():
  *
  *  Types one key, such as "a", "Return", "F1" or "Control_L+c" (keys
- *  joined by + are modifiers, Control or Shift, and a key).
+ *  joined by + are modifiers, Control, Shift or Alt, and a key).
  */
 static bool type_key(struct machine *m, const char *spec, struct ctl_error *err)
 {
 	static const char unshifted[] = "`1234567890-=[]\\;',./";
 	static const char shifted[] = "~!@#$%^&*()_+{}|:\"<>?";
-	bool ctrl = false, shift = false;
+	int mods = 0;
 	const char *p = spec, *plus;
 	char name[40];
 	uint32_t keysym = 0;
@@ -2474,12 +2474,14 @@ static bool type_key(struct machine *m, const char *spec, struct ctl_error *err)
 		if (plus == NULL)
 			break;
 		if (strncmp(name, "Control", 7) == 0)
-			ctrl = true;
+			mods |= DISPLAY_MOD_CTRL;
 		else if (strncmp(name, "Shift", 5) == 0)
-			shift = true;
+			mods |= DISPLAY_MOD_SHIFT;
+		else if (strncmp(name, "Alt", 3) == 0)
+			mods |= DISPLAY_MOD_ALT;
 		else
-			return fail(err, "bad_arg", "'%s' in '%s' isn't Control "
-			    "or Shift", name, spec);
+			return fail(err, "bad_arg", "'%s' in '%s' isn't Control, "
+			    "Shift or Alt", name, spec);
 		p = plus + 1;
 	}
 
@@ -2495,12 +2497,13 @@ static bool type_key(struct machine *m, const char *spec, struct ctl_error *err)
 		    name);
 
 	/*  Shift, as on a US keyboard:  */
-	if (shift && keysym >= 'a' && keysym <= 'z')
+	if ((mods & DISPLAY_MOD_SHIFT) && keysym >= 'a' && keysym <= 'z')
 		keysym -= 'a' - 'A';
-	else if (shift && keysym < 0x80 && strchr(unshifted, keysym) != NULL)
+	else if ((mods & DISPLAY_MOD_SHIFT) && keysym < 0x80 &&
+	    strchr(unshifted, keysym) != NULL)
 		keysym = shifted[strchr(unshifted, keysym) - unshifted];
 
-	if (!display_keysym(m, keysym, ctrl))
+	if (!display_keysym(m, keysym, mods))
 		return fail(err, "bad_arg", "'%s' types nothing", spec);
 	return true;
 }
@@ -2532,7 +2535,7 @@ CTL_HANDLER(cmd_keyboard)
 			if (typed >= room)
 				return fail(err, "busy", "the keyboard's input is "
 				    "full after %i characters", typed);
-			display_keysym(m, c, false);
+			display_keysym(m, c, 0);
 			typed ++;
 		}
 	} else {

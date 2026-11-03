@@ -1297,6 +1297,24 @@ static void text_input(struct machine *m, const char *text)
 
 
 /*
+ *  The modifiers held (DISPLAY_MOD_*) of SDL's mod, for a machine whose
+ *  keyboard takes keys with modifiers (see display_key()), and none for
+ *  others.  Alt is the left Alt key (Option on a Mac):  the right one is
+ *  often AltGr, which types characters of the keyboard layout, and those
+ *  arrive as text.
+ */
+static int key_mods(struct machine *m, int mod)
+{
+	if (!console_keys_with_modifiers(m->main_console_handle))
+		return 0;
+
+	return ((mod & KMOD_SHIFT) ? DISPLAY_MOD_SHIFT : 0) |
+	    ((mod & KMOD_LALT) ? DISPLAY_MOD_ALT : 0) |
+	    ((mod & KMOD_CTRL) ? DISPLAY_MOD_CTRL : 0);
+}
+
+
+/*
  *  Handles a key press.  Printable characters arrive separately, as
  *  SDL_TEXTINPUT events; this sends everything else.
  *
@@ -1310,6 +1328,7 @@ static void key_down(struct fb_window *win, const SDL_KeyboardEvent *kev)
 	const SDL_Keysym *keysym = &kev->keysym;
 	SDL_Keycode key = keysym->sym;
 	bool numlock = (keysym->mod & KMOD_NUM) != 0;
+	int mods = key_mods(m, keysym->mod);
 	int ch = -1, dkey = -1;
 	bool modifier = false;
 
@@ -1319,7 +1338,8 @@ static void key_down(struct fb_window *win, const SDL_KeyboardEvent *kev)
 	case SDLK_BACKSPACE:	ch = '\b'; break;
 	case SDLK_TAB:		ch = '\t'; break;
 	case SDLK_ESCAPE:	ch = 27; break;
-	case SDLK_DELETE:	ch = 127; break;
+	case SDLK_INSERT:	dkey = DISPLAY_KEY_INSERT; break;
+	case SDLK_DELETE:	dkey = DISPLAY_KEY_DELETE; break;
 
 	case SDLK_F1:	case SDLK_F2:	case SDLK_F3:	case SDLK_F4:
 	case SDLK_F5:	case SDLK_F6:	case SDLK_F7:	case SDLK_F8:
@@ -1335,7 +1355,6 @@ static void key_down(struct fb_window *win, const SDL_KeyboardEvent *kev)
 	case SDLK_HOME:		dkey = DISPLAY_KEY_HOME; break;
 	case SDLK_END:		dkey = DISPLAY_KEY_END; break;
 	case SDLK_PAGEUP:	dkey = DISPLAY_KEY_PAGE_UP; break;
-	case SDLK_INSERT:	dkey = DISPLAY_KEY_INSERT; break;
 	case SDLK_PAGEDOWN:	dkey = DISPLAY_KEY_PAGE_DOWN; break;
 	case SDLK_KP_8:	if (!numlock) dkey = DISPLAY_KEY_UP; break;
 	case SDLK_KP_2:	if (!numlock) dkey = DISPLAY_KEY_DOWN; break;
@@ -1345,6 +1364,8 @@ static void key_down(struct fb_window *win, const SDL_KeyboardEvent *kev)
 	case SDLK_KP_1:	if (!numlock) dkey = DISPLAY_KEY_END; break;
 	case SDLK_KP_9:	if (!numlock) dkey = DISPLAY_KEY_PAGE_UP; break;
 	case SDLK_KP_3:	if (!numlock) dkey = DISPLAY_KEY_PAGE_DOWN; break;
+	case SDLK_KP_0:	if (!numlock) dkey = DISPLAY_KEY_INSERT; break;
+	case SDLK_KP_PERIOD: if (!numlock) dkey = DISPLAY_KEY_DELETE; break;
 
 	case SDLK_LCTRL:	case SDLK_RCTRL:
 	case SDLK_LALT:		case SDLK_RALT:
@@ -1362,12 +1383,20 @@ static void key_down(struct fb_window *win, const SDL_KeyboardEvent *kev)
 		break;
 
 	default:
-		/*  Ctrl+letter etc. give control characters:  */
-		if ((keysym->mod & KMOD_CTRL) && ((key >= 'a' && key <= 'z') ||
-		    (key >= '@' && key <= '_') || key == ' '))
+		if (mods & DISPLAY_MOD_ALT) {
+			/*  Alt+letter etc., with what else is held (the text
+			    that the key gives is left out):  */
+			if (key >= ' ' && key < 0x7f)
+				ch = key;
+		} else if ((keysym->mod & KMOD_CTRL) && ((key >= 'a' &&
+		    key <= 'z') || (key >= '@' && key <= '_') || key == ' ')) {
+			/*  Ctrl+letter etc. give control characters:  */
 			ch = key & 0x1f;
+			mods &= ~DISPLAY_MOD_CTRL;
+		}
 	}
 
+	/*  The key is held until SDL_KEYUP (repeats come as KEY_REPEAT):  */
 	if (ch >= 0 || dkey >= 0) {
 		if (!kev->repeat || held_scancode != keysym->scancode ||
 		    held_machine != m) {
@@ -1379,9 +1408,9 @@ static void key_down(struct fb_window *win, const SDL_KeyboardEvent *kev)
 		last_keydown_repeat = false;
 		console_key_hold(m->main_console_handle);
 		if (dkey >= 0)
-			display_key(m, dkey);
+			display_key(m, dkey, mods);
 		else
-			console_makeavail(m->main_console_handle, ch);
+			display_char(m, ch, mods);
 	} else if (!modifier) {
 		last_keydown_scancode = keysym->scancode;
 		last_keydown_repeat = (kev->repeat != 0);
@@ -1432,10 +1461,13 @@ static void handle_event(const SDL_Event *ev)
 		break;
 
 	case SDL_TEXTINPUT:
-		/*  (Control characters were sent by key_down(), and the menus
-		    take all keys while they are open.)  */
+		/*  (Control characters, and keys with the left Alt key for a
+		    keyboard that takes it, were sent by key_down(), and the
+		    menus take all keys while they are open.)  */
 		if ((win = fb_window_of(ev->text.windowID)) != NULL &&
-		    !(SDL_GetModState() & KMOD_CTRL) && SWIN(win)->menu_depth == 0)
+		    !(SDL_GetModState() & KMOD_CTRL) &&
+		    !(key_mods(win->machine, SDL_GetModState()) &
+		    DISPLAY_MOD_ALT) && SWIN(win)->menu_depth == 0)
 			text_input(win->machine, ev->text.text);
 		break;
 

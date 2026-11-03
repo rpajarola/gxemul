@@ -100,8 +100,14 @@ enum display_key {
 	DISPLAY_KEY_END,
 	DISPLAY_KEY_PAGE_UP,
 	DISPLAY_KEY_PAGE_DOWN,
-	DISPLAY_KEY_INSERT
+	DISPLAY_KEY_INSERT,
+	DISPLAY_KEY_DELETE
 };
+
+/*  The modifiers held with a key (display_key()), as xterm adds them:  */
+#define	DISPLAY_MOD_SHIFT	1
+#define	DISPLAY_MOD_ALT		2
+#define	DISPLAY_MOD_CTRL	4
 
 
 /*
@@ -193,8 +199,9 @@ void display_update(struct fb_window *win, int x1, int y1, int x2, int y2);
 void display_update_cursor(struct fb_window *win);
 void display_flush(struct fb_window *win);
 void display_check_event(struct emul *emul);
-void display_key(struct machine *m, int key);
-bool display_keysym(struct machine *m, uint32_t keysym, bool ctrl);
+void display_key(struct machine *m, int key, int mods);
+void display_char(struct machine *m, int ch, int mods);
+bool display_keysym(struct machine *m, uint32_t keysym, int mods);
 int display_screenshot(struct machine *, const char *file);
 int display_screendump(struct machine *, int n, const char *file,
 	char **namep, int *wp, int *hp);

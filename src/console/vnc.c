@@ -131,7 +131,7 @@ struct vnc_client {
 	int		buttons;
 	int		mouse_x, mouse_y;
 	bool		mouse_known;
-	bool		ctrl_l, ctrl_r;
+	bool		shift_l, shift_r, ctrl_l, ctrl_r, alt_l;
 
 	unsigned char	challenge[16];
 	bool		closing;	/*  once what is sent has gone  */
@@ -1017,18 +1017,35 @@ static void send_challenge(struct vnc_client *c)
  */
 
 /*  X11 keysyms (the others are in display.c):  */
+#define	XK_Shift_L	0xffe1
+#define	XK_Shift_R	0xffe2
 #define	XK_Control_L	0xffe3
 #define	XK_Control_R	0xffe4
+#define	XK_Alt_L	0xffe9
 
 
+/*
+ *  Keys are typed with the modifiers that are held (see display_key()):
+ *  Shift, Ctrl, and the left Alt key (as in the SDL window: the right one
+ *  is often AltGr, and the client sends what it types).
+ */
 static void key_event(struct vnc_client *c, bool down, uint32_t key)
 {
+	if (key == XK_Shift_L)
+		c->shift_l = down;
+	if (key == XK_Shift_R)
+		c->shift_r = down;
 	if (key == XK_Control_L)
 		c->ctrl_l = down;
 	if (key == XK_Control_R)
 		c->ctrl_r = down;
+	if (key == XK_Alt_L)
+		c->alt_l = down;
 	if (down)
-		display_keysym(c->win->machine, key, c->ctrl_l || c->ctrl_r);
+		display_keysym(c->win->machine, key,
+		    (c->shift_l || c->shift_r ? DISPLAY_MOD_SHIFT : 0) |
+		    (c->ctrl_l || c->ctrl_r ? DISPLAY_MOD_CTRL : 0) |
+		    (c->alt_l ? DISPLAY_MOD_ALT : 0));
 }
 
 

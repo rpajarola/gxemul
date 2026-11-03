@@ -544,14 +544,13 @@ struct lk201_data {
         void                    (*add_to_rx_queue)(void *,int,int);
 	void			*add_data;
                 
-        unsigned char           keyb_buf[8];
+        unsigned char           keyb_buf[16];
         int                     keyb_buf_pos;
 	int			keyb_delay;	/*  ticks until the next key  */
 	uint64_t		keyb_esc_usec;	/*  when keyb_buf last grew  */
-	int			hold_next;
-	int			key_down;
-	int			shifted;
-	int			controlled;
+	int			hold_next;	/*  the next key is held  */
+	int			key_down;	/*  the key held, or 0  */
+	int			key_down_mods;	/*  its LK201_MOD_*  */
 
         int                     mouse_mode;
         int                     mouse_revision;         /*  0..15  */  

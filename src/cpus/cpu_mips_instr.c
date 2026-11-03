@@ -992,6 +992,25 @@ X(bgtzl_samepage)
 }
 
 
+#ifndef	RFE_INTERRUPT_INCLUDED
+#define	RFE_INTERRUPT_INCLUDED
+/*
+ *  rfe_interrupt():  An rfe in the delay slot of a jr enabled a pending
+ *  interrupt (X(rfe)); the jr has jumped, and the interrupt is taken before
+ *  the instruction there, if it is still pending and enabled.
+ */
+static void rfe_interrupt(struct cpu *cpu)
+{
+	uint32_t status = cpu->cd.mips.coproc[0]->reg[COP0_STATUS];
+	uint32_t cause = cpu->cd.mips.coproc[0]->reg[COP0_CAUSE];
+
+	cpu->cd.mips.rfe_interrupt = 0;
+	if (status & MIPS_SR_INT_IE && status & cause & STATUS_IM_MASK)
+		mips_cpu_exception(cpu, EXCEPTION_INT, 0, 0, 0, 0, 0, 0);
+}
+#endif
+
+
 /*
  *  jr, jalr: Jump to a register [and link].
  *
@@ -1010,8 +1029,12 @@ X(jr)
 		/*  Note: Must be non-delayed when jumping to the new pc:  */
 		cpu->delay_slot = NOT_DELAYED;
 		quick_pc_to_pointers(cpu);
-	} else
+		if (unlikely(cpu->cd.mips.rfe_interrupt))
+			rfe_interrupt(cpu);
+	} else {
 		cpu->delay_slot = NOT_DELAYED;
+		cpu->cd.mips.rfe_interrupt = 0;
+	}
 }
 X(jr_ra)
 {
@@ -1024,8 +1047,12 @@ X(jr_ra)
 		/*  Note: Must be non-delayed when jumping to the new pc:  */
 		cpu->delay_slot = NOT_DELAYED;
 		quick_pc_to_pointers(cpu);
-	} else
+		if (unlikely(cpu->cd.mips.rfe_interrupt))
+			rfe_interrupt(cpu);
+	} else {
 		cpu->delay_slot = NOT_DELAYED;
+		cpu->cd.mips.rfe_interrupt = 0;
+	}
 }
 X(jr_ra_addiu)
 {
@@ -1049,8 +1076,12 @@ X(jr_ra_trace)
 		/*  Note: Must be non-delayed when jumping to the new pc:  */
 		cpu->delay_slot = NOT_DELAYED;
 		quick_pc_to_pointers(cpu);
-	} else
+		if (unlikely(cpu->cd.mips.rfe_interrupt))
+			rfe_interrupt(cpu);
+	} else {
 		cpu->delay_slot = NOT_DELAYED;
+		cpu->cd.mips.rfe_interrupt = 0;
+	}
 }
 X(jalr)
 {
@@ -2259,7 +2290,31 @@ X(rfe)
 	 *  Note: no pc to pointers conversion is necessary here. Usually the
 	 *  rfe instruction resides in the delay slot of a jr k0/k1, and
 	 *  it is up to that instruction to do the pointer conversion.
+	 *
+	 *  An interrupt that is pending and enabled now is taken before the
+	 *  next instruction, as on the R3000: at the target of that jr (which
+	 *  raises it, X(jr)), or after this rfe outside a delay slot.  The
+	 *  dyntrans loop would see it only at the start of its next run, and
+	 *  an operating system that posts a software interrupt for the return
+	 *  to user mode (an APC) would run user code first.
 	 */
+	{
+		uint32_t status = cpu->cd.mips.coproc[0]->reg[COP0_STATUS];
+		uint32_t cause = cpu->cd.mips.coproc[0]->reg[COP0_CAUSE];
+
+		if (!(status & MIPS_SR_INT_IE && status & cause & STATUS_IM_MASK))
+			return;
+		if (cpu->delay_slot) {
+			cpu->cd.mips.rfe_interrupt = 1;
+			return;
+		}
+		int low_pc = ((size_t)ic - (size_t)cpu->cd.mips.cur_ic_page)
+		    / sizeof(struct mips_instr_call);
+		cpu->pc &= ~((MIPS_IC_ENTRIES_PER_PAGE-1)
+		    << MIPS_INSTR_ALIGNMENT_SHIFT);
+		cpu->pc += ((low_pc + 1) << MIPS_INSTR_ALIGNMENT_SHIFT);
+		mips_cpu_exception(cpu, EXCEPTION_INT, 0, 0, 0, 0, 0, 0);
+	}
 }
 
 

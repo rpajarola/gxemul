@@ -56,6 +56,15 @@
 #define	LK_KEY_RIGHT		0xa8
 #define	LK_KEY_DOWN		0xa9
 #define	LK_KEY_UP		0xaa
+#define	LK_KEY_COMPOSE		0xb1
+#define	LK_KEY_TAB		0xbe
+
+/*  The modifiers held with a key, as an escape sequence's parameter m has
+    them (m - 1, as display_key() and xterm send them): Shift, Alt (the
+    LK201's Compose key) and Ctrl:  */
+#define	LK201_MOD_SHIFT		1
+#define	LK201_MOD_ALT		2
+#define	LK201_MOD_CTRL		4
 
 /*  The keyboard sends at 4800 bps: about 2 ms per byte, or 4 ticks of the
     serial controllers (every 16384 cycles, at about 33 MHz):  */
@@ -70,16 +79,22 @@
 #define	LK201_MOUSE_MAX		50
 
 
+static int lk201_char_key(int ch, int *mods);
+
+
 /*
  *  lk201_escape_key():
  *
  *  The key of a terminal's escape sequence (what display_key() sends for
  *  function and editing keys, and an xterm's), given what follows the
- *  escape: "[A" for Up, "OP" for F1, "[15~" for F5, "[1;5A" for Ctrl+Up
- *  (as Up), ...  Returns -1 if the sequence isn't complete yet, and 0 if
- *  it isn't a key's.
+ *  escape: "[A" for Up, "OP" for F1, "[15~" for F5, "[Z" for Shift+Tab,
+ *  "[1;5A" for Ctrl+Up, "[1;3S" for Alt+F4, and "[27;3;102~" for Alt+f
+ *  (display_char(), as xterm's modifyOtherKeys sends a character with
+ *  modifiers).  The parameter m after the first ';' is 1 + the modifiers
+ *  held with the key, which go into *mods (LK201_MOD_*).  Returns -1 if
+ *  the sequence isn't complete yet, and 0 if it isn't a key's.
  */
-static int lk201_escape_key(const unsigned char *seq, int len)
+static int lk201_escape_key(const unsigned char *seq, int len, int *mods)
 {
 	/*  The keys of a VT220's "[n~" sequences: F1 to F20 (F15 is Help,
 	    F16 is Do) and the editing keys:  */
@@ -92,8 +107,9 @@ static int lk201_escape_key(const unsigned char *seq, int len)
 		{ 25, 0x73 }, { 26, 0x74 }, { 28, 0x7c }, { 29, 0x7d },
 		{ 31, 0x80 }, { 32, 0x81 }, { 33, 0x82 }, { 34, 0x83 },
 		{ 0, 0 } };
-	int final = seq[len - 1], n = 0, i;
+	int final = seq[len - 1], param[3] = { 0, 0, 0 }, nparam = 0, i, key;
 
+	*mods = 0;
 	if (len < 2)
 		return -1;
 
@@ -110,6 +126,19 @@ static int lk201_escape_key(const unsigned char *seq, int len)
 	if ((final >= '0' && final <= '9') || final == ';')
 		return -1;
 
+	/*  Its parameters, n;m;c:  */
+	for (i = 1; i < len - 1; i++) {
+		if (seq[i] == ';' && nparam < 2)
+			nparam ++;
+		else if (seq[i] >= '0' && seq[i] <= '9' && param[nparam] < 1000)
+			param[nparam] = param[nparam] * 10 + seq[i] - '0';
+		else
+			return 0;
+	}
+	if (param[1] > 1)
+		*mods = (param[1] - 1) &
+		    (LK201_MOD_SHIFT | LK201_MOD_ALT | LK201_MOD_CTRL);
+
 	switch (final) {
 	case 'A':	return LK_KEY_UP;
 	case 'B':	return LK_KEY_DOWN;
@@ -117,11 +146,19 @@ static int lk201_escape_key(const unsigned char *seq, int len)
 	case 'D':	return LK_KEY_LEFT;
 	case 'H':	return LK_KEY_FIND;		/*  Home  */
 	case 'F':	return LK_KEY_SELECT;		/*  End  */
+	case 'P': case 'Q': case 'R': case 'S':
+			/*  F1 to F4 with modifiers:  */
+			return 0x56 + final - 'P';
+	case 'Z':	*mods |= LK201_MOD_SHIFT;	/*  Shift+Tab  */
+			return LK_KEY_TAB;
 	case '~':
-		for (i = 1; i < len - 1 && seq[i] != ';'; i++)
-			n = n * 10 + seq[i] - '0';
+		if (param[0] == 27 && nparam == 2) {
+			/*  A character, with modifiers:  */
+			key = lk201_char_key(param[2], mods);
+			return key > 0? key : 0;
+		}
 		for (i = 0; tilde[i].n != 0; i++)
-			if (tilde[i].n == n)
+			if (tilde[i].n == param[0])
 				return tilde[i].key;
 	}
 	return 0;
@@ -131,39 +168,37 @@ static int lk201_escape_key(const unsigned char *seq, int len)
 /*
  *  lk201_send_key():
  *
- *  Sends a key's press and release (with Shift or Control held), and
- *  returns how many bytes that is.
+ *  Sends a key's press and release, with the modifier keys of mods
+ *  (LK201_MOD_*) held, and returns how many bytes that is.
  */
-static int lk201_send_key(struct lk201_data *d, int key, bool shifted,
-	bool controlled)
+static int lk201_send_key(struct lk201_data *d, int key, int mods)
 {
 	int n = 0;
 	int hold = d->hold_next;
 	d->hold_next = 0;
 
-	if (hold && d->key_down == key && d->shifted == (int)shifted &&
-	    d->controlled == (int)controlled) {
+	if (hold && d->key_down == key && d->key_down_mods == mods) {
 		d->add_to_rx_queue(d->add_data, KEY_REPEAT, DCKBD_PORT);
 		return 1;
 	}
 
 	d->add_to_rx_queue(d->add_data, KEY_UP, DCKBD_PORT), n++;
-	if (shifted)
+	if (mods & LK201_MOD_SHIFT)
 		d->add_to_rx_queue(d->add_data, KEY_SHIFT, DCKBD_PORT), n++;
-	if (controlled)
+	if (mods & LK201_MOD_CTRL)
 		d->add_to_rx_queue(d->add_data, KEY_CONTROL, DCKBD_PORT), n++;
+	if (mods & LK201_MOD_ALT)
+		d->add_to_rx_queue(d->add_data, LK_KEY_COMPOSE, DCKBD_PORT), n++;
 
 	/*  The key, and its release (unless held):  */
 	d->add_to_rx_queue(d->add_data, key, DCKBD_PORT), n++;
 	if (hold) {
 		d->key_down = key;
-		d->shifted = shifted;
-		d->controlled = controlled;
+		d->key_down_mods = mods;
 	} else {
 		d->add_to_rx_queue(d->add_data, KEY_UP, DCKBD_PORT), n++;
 		d->key_down = 0;
-		d->shifted = 0;
-		d->controlled = 0;
+		d->key_down_mods = 0;
 	}
 	return n;
 }
@@ -177,8 +212,7 @@ static int lk201_send_key_up(struct lk201_data *d)
 
 	d->add_to_rx_queue(d->add_data, KEY_UP, DCKBD_PORT);
 	d->key_down = 0;
-	d->shifted = 0;
-	d->controlled = 0;
+	d->key_down_mods = 0;
 	return 1;
 }
 
@@ -218,6 +252,39 @@ static int lk201_ascii_key(int ch, int *shifted)
 
 
 /*
+ *  lk201_char_key():
+ *
+ *  Returns the LK201 key that types the character ch, or -1 if there is
+ *  none, and adds the modifiers it needs to *mods: Shift, and Ctrl for a
+ *  control character (Ctrl-A is Ctrl+a, Ctrl-] is Ctrl+], and ESC is
+ *  Ctrl+[, see lk201_send_escape()).
+ */
+static int lk201_char_key(int ch, int *mods)
+{
+	int key, shifted;
+
+	switch (ch) {
+	case '\b':
+		return 0xbc;
+	case '\n':
+	case '\r':
+		return 0xbd;
+	case '\t':
+		return LK_KEY_TAB;
+	}
+
+	if (ch < 32) {
+		ch = ch >= 1 && ch <= 26 ? 'a' + ch - 1 : ch + '@';
+		*mods |= LK201_MOD_CTRL;
+	}
+	key = lk201_ascii_key(ch, &shifted);
+	if (shifted)
+		*mods |= LK201_MOD_SHIFT;
+	return key;
+}
+
+
+/*
  *  lk201_send_escape():
  *
  *  The LK201 has no Esc key: Ctrl+[ types ESC, in X as on the console.
@@ -228,7 +295,8 @@ static int lk201_send_escape(struct lk201_data *d)
 	int shifted;
 	int key = lk201_ascii_key('[', &shifted);
 
-	return lk201_send_key(d, key, shifted, true);
+	return lk201_send_key(d, key, LK201_MOD_CTRL |
+	    (shifted ? LK201_MOD_SHIFT : 0));
 }
 
 
@@ -264,15 +332,16 @@ static bool lk201_escape_continues(const unsigned char *seq, int len,
  */
 static int lk201_type_escape(struct lk201_data *d)
 {
-	int i, key, shifted, len = d->keyb_buf_pos;
+	int i, key, mods, len = d->keyb_buf_pos;
 	int n = lk201_send_escape(d);
 
 	d->keyb_buf_pos = 0;
 	for (i = 1; i < len &&
 	    d->space_available_in_queue(d->add_data, DCKBD_PORT); i++) {
-		key = lk201_ascii_key(d->keyb_buf[i], &shifted);
+		mods = 0;
+		key = lk201_char_key(d->keyb_buf[i], &mods);
 		if (key >= 0)
-			n += lk201_send_key(d, key, shifted, false);
+			n += lk201_send_key(d, key, mods);
 	}
 	return n;
 }
@@ -291,7 +360,7 @@ static int lk201_type_escape(struct lk201_data *d)
  */
 int lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 {
-	int key, shifted = 0, controlled = 0;
+	int key, mods = 0;
 
 	if (d->keyb_buf_pos > 0 && !lk201_escape_continues(d->keyb_buf + 1,
 	    d->keyb_buf_pos - 1, ch)) {
@@ -307,7 +376,8 @@ int lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 		/*  Escape sequence:  */
 		d->keyb_buf[d->keyb_buf_pos++] = ch;
 
-		key = lk201_escape_key(d->keyb_buf + 1, d->keyb_buf_pos - 1);
+		key = lk201_escape_key(d->keyb_buf + 1, d->keyb_buf_pos - 1,
+		    &mods);
 		if (key < 0 && d->keyb_buf_pos < (int)sizeof(d->keyb_buf))
 			return 0;
 
@@ -316,33 +386,17 @@ int lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 			d->hold_next = 0;
 			return 0;
 		}
-		return lk201_send_key(d, key, false, false);
+		return lk201_send_key(d, key, mods);
 	}
 
-	switch (ch) {
-	case '\b':
-		key = 0xbc;
-		break;
-	case '\n':
-	case '\r':
-		key = 0xbd;
-		break;
-	case '\t':
-		key = 0xbe;
-		break;
-	case 27:	/*  esc  */
+	if (ch == 27) {
+		/*  esc  */
 		d->keyb_buf[0] = 27;
 		d->keyb_buf_pos = 1;
 		return 0;
-	default:
-		/*  Other control characters are Ctrl and a key, e.g. Ctrl-A
-		    is Ctrl+a, and Ctrl-] is Ctrl+]:  */
-		if (ch < 32) {
-			ch = ch >= 1 && ch <= 26 ? 'a' + ch - 1 : ch + '@';
-			controlled = 1;
-		}
-		key = lk201_ascii_key(ch, &shifted);
 	}
+
+	key = lk201_char_key(ch, &mods);
 
 	/*  A character that no key types:  */
 	if (key < 0) {
@@ -350,7 +404,7 @@ int lk201_convert_ascii_to_keybcode(struct lk201_data *d, unsigned char ch)
 		return 0;
 	}
 
-	return lk201_send_key(d, key, shifted, controlled);
+	return lk201_send_key(d, key, mods);
 }
 
 
@@ -680,6 +734,11 @@ void lk201_init(struct lk201_data *d, int use_fb,
 	d->mouse_revision = 0;	/*  0..15  */
 	d->console_handle = console_handle;
 	d->serial_handle = -1;
+
+	/*  The keys typed into the framebuffer window come with the
+	    modifiers held, Shift, Ctrl and Alt (see lk201_escape_key()):  */
+	if (use_fb)
+		console_set_keys_with_modifiers(console_handle);
 
 	/*
 	 *  Power up self-test result, as per
