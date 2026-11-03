@@ -306,10 +306,15 @@ Everything below is in `media/` (not in git).
       for configuration (name, root password, time zone, date with a
       two-digit year, e.g. 96...); it builds a kernel and reboots
       (single-user: Ctrl-D for multi-user).
-    - Warnings at boot: the TOY clock in 12-hour mode and a lost battery
-      backup (RTC setup), to be fixed.
-  - TODO: the RTC warnings, boot to multi-user without Ctrl-D (probably the
-    boot flags), FEPROM programming, ISDN DMA, the LANCE reset and DMA
+    - RTC: register B starts in 24-hour mode (gxemul's time registers
+      always are), and the DEC 3000 year register reads 70: OSF/1's
+      kn15aa_readtodr() accepts only YRREF-1900 and takes the year from
+      the root file system, the TOY giving the time within the year (so
+      a guest year that is a leap year, like the installer's 1996, comes
+      out a day off after February).
+    - `boot dka0` comes up single-user; `boot -fl a dka0` (or `set
+      boot_osflags a`) multi-user.
+  - TODO: FEPROM programming, ISDN DMA, the LANCE reset and DMA
     enable bits in SSR, the real serial ROM version, networking.
 
 ## Things to get from the real machines (when they run)

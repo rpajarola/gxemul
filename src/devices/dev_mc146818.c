@@ -88,6 +88,9 @@ struct mc_data {
 
 	int		dec_year_done;	/*  register 63 has been set  */
 
+	/*  The fixed year register value of the DEC access style:  */
+	int		dec_year;
+
 	/*  The NVRAM (registers 14..63) is kept in this file, if any:  */
 	char		*nvram_file;
 	bool		nvram_dirty;
@@ -430,9 +433,10 @@ static void mc146818_update_time(struct mc_data *d)
 		 *  Ultrix screems. This is also mentioned in NetBSD's
 		 *  mcclock.c.  Unfortunately, this means that NetBSD cannot
 		 *  know what year it actually is, so it has to deduce it
-		 *  from the filesystem.
+		 *  from the filesystem. (The DEC 3000's OSF/1 wants 70, see
+		 *  dev_mc146818_init().)
 		 */
-		d->reg[4 * MC_YEAR] = 72;
+		d->reg[4 * MC_YEAR] = d->dec_year;
 
 		/*
 		 *  Linux on DECstation stores the year in register 63,
@@ -806,6 +810,20 @@ void dev_mc146818_init(struct machine *machine, struct memory *mem,
 	case MC146818_PMPPC:
 		d->use_bcd = 1;
 	}
+
+	/*
+	 *  The time registers always hold the host's time in 24-hour form,
+	 *  so the battery-backed register B says so from the start, as on a
+	 *  machine whose clock was set up long ago. (OSF/1 otherwise "resets
+	 *  the TOY from 12-hour mode" and loses the time on every boot.)
+	 */
+	d->reg[MC_REGB * 4] = MC_REGB_24HR;
+
+	/*  DEC OSes keep a fixed year in the year register and take the real
+	    year from the file system: 72 on DECstations (Ultrix), 70 (YRREF)
+	    on the DEC 3000 (OSF/1's kn15aa_readtodr() rejects anything else
+	    as a "lost battery backup clock").  */
+	d->dec_year = machine->machine_type == MACHINE_DEC3000? 70 : 72;
 
 	if (machine->machine_type != MACHINE_PREP) {
 		/*  NetBSD/prep has a really ugly clock detection code;
