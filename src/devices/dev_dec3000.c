@@ -347,9 +347,12 @@ static uint32_t dma_addr_to_ptr(uint64_t addr)
  *  pointer gets to the middle of a page, and stops with an overrun at the
  *  end of the page, until software clears that. Characters are sent at
  *  once (a loopback receiver gets them at once too), so transmit DMA ends
- *  as soon as it is enabled.
+ *  as soon as it is enabled. Other received characters (typed ones) come
+ *  one per tick, as from a serial line: OSF/1 switches receive buffers
+ *  at the half page interrupt, and loses characters that come too fast.
+ *  max is the most characters to receive now (-1 for any number).
  */
-static void scc_dma_rx(struct dec3000_data *d, int i)
+static void scc_dma_rx(struct dec3000_data *d, int i, int max)
 {
 	uint32_t *sir = &d->ioctl_reg[IOCTL_SIR];
 	uint32_t *ptr = &d->ioctl_reg[scc_dma_bits[i].rx_ptr];
@@ -362,7 +365,7 @@ static void scc_dma_rx(struct dec3000_data *d, int i)
 		return;
 
 	addr = dma_ptr_to_addr(*ptr);
-	while ((ch = dev_scc_dma_rx(d->scc[i])) >= 0) {
+	while (max-- != 0 && (ch = dev_scc_dma_rx(d->scc[i])) >= 0) {
 		memset(word, 0, sizeof(word));
 		word[1] = ch;
 		d->cpu->memory_rw(d->cpu, d->cpu->mem, addr, word,
@@ -379,7 +382,7 @@ static void scc_dma_rx(struct dec3000_data *d, int i)
 	*ptr = dma_addr_to_ptr(addr);
 }
 
-static void scc_dma(struct dec3000_data *d)
+static void scc_dma(struct dec3000_data *d, int rx_max)
 {
 	uint32_t *sir = &d->ioctl_reg[IOCTL_SIR];
 	unsigned char word[4];
@@ -401,13 +404,13 @@ static void scc_dma(struct dec3000_data *d)
 				    NO_EXCEPTIONS | PHYSICAL);
 				dev_scc_dma_tx(d->scc[i], word[1]);
 				addr += sizeof(word);
-				scc_dma_rx(d, i);
+				scc_dma_rx(d, i, -1);
 			} while (addr & 0xfff);
 			*ptr = dma_addr_to_ptr(addr);
 			*sir |= scc_dma_bits[i].tx_end;
 		}
 
-		scc_dma_rx(d, i);
+		scc_dma_rx(d, i, rx_max);
 	}
 
 	update_ioctl_irq(d);
@@ -420,7 +423,7 @@ DEVICE_TICK(dec3000)
 
 	if (d->ioctl_reg[IOCTL_SSR] & (scc_dma_bits[0].rx_en |
 	    scc_dma_bits[1].rx_en))
-		scc_dma(d);
+		scc_dma(d, 1);
 }
 
 
@@ -483,7 +486,7 @@ static void ioctl_regs_access(struct dec3000_data *d, uint32_t off,
 		    "SSR = 0x%08x", *val);
 
 	/*  Enables, pointers and cleared SIR events may start DMA.  */
-	scc_dma(d);
+	scc_dma(d, 0);
 }
 
 

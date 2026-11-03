@@ -314,6 +314,18 @@ Everything below is in `media/` (not in git).
       out a day off after February).
     - `boot dka0` comes up single-user; `boot -fl a dka0` (or `set
       boot_osflags a`) multi-user.
+    - Networking works with gxemul's simulated network (NAT; gateway and
+      DNS at 10.0.0.254): ping, TCP and DNS from the guest. To set it up
+      in OSF/1: in /etc/rc.config NUM_NETCONFIG="1", NETDEV_0="ln0",
+      IFCONFIG_0="10.0.0.1 netmask 255.0.0.0" and MAX_NETDEVS="8" (the
+      installer's rc.config has none, so inet configures no interface);
+      "default 10.0.0.254" in /etc/routes; resolv.conf with nameserver
+      10.0.0.254, and hosts=local,bind in /etc/svc.conf. There is no
+      inbound access (the simulated network has no port forwarding;
+      tap mode would give it).
+    - Console input: SCC receive DMA delivers typed characters one per
+      tick. OSF/1 switches receive buffers at the half page interrupt and
+      lost characters of pasted lines that came in at once.
   - TODO: FEPROM programming, ISDN DMA, the LANCE reset and DMA
     enable bits in SSR, the real serial ROM version, networking.
 
