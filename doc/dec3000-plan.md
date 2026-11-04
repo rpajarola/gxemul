@@ -356,10 +356,9 @@ Everything below is in `media/` (not in git).
     - Headless testing: `SDL_VIDEODRIVER=dummy` and the control socket's
       `screendump`.
   - **OpenVMS AXP V1.0 (work in progress).** `boot dka400` from the V1.0
-    CD (an ODS-2 volume, ALPHAVMSV010) loads the primary bootstrap and the
-    executive, which prints its banner and then idles (the CD is polled
-    every few seconds with TEST UNIT READY, INQUIRY and two MODE SENSEs,
-    and nothing else happens). What it needed so far:
+    CD (an ODS-2 volume, ALPHAVMSV010) boots stand-alone BACKUP: it asks
+    for the date and time, autoconfigures (DKA0 RZ26, DKA400 RRD42,
+    PKA0, PKB0) and gives its `$` prompt. What it needed:
     - 53C94: the status register's phase bits are the bus phase after the
       interrupt register is read (`dev_asc_set_live_phase()`; the
       bootstrap reads STAT again), message in after ICCS, the residual
@@ -372,6 +371,19 @@ Everything below is in `media/` (not in git).
     - SCSI targets on the DEC 3000: a SCSI-2 INQUIRY (format 2, additional
       length 31, no wide bus), and MODE SENSE with page 0x3f, CD-ROM
       pages, page control (changeable values) and exact lengths.
+    - MODE SENSE page 1 with TB and PER set: DKDRIVER's PACKACK fails
+      with SS$_DRVERR (and the volume stays in mount verification)
+      unless page 1 byte 2 is 0x24, apart from bits that are changeable.
+    - SCC characters take time to send (`dev_scc_set_tx_delay()`): the
+      transmit interrupt is pending when a character has been sent, not
+      when it is written. VMS's console driver writes a character and
+      then resets the pending transmit interrupt, and waits for the
+      next one.
+    - Debugging aids: the executive's symbols come from
+      SYS$BASE_IMAGE.EXE's global symbol table (names to symbol vector
+      offsets; the vector in memory holds the cells' addresses), and
+      the PCBs (state at 0x6c), UCBs (status at 0x88, current IRP at
+      0x78) and the timer queue can be read with the control socket.
   - TODO: FEPROM programming, ISDN DMA, the LANCE reset and DMA
     enable bits in SSR, the real serial ROM version, the HX option ROM's self-test
     (TC0 ?? 300 with the fake ROM), mouse input under X.

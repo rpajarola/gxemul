@@ -98,6 +98,12 @@ struct scc_data {
 	int		tx_finishing[N_SCC_PORTS];
 	int64_t		tx_written_at[N_SCC_PORTS];
 
+	/*  With tx_delay (instructions), every character takes that long to
+	    send, and the transmit interrupt is pending only when it has
+	    been sent (OpenVMS resets it right after writing a character,
+	    and waits for the next). Otherwise it is pending at once.  */
+	int64_t		tx_delay;
+
 	unsigned char	scc_register_r[N_SCC_PORTS * N_SCC_REGS];
 	unsigned char	scc_register_w[N_SCC_PORTS * N_SCC_REGS];
 
@@ -388,7 +394,8 @@ DEVICE_TICK(scc)
 			    was enabled has been sent (OpenVMS enables it right
 			    after writing a character, and waits for it):  */
 			if (d->tx_finishing[i] && cpu->ninstrs -
-			    d->tx_written_at[i] >= SCC_CHAR_INSTRS) {
+			    d->tx_written_at[i] >= (d->tx_delay > 0?
+			    d->tx_delay : SCC_CHAR_INSTRS)) {
 				if (d->scc_register_w[i * N_SCC_REGS +
 				    SCC_WR1] & SCC_WR1_TX_IE)
 					d->scc_register_r[N_SCC_REGS +
@@ -546,6 +553,17 @@ void dev_scc_kbd_present(void *e)
 	struct scc_data *d = (struct scc_data *) e;
 
 	d->lk201.kbd_present = 1;
+}
+
+
+/*
+ *  dev_scc_set_tx_delay():
+ *
+ *  Characters take ninstrs instructions to send (see tx_delay).
+ */
+void dev_scc_set_tx_delay(void *e, int64_t ninstrs)
+{
+	((struct scc_data *) e)->tx_delay = ninstrs;
 }
 
 
@@ -751,7 +769,15 @@ DEVICE_ACCESS(scc)
 			scc_tx(d, port, idata);
 
 			/*  TX interrupt:  */
-			if (d->scc_register_w[port * N_SCC_REGS + SCC_WR9] &
+			if (d->tx_delay > 0) {
+				/*  Loading the buffer clears the pending
+				    interrupt; it is pending again when the
+				    character has been sent.  */
+				scc_clear_ip(d, port == SCC_CHANNEL_A?
+				    SCC_RR3_TX_IP_A : SCC_RR3_TX_IP_B);
+				d->tx_finishing[port] = 1;
+				d->tx_written_at[port] = cpu->ninstrs;
+			} else if (d->scc_register_w[port * N_SCC_REGS + SCC_WR9] &
 			    SCC_WR9_MASTER_IE &&
 			    d->scc_register_w[port * N_SCC_REGS + SCC_WR1] &
 			    SCC_WR1_TX_IE) {

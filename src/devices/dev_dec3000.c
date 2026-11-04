@@ -583,6 +583,7 @@ static int ioctl_access(struct dec3000_data *d, struct cpu *cpu,
 
 /*  The 53C94s' command latency (see dev_asc_set_irq_latency()):  */
 #define	ASC_IRQ_LATENCY		100000		/*  instructions  */
+#define	SCC_TX_DELAY		20000		/*  instructions  */
 
 #define	TCDS_CIR_DMA_EN(ch)	(0x100 << (ch))
 #define	TCDS_CIR_GPI		0xf0
@@ -1322,6 +1323,10 @@ struct dec3000_data *dev_dec3000_init(struct machine *machine,
 	    machine->display_md.in_use, 1, 1);
 	dev_scc_kbd_present(d->scc[1]);
 	dev_scc_serial_console(d->scc[1], machine);
+	/*  Characters take time to send (OpenVMS's console driver needs
+	    the transmit interrupt to come after the character is sent):  */
+	dev_scc_set_tx_delay(d->scc[0], SCC_TX_DELAY);
+	dev_scc_set_tx_delay(d->scc[1], SCC_TX_DELAY);
 	machine_add_tickfunction(machine, dev_dec3000_tick, d, 14);
 
 	snprintf(tmp, sizeof(tmp), "%s.dec3000.8", machine->path);

@@ -641,6 +641,7 @@ static int mode_page(struct diskimage *d, unsigned char *p, int pagecode)
 		case 0x01:	/*  read error recovery  */
 			p[0] = pagecode;
 			p[1] = 6;
+			p[2] = 0x24;	/*  TB, PER (see below)  */
 			return 8;
 		case 0x0d:	/*  CD-ROM device parameters  */
 			p[0] = pagecode;
@@ -664,6 +665,9 @@ static int mode_page(struct diskimage *d, unsigned char *p, int pagecode)
 	case 1:		/*  read-write error recovery page  */
 		p[0] = pagecode;
 		p[1] = 10;
+		/*  Transfer Block and Post Error, which OpenVMS's disk
+		    class driver requires (or else to be able to set them):  */
+		p[2] = 0x24;
 		return 12;
 	case 3:		/*  format device page  */
 		p[0] = pagecode;

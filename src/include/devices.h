@@ -404,6 +404,7 @@ void *dev_scc_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, char* irq_path, int use_fb, int scc_nr, int addrmul);
 void dev_scc_kbd_present(void *e);
 void dev_scc_serial_console(void *e, struct machine *machine);
+void dev_scc_set_tx_delay(void *e, int64_t ninstrs);
 
 /*  dev_sfb.c:  */
 #define	DEV_SFB_LENGTH		0x400000
