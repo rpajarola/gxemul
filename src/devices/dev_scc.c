@@ -75,6 +75,10 @@
 /*  #define SCC_DEBUG  */
 
 
+/*  About how long a character takes to send (1 ms, 9600 bps), in
+    instructions:  */
+#define	SCC_CHAR_INSTRS		100000
+
 struct scc_data {
 	struct interrupt	irq;
 
@@ -86,6 +90,13 @@ struct scc_data {
 
 	int		register_select_in_progress[N_SCC_PORTS];
 	int		register_selected[N_SCC_PORTS];
+
+	/*  A character was written while transmit interrupts were off; it
+	    has been sent SCC_CHAR_INSTRS instructions after tx_written_at,
+	    which sets the transmit interrupt pending if they are on by
+	    then.  */
+	int		tx_finishing[N_SCC_PORTS];
+	int64_t		tx_written_at[N_SCC_PORTS];
 
 	unsigned char	scc_register_r[N_SCC_PORTS * N_SCC_REGS];
 	unsigned char	scc_register_w[N_SCC_PORTS * N_SCC_REGS];
@@ -373,16 +384,26 @@ DEVICE_TICK(scc)
 		 */
 		if (d->scc_register_w[N_SCC_REGS + SCC_WR9] &
 		    SCC_WR9_MASTER_IE) {
-			/*  TX interrupts?  */
-			if (d->scc_register_w[i * N_SCC_REGS + SCC_WR1] &
-			    SCC_WR1_TX_IE) {
-				if (d->scc_register_r[i * N_SCC_REGS + SCC_RR3]
-				    & SCC_RR3_TX_IP_A ||
-				    d->scc_register_r[i * N_SCC_REGS + SCC_RR3]
-				    & SCC_RR3_TX_IP_B) {
-					INTERRUPT_ASSERT(d->irq);
-				}
+			/*  A character written before the transmit interrupt
+			    was enabled has been sent (OpenVMS enables it right
+			    after writing a character, and waits for it):  */
+			if (d->tx_finishing[i] && cpu->ninstrs -
+			    d->tx_written_at[i] >= SCC_CHAR_INSTRS) {
+				if (d->scc_register_w[i * N_SCC_REGS +
+				    SCC_WR1] & SCC_WR1_TX_IE)
+					d->scc_register_r[N_SCC_REGS +
+					    SCC_RR3] |= i == SCC_CHANNEL_A?
+					    SCC_RR3_TX_IP_A : SCC_RR3_TX_IP_B;
+				d->tx_finishing[i] = 0;
 			}
+
+			/*  TX interrupts? (RR3 is channel A's.)  */
+			if (d->scc_register_w[i * N_SCC_REGS + SCC_WR1] &
+			    SCC_WR1_TX_IE &&
+			    d->scc_register_r[N_SCC_REGS + SCC_RR3] &
+			    (i == SCC_CHANNEL_A? SCC_RR3_TX_IP_A :
+			    SCC_RR3_TX_IP_B))
+				INTERRUPT_ASSERT(d->irq);
 
 			/*  RX interrupts? (Not in "special condition only"
 			    mode, which DMA receivers use.)  */
@@ -407,6 +428,45 @@ DEVICE_TICK(scc)
 			}
 		}
 	}
+}
+
+
+/*
+ *  scc_rr2():
+ *
+ *  RR2 is the interrupt vector (WR2); read through channel B, it is
+ *  modified by the highest priority interrupt that is pending, in bits
+ *  3:1 (or, reversed, in bits 6:4 with Status High), whether or not the
+ *  vector includes status when it is given to the CPU (WR9 VIS). OpenVMS
+ *  tells its interrupts apart by it.
+ */
+static int scc_rr2(struct scc_data *d, int port)
+{
+	static const struct { int ip, status; } prio[] = {
+		{ SCC_RR3_RX_IP_A, SCC_RR2_A_RECV_DONE },
+		{ SCC_RR3_TX_IP_A, SCC_RR2_A_XMIT_DONE },
+		{ SCC_RR3_EXT_IP_A, SCC_RR2_A_EXT_STATUS },
+		{ SCC_RR3_RX_IP_B, SCC_RR2_B_RECV_DONE },
+		{ SCC_RR3_TX_IP_B, SCC_RR2_B_XMIT_DONE },
+		{ SCC_RR3_EXT_IP_B, SCC_RR2_B_EXT_STATUS },
+		{ 0, 0 } };
+	int vector = d->scc_register_w[port * N_SCC_REGS + SCC_WR2];
+	int ip = d->scc_register_r[N_SCC_REGS + SCC_RR3];
+	int i, status = SCC_RR2_B_RECV_SPECIAL;		/*  none pending  */
+
+	if (port == SCC_CHANNEL_A)
+		return vector;
+
+	for (i = 0; prio[i].ip != 0; i++)
+		if (ip & prio[i].ip) {
+			status = prio[i].status;
+			break;
+		}
+
+	if (d->scc_register_w[N_SCC_REGS + SCC_WR9] & SCC_WR9_STATUS_HIGH)
+		return (vector & ~0x70) | ((status & 8) << 1) |
+		    ((status & 4) << 3) | ((status & 2) << 5);
+	return (vector & ~0x0e) | status;
 }
 
 
@@ -551,6 +611,8 @@ DEVICE_ACCESS(scc)
 		if (writeflag==MEM_READ) {
 			odata = d->scc_register_r[port * N_SCC_REGS +
 			    d->register_selected[port]];
+			if (d->register_selected[port] == SCC_RR2)
+				odata = scc_rr2(d, port);
 
 			/*  Reading RR3 doesn't clear the interrupts; they
 			    are cleared by reading the received character,
@@ -592,6 +654,14 @@ DEVICE_ACCESS(scc)
 			} else {
 				d->scc_register_w[port * N_SCC_REGS +
 				    d->register_selected[port]] = idata;
+
+				/*  WR2 (the interrupt vector) is shared by both
+				    channels:  */
+				if (d->register_selected[port] == SCC_WR2)
+					d->scc_register_w[SCC_CHANNEL_A *
+					    N_SCC_REGS + SCC_WR2] =
+					    d->scc_register_w[SCC_CHANNEL_B *
+					    N_SCC_REGS + SCC_WR2] = idata;
 
 				/*  WR9 resets (the 5000/1xx PROM's self-test
 				    expects them to leave no interrupts):  */
@@ -691,6 +761,10 @@ DEVICE_ACCESS(scc)
 				else
 					d->scc_register_r[N_SCC_REGS + SCC_RR3]
 					    |= SCC_RR3_TX_IP_B;
+				d->tx_finishing[port] = 0;
+			} else {
+				d->tx_finishing[port] = 1;
+				d->tx_written_at[port] = cpu->ninstrs;
 			}
 
 			dev_scc_tick(cpu, extra);

@@ -627,6 +627,92 @@ static void diskimage__simh_tape_space(struct diskimage *d,
  *	1 if otherwise ok,
  *	0 on error.
  */
+/*
+ *  mode_page():
+ *
+ *  Puts a mode page into p (MODE SENSE), and returns its length, or 0 if
+ *  it isn't implemented.
+ */
+static int mode_page(struct diskimage *d, unsigned char *p, int pagecode)
+{
+	/*  CD-ROM drives' pages (SCSI-2, chapter 14):  */
+	if (d->is_a_cdrom) {
+		switch (pagecode) {
+		case 0x01:	/*  read error recovery  */
+			p[0] = pagecode;
+			p[1] = 6;
+			return 8;
+		case 0x0d:	/*  CD-ROM device parameters  */
+			p[0] = pagecode;
+			p[1] = 6;
+			p[5] = 60;	/*  seconds per minute  */
+			p[7] = 75;	/*  frames per second  */
+			return 8;
+		case 0x0e:	/*  CD audio control  */
+			p[0] = pagecode;
+			p[1] = 14;
+			p[2] = 0x04;	/*  immediate  */
+			p[8] = 0x01;	/*  port 0: channel 0  */
+			p[9] = 0xff;
+			p[10] = 0x02;	/*  port 1: channel 1  */
+			p[11] = 0xff;
+			return 16;
+		}
+	}
+
+	switch (pagecode) {
+	case 1:		/*  read-write error recovery page  */
+		p[0] = pagecode;
+		p[1] = 10;
+		return 12;
+	case 3:		/*  format device page  */
+		p[0] = pagecode;
+		p[1] = 22;
+
+		/*  10,11 = sectors per track  */
+		p[10] = 0;
+		p[11] = d->sectors_per_track;
+
+		/*  12,13 = physical sector size  */
+		p[12] = (d->logical_block_size >> 8) & 255;
+		p[13] = d->logical_block_size & 255;
+		return 24;
+	case 4:		/*  rigid disk geometry page  */
+		p[0] = pagecode;
+		p[1] = 22;
+		p[2] = (d->cylinders >> 16) & 255;
+		p[3] = (d->cylinders >> 8) & 255;
+		p[4] = d->cylinders & 255;
+		p[5] = d->heads;
+		p[20] = (d->rpms >> 8) & 255;
+		p[21] = d->rpms & 255;
+		return 24;
+	case 5:		/*  flexible disk page  */
+		p[0] = pagecode;
+		p[1] = 0x1e;
+
+		/*  2,3 = transfer rate  */
+		p[2] = ((5000) >> 8) & 255;
+		p[3] = (5000) & 255;
+
+		p[4] = d->heads;
+		p[5] = d->sectors_per_track;
+
+		/*  6,7 = data bytes per sector  */
+		p[6] = (d->logical_block_size >> 8) & 255;
+		p[7] = d->logical_block_size & 255;
+
+		p[8] = (d->cylinders >> 8) & 255;
+		p[9] = d->cylinders & 255;
+
+		p[28] = (d->rpms >> 8) & 255;
+		p[29] = d->rpms & 255;
+		return 32;
+	}
+	return 0;
+}
+
+
 int diskimage_scsicommand(struct cpu *cpu, int id, int type,
 	struct scsi_transfer *xferp)
 {
@@ -634,7 +720,7 @@ int diskimage_scsicommand(struct cpu *cpu, int id, int type,
 	int retlen, i, q;
 	uint64_t size;
 	int64_t ofs;
-	int pagecode;
+	int pagecode, pages_start;
 	struct machine *machine = cpu->machine;
 	struct diskimage *d;
 
@@ -818,6 +904,19 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 			}
 		}
 
+		/*
+		 *  On the DEC 3000, a plain SCSI-2 answer as from DEC's
+		 *  drives: response data format 2, the additional length of
+		 *  36 bytes, and no wide bus (OpenVMS's port driver asks
+		 *  again and again otherwise).
+		 */
+		if (machine->machine_type == MACHINE_DEC3000) {
+			xferp->data_in[3] = 0x02;
+			xferp->data_in[4] = 36 - 5;
+			xferp->data_in[6] = 0x00;
+			xferp->data_in[7] = 0x00;
+		}
+
 		/*  Strings given in the machine's configuration:  */
 		inquiry_string(xferp->data_in + 8, 8, d->inq_vendor);
 		inquiry_string(xferp->data_in + 16, 16, d->inq_product);
@@ -883,7 +982,12 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 		retlen += 100;		/*  Should be enough. (Ugly.)  */
 
-		if ((xferp->cmd[2] & 0xc0) != 0)
+		/*  Page control (cmd[2] bits 7-6): current, changeable,
+		    default or saved values. Nothing is changeable (the
+		    pages are then all zero), and the default and saved
+		    values are the current ones.  */
+		if ((xferp->cmd[2] & 0xc0) != 0 &&
+		    machine->machine_type != MACHINE_DEC3000)
 			fatal("WARNING: mode sense, cmd[2] = 0x%02x\n",
 			    xferp->cmd[2]);
 
@@ -911,6 +1015,21 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		xferp->data_in[q+1] = 0;	/*  nr of blocks, high  */
 		xferp->data_in[q+2] = 0;	/*  nr of blocks, mid  */
 		xferp->data_in[q+3] = 0;	/*  nr of blocks, low */
+		if (machine->machine_type == MACHINE_DEC3000) {
+			/*  Default medium type; a CD is write protected:  */
+			xferp->data_in[1] = 0x00;
+			xferp->data_in[2] = d->is_a_cdrom || d->writable == 0?
+			    0x80 : 0x00;
+			/*  (As DEC's drives say, instead of 0 = all.)  */
+			uint64_t nblocks;
+			diskimage_recalc_size(d);
+			nblocks = d->nr_of_logical_blocks;
+			if (nblocks > 0xffffff)
+				nblocks = 0xffffff;
+			xferp->data_in[q+1] = nblocks >> 16;
+			xferp->data_in[q+2] = nblocks >> 8;
+			xferp->data_in[q+3] = nblocks;
+		}
 		xferp->data_in[q+4] = 0x00;	/*  reserved  */
 		xferp->data_in[q+5] = (d->logical_block_size >> 16) & 255;
 		xferp->data_in[q+6] = (d->logical_block_size >> 8) & 255;
@@ -921,64 +1040,56 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 		/*  descriptors, 8 bytes (each)  */
 
-		/*  page, n bytes (each)  */
-		switch (pagecode) {
-		case 0:
-			/*  TODO: Nothing here?  */
-			break;
-		case 1:		/*  read-write error recovery page  */
-			xferp->data_in[q + 0] = pagecode;
-			xferp->data_in[q + 1] = 10;
-			break;
-		case 3:		/*  format device page  */
-			xferp->data_in[q + 0] = pagecode;
-			xferp->data_in[q + 1] = 22;
+		pages_start = q;
 
-			/*  10,11 = sectors per track  */
-			xferp->data_in[q + 10] = 0;
-			xferp->data_in[q + 11] = d->sectors_per_track;
-
-			/*  12,13 = physical sector size  */
-			xferp->data_in[q + 12] =
-			    (d->logical_block_size >> 8) & 255;
-			xferp->data_in[q + 13] = d->logical_block_size & 255;
-			break;
-		case 4:		/*  rigid disk geometry page  */
-			xferp->data_in[q + 0] = pagecode;
-			xferp->data_in[q + 1] = 22;
-			xferp->data_in[q + 2] = (d->cylinders >> 16) & 255;
-			xferp->data_in[q + 3] = (d->cylinders >> 8) & 255;
-			xferp->data_in[q + 4] = d->cylinders & 255;
-			xferp->data_in[q + 5] = d->heads;
-			xferp->data_in[q + 20] = (d->rpms >> 8) & 255;
-			xferp->data_in[q + 21] = d->rpms & 255;
-			break;
-		case 5:		/*  flexible disk page  */
-			xferp->data_in[q + 0] = pagecode;
-			xferp->data_in[q + 1] = 0x1e;
-
-			/*  2,3 = transfer rate  */
-			xferp->data_in[q + 2] = ((5000) >> 8) & 255;
-			xferp->data_in[q + 3] = (5000) & 255;
-
-			xferp->data_in[q + 4] = d->heads;
-			xferp->data_in[q + 5] = d->sectors_per_track;
-
-			/*  6,7 = data bytes per sector  */
-			xferp->data_in[q + 6] = (d->logical_block_size >> 8)
-			    & 255;
-			xferp->data_in[q + 7] = d->logical_block_size & 255;
-
-			xferp->data_in[q + 8] = (d->cylinders >> 8) & 255;
-			xferp->data_in[q + 9] = d->cylinders & 255;
-
-			xferp->data_in[q + 28] = (d->rpms >> 8) & 255;
-			xferp->data_in[q + 29] = d->rpms & 255;
-			break;
-		default:
+		/*  page, n bytes (each); 0x3f is all of them:  */
+		if (pagecode == 0x3f) {
+			static const int disk_pages[] = { 1, 3, 4, -1 };
+			static const int cdrom_pages[] = { 1, 0x0d, 0x0e, -1 };
+			const int *all_pages = d->is_a_cdrom? cdrom_pages :
+			    disk_pages;
+			int k, n;
+			for (k = 0; all_pages[k] >= 0; k++) {
+				n = mode_page(d, xferp->data_in + q,
+				    all_pages[k]);
+				if ((size_t)(q + n) > xferp->data_in_len + 100)
+					break;
+				q += n;
+			}
+		} else if (pagecode != 0 &&
+		    mode_page(d, xferp->data_in + q, pagecode) == 0)
 			debugmsg(SUBSYS_DISK, "scsi", VERBOSITY_WARNING,
 			    "MODE_SENSE for page %i is not yet "
 			    "implemented!", pagecode);
+		else if (pagecode != 0)
+			q += xferp->data_in[q + 1] + 2;
+
+		/*  The mode data length doesn't count itself:  */
+		if (machine->machine_type == MACHINE_DEC3000) {
+			/*  Changeable values: none (all bits zero, but each
+			    page's code and length):  */
+			if ((xferp->cmd[2] & 0xc0) == 0x40) {
+				int pq = pages_start;
+				/*  (The block descriptor too.)  */
+				memset(xferp->data_in + pages_start - 8, 0, 8);
+				while (pq + 1 < q) {
+					int plen = xferp->data_in[pq + 1] + 2;
+					memset(xferp->data_in + pq + 2, 0,
+					    plen - 2);
+					pq += plen;
+				}
+			}
+
+			if (xferp->cmd_len == 10) {
+				xferp->data_in[0] = (q - 2) >> 8;
+				xferp->data_in[1] = q - 2;
+			} else
+				xferp->data_in[0] = q - 1;
+
+			/*  The target sends what there is (at most the
+			    allocation length), not the allocation length:  */
+			if ((size_t)q < xferp->data_in_len)
+				xferp->data_in_len = q;
 		}
 
 		break;

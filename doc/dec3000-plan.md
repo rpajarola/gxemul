@@ -355,6 +355,23 @@ Everything below is in `media/` (not in git).
       tested as far as the X cursor.
     - Headless testing: `SDL_VIDEODRIVER=dummy` and the control socket's
       `screendump`.
+  - **OpenVMS AXP V1.0 (work in progress).** `boot dka400` from the V1.0
+    CD (an ODS-2 volume, ALPHAVMSV010) loads the primary bootstrap and the
+    executive, which prints its banner and then idles (the CD is polled
+    every few seconds with TEST UNIT READY, INQUIRY and two MODE SENSEs,
+    and nothing else happens). What it needed so far:
+    - 53C94: the status register's phase bits are the bus phase after the
+      interrupt register is read (`dev_asc_set_live_phase()`; the
+      bootstrap reads STAT again), message in after ICCS, the residual
+      count after a short DMA transfer, and only as many command bytes as
+      the command's group (the bootstrap puts one more into the FIFO).
+    - SCC: RR2 read through channel B is the vector modified by the
+      highest pending interrupt (VMS's console driver dispatches on it),
+      channel B transmit interrupts, and a character written just before
+      transmit interrupts are enabled still raises one when it is sent.
+    - SCSI targets on the DEC 3000: a SCSI-2 INQUIRY (format 2, additional
+      length 31, no wide bus), and MODE SENSE with page 0x3f, CD-ROM
+      pages, page control (changeable values) and exact lengths.
   - TODO: FEPROM programming, ISDN DMA, the LANCE reset and DMA
     enable bits in SSR, the real serial ROM version, the HX option ROM's self-test
     (TC0 ?? 300 with the fake ROM), mouse input under X.

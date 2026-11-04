@@ -1390,6 +1390,7 @@ struct dec3000_data *dev_dec3000_init(struct machine *machine,
 		/*  OSF/1's CAM layer reuses a command's CCB too early if the
 		    command completes (almost) at once.  */
 		dev_asc_set_irq_latency(d->asc[i], ASC_IRQ_LATENCY);
+		dev_asc_set_live_phase(d->asc[i]);
 	}
 
 

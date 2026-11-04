@@ -124,6 +124,14 @@ struct asc_data {
 	 */
 	int64_t		irq_latency;
 	int64_t		cmd_at;
+	/*
+	 *  Reading the interrupt register leaves the phase bits of the
+	 *  status register alone with live_phase (they are the SCSI bus's
+	 *  phase, as on a real chip; OpenVMS's bootstrap reads them again
+	 *  after the interrupt register). Otherwise they say command phase,
+	 *  which Mach/PMAX needed.
+	 */
+	int		live_phase;
 	int64_t		sel_timeout_at;
 	int		clock_mhz;
 
@@ -384,8 +392,9 @@ static int dev_asc_transfer(struct cpu *cpu, struct asc_data *d, int dmaflag)
 				    d->reg_wo[NCR_TCM] * 256;
 				if (lenIn2 == 0)
 					lenIn2 = 65536;
+				size_t count = lenIn2;
 
-                                if (lenIn < lenIn2) {
+                                if (lenIn < lenIn2 && !d->live_phase) {
                                         fatal("{ asc: data in, lenIn=%i lenIn2=%i "
 					    "}\n", lenIn, lenIn2);
                                 }
@@ -454,13 +463,22 @@ static int dev_asc_transfer(struct cpu *cpu, struct asc_data *d, int dmaflag)
 					lenIn = lenIn2;
 				}
 
+				/*
+				 *  The transfer counter counts down to what is
+				 *  left: with live_phase, a target that sent
+				 *  less than the count leaves the rest (and no
+				 *  Terminal Count).
+				 */
 				lenIn = 0;
+				if (d->live_phase && count > lenIn2)
+					lenIn = count - lenIn2;
 
 				d->reg_ro[NCR_TCL] = lenIn & 255;
 				d->reg_ro[NCR_TCM] = (lenIn >> 8) & 255;
 
 				/*  Successful DMA transfer:  */
-				d->reg_ro[NCR_STAT] |= NCRSTAT_TC;
+				if (lenIn == 0)
+					d->reg_ro[NCR_STAT] |= NCRSTAT_TC;
 			}
 		}
 	} else if (d->cur_phase == PHASE_DATA_OUT) {
@@ -772,6 +790,19 @@ static int dev_asc_select(struct cpu *cpu, struct asc_data *d, int from_id,
 			if (!quiet_mode)
 				debug("%02x ", ch);
 		}
+
+		/*
+		 *  The target takes as many command bytes as the command's
+		 *  group says (OpenVMS's bootstrap puts a byte more into the
+		 *  FIFO than that):
+		 */
+		if (i > 0) {
+			static const int group_len[8] =
+			    { 6, 10, 10, 0, 16, 12, 0, 0 };
+			int glen = group_len[(d->xferp->cmd[0] >> 5) & 7];
+			if (glen > 0 && glen < (int)d->xferp->cmd_len)
+				d->xferp->cmd_len = glen;
+		}
 	} else {
 		if (!quiet_mode)
 			debug("[DMA] ");
@@ -1063,6 +1094,10 @@ DEVICE_ACCESS(asc)
 /*			d->reg_ro[NCR_INTR] |= NCRINTR_BS; */
 			d->reg_ro[NCR_STAT] = (d->reg_ro[NCR_STAT] & ~7) | 7;
 				/*  ? probably 7  */
+			/*  The target stays in the message in phase until the
+			    message is accepted:  */
+			if (d->live_phase)
+				d->cur_phase = PHASE_MSG_IN;
 			d->reg_ro[NCR_STEP] = (d->reg_ro[NCR_STEP] & ~7) | 4;
 				/*  ?  */
 			break;
@@ -1286,8 +1321,13 @@ break;
 			d->reg_ro[NCR_STEP] = 0;
 			d->reg_ro[NCR_STAT] = 0;
 
-			/*  For Mach/PMAX? TODO  */
-			d->reg_ro[NCR_STAT] = PHASE_COMMAND;
+			if (d->live_phase)
+				d->reg_ro[NCR_STAT] =
+				    d->cur_state == STATE_INITIATOR ?
+				    d->cur_phase : 0;
+			else
+				/*  For Mach/PMAX? TODO  */
+				d->reg_ro[NCR_STAT] = PHASE_COMMAND;
 		}
 
 		INTERRUPT_DEASSERT(d->irq);
@@ -1391,6 +1431,18 @@ void dev_asc_set_target_offset(void *asc, int offset)
 void dev_asc_set_irq_latency(void *asc, int64_t ninstrs)
 {
 	((struct asc_data *) asc)->irq_latency = ninstrs;
+}
+
+
+/*
+ *  dev_asc_set_live_phase():
+ *
+ *  The status register's phase bits stay the bus phase when the interrupt
+ *  register is read (see live_phase).
+ */
+void dev_asc_set_live_phase(void *asc)
+{
+	((struct asc_data *) asc)->live_phase = 1;
 }
 
 

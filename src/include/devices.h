@@ -132,6 +132,7 @@ int dev_asc_access(struct cpu *cpu, struct memory *mem, uint64_t relative_addr, 
 void dev_asc_set_target_offset(void *asc, int offset);
 void dev_asc_set_real_sel_timeout(void *asc, int clock_mhz);
 void dev_asc_set_irq_latency(void *asc, int64_t ninstrs);
+void dev_asc_set_live_phase(void *asc);
 void *dev_asc_init(struct machine *machine, struct memory *mem, uint64_t baseaddr,
 	const char *irq_path, void *turbochannel, int mode,
 	size_t (*dma_controller)(void *dma_controller_data,
