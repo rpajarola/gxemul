@@ -237,14 +237,18 @@ static void update_ioctl_irq(struct dec3000_data *d)
 static void ioctl_irq_assert(struct interrupt *interrupt)
 {
 	struct dec3000_data *d = (struct dec3000_data *) interrupt->extra;
-	d->sir_dev |= 1 << interrupt->line;
-	update_ioctl_irq(d);
+	if (!(d->sir_dev & (1 << interrupt->line))) {
+		d->sir_dev |= 1 << interrupt->line;
+		update_ioctl_irq(d);
+	}
 }
 static void ioctl_irq_deassert(struct interrupt *interrupt)
 {
 	struct dec3000_data *d = (struct dec3000_data *) interrupt->extra;
-	d->sir_dev &= ~(1 << interrupt->line);
-	update_ioctl_irq(d);
+	if (d->sir_dev & (1 << interrupt->line)) {
+		d->sir_dev &= ~(1 << interrupt->line);
+		update_ioctl_irq(d);
+	}
 }
 
 

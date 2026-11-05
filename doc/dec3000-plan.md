@@ -355,19 +355,29 @@ Everything below is in `media/` (not in git).
       tested as far as the X cursor.
     - Headless testing: `SDL_VIDEODRIVER=dummy` and the control socket's
       `screendump`.
-  - **OpenVMS AXP V1.0 (work in progress).** `boot dka400` from the V1.0
-    CD (an ODS-2 volume, ALPHAVMSV010) boots stand-alone BACKUP: it asks
-    for the date and time, autoconfigures (DKA0 RZ26, DKA400 RRD42,
-    PKA0, PKB0) and gives its `$` prompt. What it needed:
+  - **OpenVMS AXP V1.0 boots multi-user.** `boot dka400` from the V1.0
+    CD boots stand-alone BACKUP, which restores the base system saveset
+    to disk (`dka0`). First boot runs the installation procedure,
+    AUTOGEN, and shuts down; subsequent `boot dka0` boots into multi-user
+    OpenVMS Alpha V1.0 to the DCL login prompt. What it needed:
     - 53C94: the status register's phase bits are the bus phase after the
       interrupt register is read (`dev_asc_set_live_phase()`; the
       bootstrap reads STAT again), message in after ICCS, the residual
-      count after a short DMA transfer, and only as many command bytes as
-      the command's group (the bootstrap puts one more into the FIFO).
+      count after a short DMA transfer, only as many command bytes as
+      the command's group (the bootstrap puts one more into the FIFO),
+      DMA selections with an external DMA engine (TCDS), and Transfer Pad
+      discarding incoming data in the data in phase before switching to status.
     - SCC: RR2 read through channel B is the vector modified by the
       highest pending interrupt (VMS's console driver dispatches on it),
       channel B transmit interrupts, and a character written just before
       transmit interrupts are enabled still raises one when it is sent.
+    - SCC channel reset: clears pending transmit finishing state and
+      selected register state so the ROM console's mouse probe does not
+      leave a spurious transmit interrupt assertion for SYS$YRDRIVER.
+    - CPU AST delivery: EV4 AST requests are delivered when the current
+      mode is equal to or more privileged than the AST mode ((2 << cm) - 1).
+    - IOCTL ASIC interrupts: edge-triggered sir_dev bit transitions to
+      prevent redundant interrupt asserting.
     - SCSI targets on the DEC 3000: a SCSI-2 INQUIRY (format 2, additional
       length 31, no wide bus), and MODE SENSE with page 0x3f, CD-ROM
       pages, page control (changeable values) and exact lengths.

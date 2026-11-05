@@ -81,6 +81,7 @@
 
 struct scc_data {
 	struct interrupt	irq;
+	int		irq_asserted;
 
 	int		use_fb;
 	int		console_handle;
@@ -223,6 +224,24 @@ static unsigned char rx_nextchar(struct scc_data *d, int portnr)
 }
 
 
+static void scc_assert_irq(struct scc_data *d, const char *reason)
+{
+	(void) reason;
+	if (!d->irq_asserted) {
+		d->irq_asserted = 1;
+		INTERRUPT_ASSERT(d->irq);
+	}
+}
+
+static void scc_deassert_irq(struct scc_data *d, const char *reason)
+{
+	(void) reason;
+	if (d->irq_asserted) {
+		d->irq_asserted = 0;
+		INTERRUPT_DEASSERT(d->irq);
+	}
+}
+
 /*
  *  scc_clear_ip():
  *
@@ -233,7 +252,7 @@ static void scc_clear_ip(struct scc_data *d, int bits)
 {
 	d->scc_register_r[N_SCC_REGS + SCC_RR3] &= ~bits;
 	if (d->scc_register_r[N_SCC_REGS + SCC_RR3] == 0)
-		INTERRUPT_DEASSERT(d->irq);
+		scc_deassert_irq(d, "scc_clear_ip");
 }
 
 
@@ -260,6 +279,10 @@ static void scc_channel_reset(struct scc_data *d, int port)
 	scc_clear_ip(d, port == SCC_CHANNEL_A?
 	    SCC_RR3_EXT_IP_A | SCC_RR3_TX_IP_A | SCC_RR3_RX_IP_A :
 	    SCC_RR3_EXT_IP_B | SCC_RR3_TX_IP_B | SCC_RR3_RX_IP_B);
+
+	d->tx_finishing[port] = 0;
+	d->register_selected[port] = 0;
+	d->register_select_in_progress[port] = 0;
 }
 
 
@@ -282,8 +305,9 @@ static void scc_tx_underrun(struct scc_data *d, int port)
 	    d->scc_register_w[port * N_SCC_REGS + SCC_WR1] & SCC_WR1_EXT_IE) {
 		d->scc_register_r[N_SCC_REGS + SCC_RR3] |=
 		    port == SCC_CHANNEL_A? SCC_RR3_EXT_IP_A : SCC_RR3_EXT_IP_B;
-		if (d->scc_register_w[N_SCC_REGS + SCC_WR9] & SCC_WR9_MASTER_IE)
-			INTERRUPT_ASSERT(d->irq);
+		if (d->scc_register_w[N_SCC_REGS + SCC_WR9] & SCC_WR9_MASTER_IE) {
+			scc_assert_irq(d, "tx_underrun");
+		}
 	}
 }
 
@@ -313,7 +337,7 @@ static void scc_wr0_command(struct scc_data *d, int port, int wr0)
 			d->scc_register_r[N_SCC_REGS + SCC_RR3] |= ext_ip;
 			if (d->scc_register_w[N_SCC_REGS + SCC_WR9] &
 			    SCC_WR9_MASTER_IE)
-				INTERRUPT_ASSERT(d->irq);
+				scc_assert_irq(d, "send_abort");
 		}
 		break;
 	case 5:		/*  Reset Tx interrupt pending  */
@@ -380,8 +404,9 @@ DEVICE_TICK(scc)
 			    i == SCC_CHANNEL_A? SCC_RR3_EXT_IP_A :
 			    SCC_RR3_EXT_IP_B;
 			if (d->scc_register_w[N_SCC_REGS + SCC_WR9] &
-			    SCC_WR9_MASTER_IE)
-				INTERRUPT_ASSERT(d->irq);
+			    SCC_WR9_MASTER_IE) {
+				scc_assert_irq(d, "baudr");
+			}
 		}
 
 		/*
@@ -409,8 +434,9 @@ DEVICE_TICK(scc)
 			    SCC_WR1_TX_IE &&
 			    d->scc_register_r[N_SCC_REGS + SCC_RR3] &
 			    (i == SCC_CHANNEL_A? SCC_RR3_TX_IP_A :
-			    SCC_RR3_TX_IP_B))
-				INTERRUPT_ASSERT(d->irq);
+			    SCC_RR3_TX_IP_B)) {
+				scc_assert_irq(d, "tx");
+			}
 
 			/*  RX interrupts? (Not in "special condition only"
 			    mode, which DMA receivers use.)  */
@@ -430,11 +456,16 @@ DEVICE_TICK(scc)
 
 				if (d->scc_register_r[N_SCC_REGS + SCC_RR3] &
 				    (i == SCC_CHANNEL_A? SCC_RR3_RX_IP_A :
-				    SCC_RR3_RX_IP_B))
-					INTERRUPT_ASSERT(d->irq);
+				    SCC_RR3_RX_IP_B)) {
+					scc_assert_irq(d, "rx");
+				}
 			}
 		}
 	}
+
+	if (d->scc_register_r[N_SCC_REGS + SCC_RR3] == 0 ||
+	    !(d->scc_register_w[N_SCC_REGS + SCC_WR9] & SCC_WR9_MASTER_IE))
+		scc_deassert_irq(d, "tick_mie_or_rr3_zero");
 }
 
 
@@ -702,10 +733,11 @@ DEVICE_ACCESS(scc)
 					    Enable:  */
 					if (d->scc_register_r[N_SCC_REGS +
 					    SCC_RR3] && idata &
-					    SCC_WR9_MASTER_IE)
-						INTERRUPT_ASSERT(d->irq);
-					else
-						INTERRUPT_DEASSERT(d->irq);
+					    SCC_WR9_MASTER_IE) {
+						scc_assert_irq(d, "wr9");
+					} else {
+						scc_deassert_irq(d, "wr9");
+					}
 				}
 
 				/*  A disabled transmitter is in underrun:  */

@@ -691,9 +691,25 @@ static int dev_asc_select(struct cpu *cpu, struct asc_data *d, int from_id,
 {
 	int ok, len, i, ch;
 	int dma_ofs = 0;	/*  bytes taken from the DMA buffer so far  */
+	unsigned char dmabuf[256];	/*  with an external DMA engine  */
+	int use_dmabuf = 0;
 
 	if (!quiet_mode)
 		debug(" { SELECT id %i: ", to_id);
+
+	/*
+	 *  A DMA selection with an external DMA engine (the DEC 3000's
+	 *  TCDS; OpenVMS selects this way) gets the message and command
+	 *  bytes from memory through it:
+	 */
+	if (dmaflag && d->dma_controller != NULL) {
+		size_t n = d->reg_wo[NCR_TCL] + d->reg_wo[NCR_TCM] * 256;
+		if (n == 0 || n > sizeof(dmabuf))
+			n = sizeof(dmabuf);
+		memset(dmabuf, 0, sizeof(dmabuf));
+		d->dma_controller(d->dma_controller_data, dmabuf, n, 0);
+		use_dmabuf = 1;
+	}
 
 	/*
 	 *  Message bytes, if any:
@@ -715,9 +731,10 @@ static int dev_asc_select(struct cpu *cpu, struct asc_data *d, int from_id,
 
 		i = 0;
 		while (n_messagebytes-- > 0) {
-			int ch2 = msg_from_dma ? d->dma[(d->dma_address_reg +
-			    dma_ofs++) & (ASC_DMA_SIZE-1)] :
-			    dev_asc_fifo_read(d);
+			int ch2 = !msg_from_dma ? dev_asc_fifo_read(d) :
+			    use_dmabuf ? dmabuf[dma_ofs++] :
+			    d->dma[(d->dma_address_reg + dma_ofs++) &
+			    (ASC_DMA_SIZE-1)];
 			if (!quiet_mode)
 				debug(" %02x", ch2);
 			d->xferp->msg_out[i++] = ch2;
@@ -822,16 +839,38 @@ static int dev_asc_select(struct cpu *cpu, struct asc_data *d, int from_id,
 
 		for (i=0; i<cmd_len; i++) {
 			int ofs = d->dma_address_reg + dma_ofs + i;
-			ch = d->dma[ofs & (ASC_DMA_SIZE-1)];
+			ch = use_dmabuf ? (dma_ofs + i < (int)sizeof(dmabuf)?
+			    dmabuf[dma_ofs + i] : 0) :
+			    d->dma[ofs & (ASC_DMA_SIZE-1)];
 			d->xferp->cmd[i] = ch;
 			if (!quiet_mode)
 				debug("%02x ", ch);
 		}
 
-		d->reg_ro[NCR_TCL] = len & 255;
-		d->reg_ro[NCR_TCM] = (len >> 8) & 255;
+		/*  (As for non-DMA selections, the group's length.)  */
+		if (use_dmabuf && cmd_len > 0) {
+			static const int group_len[8] =
+			    { 6, 10, 10, 0, 16, 12, 0, 0 };
+			int glen = group_len[(d->xferp->cmd[0] >> 5) & 7];
+			if (glen > 0 && glen < (int)d->xferp->cmd_len)
+				d->xferp->cmd_len = glen;
+		}
 
-		d->reg_ro[NCR_STAT] |= NCRSTAT_TC;
+		if (use_dmabuf) {
+			/*  What is left of the count:  */
+			int left = len - dma_ofs - (int)d->xferp->cmd_len;
+			if (left < 0)
+				left = 0;
+			d->reg_ro[NCR_TCL] = left & 255;
+			d->reg_ro[NCR_TCM] = (left >> 8) & 255;
+			if (left == 0)
+				d->reg_ro[NCR_STAT] |= NCRSTAT_TC;
+		} else {
+			d->reg_ro[NCR_TCL] = len & 255;
+			d->reg_ro[NCR_TCM] = (len >> 8) & 255;
+
+			d->reg_ro[NCR_STAT] |= NCRSTAT_TC;
+		}
 	}
 
 	/*
@@ -1234,6 +1273,46 @@ DEVICE_ACCESS(asc)
 		case NCRCMD_TRPAD:
 			if (!quiet_mode)
 				debug("TRPAD");
+
+			/*
+			 *  With live_phase: Transfer Pad in the data in phase
+			 *  discards what the target sends, up to the count
+			 *  (OpenVMS reads whole blocks into a shorter buffer
+			 *  and pads the rest away), and then the target goes
+			 *  to the status phase. (Data out would send zeros.)
+			 */
+			if (d->live_phase && d->xferp != NULL &&
+			    d->cur_phase == PHASE_DATA_IN) {
+				size_t count = d->reg_wo[NCR_TCL] +
+				    d->reg_wo[NCR_TCM] * 256, left;
+				if (count == 0)
+					count = 65536;
+				left = d->xferp->data_in != NULL?
+				    d->xferp->data_in_len : 0;
+				if (count >= left) {
+					count -= left;
+					d->cur_phase = PHASE_STATUS;
+				} else {
+					unsigned char *n;
+					CHECK_ALLOCATION(n = (unsigned char *)
+					    malloc(left - count));
+					memcpy(n, d->xferp->data_in + count,
+					    left - count);
+					free(d->xferp->data_in);
+					d->xferp->data_in = n;
+					d->xferp->data_in_len = left - count;
+					count = 0;
+				}
+				d->reg_ro[NCR_TCL] = count & 255;
+				d->reg_ro[NCR_TCM] = (count >> 8) & 255;
+				if (count == 0)
+					d->reg_ro[NCR_STAT] |= NCRSTAT_TC;
+				d->reg_ro[NCR_STAT] |= NCRSTAT_INT;
+				d->reg_ro[NCR_INTR] |= NCRINTR_BS;
+				d->reg_ro[NCR_STAT] = (d->reg_ro[NCR_STAT] &
+				    ~7) | d->cur_phase;
+				break;
+			}
 
 			dev_asc_newxfer(d);
 			{

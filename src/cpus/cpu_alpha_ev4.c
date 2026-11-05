@@ -342,10 +342,16 @@ static int sw_request(struct cpu *cpu)
 	return (cpu->cd.alpha.sirr & cpu->cd.alpha.sier & 0xfffe) != 0;
 }
 
-/*  AST requests for the current mode and the less privileged ones:  */
+/*
+ *  AST requests for the current mode and the more privileged ones (an AST
+ *  for mode M is delivered in mode M or a less privileged one: a kernel
+ *  AST in any mode, a user AST in user mode only). The HRM's "processor
+ *  mode equal to or higher than the request mode" means the mode number.
+ *  OpenVMS's PALcode loops waiting for ATR otherwise.
+ */
 static int ast_request(struct cpu *cpu)
 {
-	uint32_t modes = (0xf << cpu->cd.alpha.cm) & 0xf;
+	uint32_t modes = (2 << cpu->cd.alpha.cm) - 1;
 
 	return (cpu->cd.alpha.sier & 4) &&
 	    (cpu->cd.alpha.astrr & cpu->cd.alpha.aster & modes);
