@@ -2,7 +2,7 @@
 #  Makefile for GXemul devices
 #
 
-CFLAGS=$(CWARNINGS) $(COPTIM) $(DISPLAYINCLUDE) $(DINCLUDE)
+CFLAGS=$(CWARNINGS) $(COPTIM) $(DISPLAYINCLUDE) $(DINCLUDE) $(DEPFLAGS)
 
 OBJS=device.o bus_isa.o bus_pci.o lk201.o \
 	dev_8253.o dev_8259.o dev_adb.o dev_ahc.o dev_algor.o dev_asc.o \
@@ -46,6 +46,8 @@ objs: $(OBJS)
 
 $(OBJS): Makefile
 
+-include $(OBJS:.o=.d) autodev.d
+
 dev_vga.o: font8x8.c font8x16.c font8x10.c
 
 dev_fb.o: fb_include.c dev_fb.c
@@ -61,7 +63,7 @@ font8x16.c:
 
 
 clean:
-	rm -f $(OBJS) *core font*x*.c*
+	rm -f $(OBJS) $(OBJS:.o=.d) autodev.[co]* *.d *core font*x*.c*
 	rm -f autodev.[co]*
 	cd fonts; $(MAKE) clean
 

@@ -9,6 +9,7 @@
 
 # Build output
 *.o
+*.d
 /gxemul
 /tmp_*.out*
 

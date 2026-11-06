@@ -49,7 +49,7 @@ $(OBJS): Makefile
 
 
 clean:
-	rm -f $(OBJS) *.core
+	rm -f $(OBJS) *.d *.core
 	cd include; $(MAKE) clean
 	cd console; $(MAKE) clean
 	cd cpus; $(MAKE) clean

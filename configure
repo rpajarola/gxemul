@@ -639,6 +639,19 @@ if [ z"$DEBUG" = zYES ]; then
 fi
 
 
+#  -MMD -MP (header dependency generation):
+printf "checking whether -MMD -MP can be used... "
+$CC $CFLAGS -MMD -MP -c _testprog.c -o _testprog.o > _testprog.stdout 2>&1
+if [ -f _testprog.d ]; then
+	DEPFLAGS="-MMD -MP"
+	printf "yes\n"
+else
+	DEPFLAGS=""
+	printf "no\n"
+fi
+rm -f _testprog.o _testprog.d _testprog _testprog$EXEEXT _testprog.error _testprog.stdout
+
+
 #  -lrt for nanosleep?
 printf "checking whether -lrt is required for nanosleep... "
 printf "#include <time.h>\n#include <stdio.h>
@@ -1083,6 +1096,7 @@ if [ z"$DESTDIR" != z ]; then
 fi
 echo "CWARNINGS=$CWARNINGS" >> _Makefile.header
 echo "COPTIM=$CFLAGS" >> _Makefile.header
+echo "DEPFLAGS=$DEPFLAGS" >> _Makefile.header
 echo "INCLUDE=$INCLUDE" >> _Makefile.header
 echo "DINCLUDE=$DINCLUDE" >> _Makefile.header
 echo "INCLUDE2=$INCLUDE2" >> _Makefile.header

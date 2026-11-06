@@ -2,7 +2,7 @@
 #  Makefile for GXemul src/promemul
 #
 
-CFLAGS=$(CWARNINGS) $(COPTIM) $(DINCLUDE)
+CFLAGS=$(CWARNINGS) $(COPTIM) $(DINCLUDE) $(DEPFLAGS)
 
 OBJS=arcbios.o dec_prom.o dreamcast.o dreamcast_scramble.o \
 	luna88kprom.o mvmeprom.o of.o ps2_bios.o sh_ipl_g.o yamon.o
@@ -11,9 +11,11 @@ all: $(OBJS)
 
 $(OBJS): Makefile
 
+-include $(OBJS:.o=.d)
+
 
 clean:
-	rm -f $(OBJS) *core
+	rm -f $(OBJS) $(OBJS:.o=.d) *.d *core
 
 clean_all: clean
 	rm -f Makefile

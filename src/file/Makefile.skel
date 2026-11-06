@@ -2,13 +2,15 @@
 #  Makefile for GXemul src/file
 #
 
-CFLAGS=$(CWARNINGS) $(COPTIM) $(DINCLUDE)
+CFLAGS=$(CWARNINGS) $(COPTIM) $(DINCLUDE) $(DEPFLAGS)
 
 OBJS=file.o gunzip.o puff.o unzip.o
 
 all: $(OBJS)
 
 $(OBJS): Makefile
+
+-include $(OBJS:.o=.d)
 
 file.o: file.c file_android.c file_aout.c file_ecoff.c file_elf.c \
 	file_macho.c file_raw.c file_srec.c
@@ -17,7 +19,7 @@ gunzip.o puff.o unzip.o: puff.h
 
 
 clean:
-	rm -f $(OBJS) *core
+	rm -f $(OBJS) $(OBJS:.o=.d) *.d *core
 
 clean_all: clean
 	rm -f Makefile

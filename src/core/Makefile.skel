@@ -2,7 +2,7 @@
 #  Makefile for GXemul src/core
 #
 
-CFLAGS=$(CWARNINGS) $(COPTIM) $(DISPLAYINCLUDE) $(DINCLUDE)
+CFLAGS=$(CWARNINGS) $(COPTIM) $(DISPLAYINCLUDE) $(DINCLUDE) $(DEPFLAGS)
 
 OBJS=appdirs.o cJSON.o compat_win32.o debugmsg.o emul.o float_emul.o interrupt.o \
 	machine_config.o machine_presets.o main.o memory.o misc.o settings.o timer.o
@@ -11,8 +11,10 @@ all: $(OBJS)
 
 $(OBJS): Makefile
 
+-include $(OBJS:.o=.d)
+
 clean:
-	rm -f $(OBJS) *core
+	rm -f $(OBJS) $(OBJS:.o=.d) *.d *core
 
 clean_all: clean
 	rm -f Makefile

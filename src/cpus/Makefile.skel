@@ -2,7 +2,7 @@
 #  Makefile for GXemul src/cpus
 #
 
-CFLAGS=$(CWARNINGS) $(COPTIM) $(DINCLUDE)
+CFLAGS=$(CWARNINGS) $(COPTIM) $(DINCLUDE) $(DEPFLAGS)
 
 OBJS=cpu.o $(CPU_ARCHS) $(CPU_BACKENDS)
 TOOLS=generate_head generate_tail $(CPU_TOOLS)
@@ -16,6 +16,8 @@ buildobjs: $(OBJS)
 
 
 $(OBJS): Makefile
+
+-include $(OBJS:.o=.d)
 
 
 #  The tools run during the build, so they are built for the build host
@@ -244,7 +246,7 @@ tmp_sh_tail.c: generate_tail
 ###############################################################################
 
 clean:
-	rm -f $(OBJS) $(TOOLS) *core tmp_*.c* *.gmon experiment_arm_multi
+	rm -f $(OBJS) $(TOOLS) $(OBJS:.o=.d) *.d *core tmp_*.c* *.gmon experiment_arm_multi
 
 clean_all: clean
 	rm -f Makefile

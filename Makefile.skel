@@ -42,7 +42,7 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/gxemul.svg
 
 clean:
-	rm -f $(BIN) *core core.* *.gmon _* *.exe ktrace.out tmp_*.out* callgrind.out* cachegrind.out*
+	rm -f $(BIN) *.d *core core.* *.gmon _* *.exe ktrace.out tmp_*.out* callgrind.out* cachegrind.out*
 	cd src; $(MAKE) clean
 
 #  experiments and demos are not cleaned on a normal clean, only on a clean_all.
