@@ -80,6 +80,7 @@
 
 
 struct pckbc_data {
+	int		subsys;
 	int		console_handle;
 	int		in_use;
 
@@ -694,8 +695,9 @@ static void dev_pckbc_command(struct pckbc_data *d, int port_nr)
 #endif
 
 	if (d->state[port_nr] == STATE_WAITING_FOR_TRANSLTABLE) {
-		debug("[ pckbc: (port %i) switching to translation table "
-		    "0x%02x ]\n", port_nr, cmd);
+		debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+		    "(port %i) switching to translation table 0x%02x\n",
+		    port_nr, cmd);
 
 		switch (cmd) {
 		case 0:	// TODO. "Writing 0xf0 followed by 0 queries the mode,
@@ -725,24 +727,27 @@ static void dev_pckbc_command(struct pckbc_data *d, int port_nr)
 	}
 
 	if (d->state[port_nr] == STATE_WAITING_FOR_RATE) {
-		debug("[ pckbc: (port %i) received Typematic/Sample Rate data: "
-		    "0x%02x ]\n", port_nr, cmd);
+		debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+		    "(port %i) received Typematic/Sample Rate data: 0x%02x\n",
+		    port_nr, cmd);
 		pckbc_add_code(d, KBR_ACK, port_nr);
 		d->state[port_nr] = STATE_NORMAL;
 		return;
 	}
 
 	if (d->state[port_nr] == STATE_WAITING_FOR_ONEKEY_MB) {
-		debug("[ pckbc: (port %i) received One-key make/break data: "
-		    "0x%02x ]\n", port_nr, cmd);
+		debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+		    "(port %i) received One-key make/break data: 0x%02x\n",
+		    port_nr, cmd);
 		pckbc_add_code(d, KBR_ACK, port_nr);
 		d->state[port_nr] = STATE_NORMAL;
 		return;
 	}
 
 	if (d->state[port_nr] == STATE_WAITING_FOR_AUX) {
-		debug("[ pckbc: (port %i) received aux data: "
-		    "0x%02x ]\n", port_nr, cmd);
+		debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+		    "(port %i) received aux data: 0x%02x\n",
+		    port_nr, cmd);
 		/*  Echo back.  */
 		pckbc_add_code(d, cmd, port_nr);
 		d->state[port_nr] = STATE_NORMAL;
@@ -750,8 +755,9 @@ static void dev_pckbc_command(struct pckbc_data *d, int port_nr)
 	}
 
 	if (d->state[port_nr] == STATE_WAITING_FOR_AUX_OUT) {
-		debug("[ pckbc: (port %i) received aux out data: "
-		    "0x%02x ]\n", port_nr, cmd);
+		debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+		    "(port %i) received aux out data: 0x%02x\n",
+		    port_nr, cmd);
 		/*  Echo back.  */
 		pckbc_add_code(d, cmd, port_nr);
 		d->state[port_nr] = STATE_NORMAL;
@@ -980,10 +986,8 @@ if (x&1)
 			/*  debug("[ pckbc: read from CTL status port: "
 			    "0x%02x ]\n", (int)odata);  */
 		} else {
-			debug("[ pckbc: write to CTL:");
-			for (i=0; i<len; i++)
-				debug(" %02x", data[i]);
-			debug(" ]\n");
+			debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+			    "write to CTL: 0x%02x\n", (int)idata);
 			d->reg[relative_addr] = idata;
 
 			switch (idata) {
@@ -1005,7 +1009,8 @@ if (x&1)
 				d->cmdbyte &= ~KC8_MDISABLE;
 				break;
 			case 0xa9:	/*  test auxiliary port  */
-				debug("[ pckbc: CONTROL 0xa9, TODO ]\n");
+				debugmsg(d->subsys, "pckbc", VERBOSITY_WARNING,
+				    "CONTROL 0xa9, TODO\n");
 				break;
 			case 0xaa:	/*  keyboard self-test  */
 				pckbc_add_code(d, 0x55, port_nr);
@@ -1027,11 +1032,13 @@ if (x&1)
 				break;
 			case 0xd3:	/*  write to auxiliary device
 					    output buffer  */
-				debug("[ pckbc: CONTROL 0xd3, TODO ]\n");
+				debugmsg(d->subsys, "pckbc", VERBOSITY_WARNING,
+				    "CONTROL 0xd3, TODO\n");
 				d->state[port_nr] = STATE_WAITING_FOR_AUX_OUT;
 				break;
 			case 0xd4:	/*  write to auxiliary port  */
-				debug("[ pckbc: CONTROL 0xd4, TODO ]\n");
+				debugmsg(d->subsys, "pckbc", VERBOSITY_WARNING,
+				    "CONTROL 0xd4, TODO\n");
 				d->state[port_nr] = STATE_WAITING_FOR_AUX;
 				break;
 			default:
@@ -1049,11 +1056,13 @@ if (x&1)
 	case PS2 + PS2_TXBUF:
 		if (writeflag==MEM_READ) {
 			odata = random() & 0xff;
-			debug("[ pckbc: read from port %i, PS2_TXBUF: "
-			    "0x%x ]\n", port_nr, (int)odata);
+			debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+			    "read from port %i, PS2_TXBUF: 0x%x\n",
+			    port_nr, (int)odata);
 		} else {
-			debug("[ pckbc: write to port %i, PS2_TXBUF: "
-			    "0x%llx ]\n", port_nr, (long long)idata);
+			debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+			    "write to port %i, PS2_TXBUF: 0x%llx\n",
+			    port_nr, (long long)idata);
 
 			/*  Handle keyboard commands:  */
 			d->reg[PS2_TXBUF] = idata;
@@ -1068,21 +1077,24 @@ if (x&1)
 			odata = 0;
 			if (d->head[port_nr] != d->tail[port_nr])
 				odata = pckbc_get_code(d, port_nr);
-			debug("[ pckbc: read from port %i, PS2_RXBUF: "
-			    "0x%02x ]\n", port_nr, (int)odata);
+			debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+			    "read from port %i, PS2_RXBUF: 0x%02x\n",
+			    port_nr, (int)odata);
 		} else {
-			debug("[ pckbc: write to port %i, PS2_RXBUF: "
-			    "0x%llx ]\n", port_nr, (long long)idata);
+			debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+			    "write to port %i, PS2_RXBUF: 0x%llx\n",
+			    port_nr, (long long)idata);
 		}
 		break;
 
 	case PS2 + PS2_CONTROL:
 		if (writeflag==MEM_READ) {
-			debug("[ pckbc: read from port %i, PS2_CONTROL"
-			    " ]\n", port_nr);
+			debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+			    "read from port %i, PS2_CONTROL\n", port_nr);
 		} else {
-			debug("[ pckbc: write to port %i, PS2_CONTROL:"
-			    " 0x%llx ]\n", port_nr, (long long)idata);
+			debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+			    "write to port %i, PS2_CONTROL: 0x%llx\n",
+			    port_nr, (long long)idata);
 			d->clocksignal = (idata & 0x10) ? 1 : 0;
 			d->rx_int_enable[port_nr] = (idata & PS2_CONTROL_RXINTEN) ? 1 : 0;
 			d->tx_int_enable[port_nr] = (idata & PS2_CONTROL_TXINTEN) ? 1 : 0;
@@ -1109,22 +1121,22 @@ if (x&1)
 			//debug("[ pckbc: read from port %i, PS2_STATUS: "
 			//    "0x%llx ]\n", port_nr, (long long)odata);
 		} else {
-			debug("[ pckbc: write to port %i, PS2_STATUS: "
-			    "0x%llx ]\n", port_nr, (long long)idata);
+			debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+			    "write to port %i, PS2_STATUS: 0x%llx\n",
+			    port_nr, (long long)idata);
 		}
 		break;
 
 	default:
 		if (writeflag==MEM_READ) {
-			debug("[ pckbc: read from unimplemented reg %i ]\n",
+			debugmsg(d->subsys, "pckbc", VERBOSITY_WARNING,
+			    "read from unimplemented reg %i\n",
 			    (int)relative_addr);
 			odata = d->reg[relative_addr % DEV_PCKBC_LENGTH];
 		} else {
-			debug("[ pckbc: write to unimplemented reg %i:",
-			    (int)relative_addr);
-			for (i=0; i<len; i++)
-				debug(" %02x", data[i]);
-			debug(" ]\n");
+			debugmsg(d->subsys, "pckbc", VERBOSITY_WARNING,
+			    "write to unimplemented reg %i: 0x%llx\n",
+			    (int)relative_addr, (long long)idata);
 			d->reg[relative_addr % DEV_PCKBC_LENGTH] = idata;
 		}
 	}
@@ -1159,6 +1171,7 @@ int dev_pckbc_init(struct machine *machine, struct memory *mem,
 
 	CHECK_ALLOCATION(d = (struct pckbc_data *) malloc(sizeof(struct pckbc_data)));
 	memset(d, 0, sizeof(struct pckbc_data));
+	d->subsys = debugmsg_register_subsystem("pckbc");
 
 	d->translation_table = 2;
 

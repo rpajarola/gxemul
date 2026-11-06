@@ -63,6 +63,8 @@
 
 extern int verbose;
 
+static int pci_subsys = -1;
+
 
 /*
  *  bus_pci_decompose_1():
@@ -138,9 +140,13 @@ void bus_pci_data_access(struct cpu *cpu, struct pci_data *pci_data,
 		x |= cfg_base[ofs & (PCI_CFG_MEM_SIZE - 1)];
 	}
 
+	if (pci_subsys < 0)
+		pci_subsys = debugmsg_register_subsystem("pci");
+
 	/*  Register write:  */
 	if (writeflag == MEM_WRITE) {
-		debug("[ bus_pci: write to PCI DATA: data = 0x%08llx ]\n",
+		debugmsg(pci_subsys, "pci", VERBOSITY_DEBUG,
+		    "write to PCI DATA: data = 0x%08llx\n",
 		    (long long)idata);
 		if (idata == 0xffffffffULL &&
 		    pci_data->cur_reg >= PCI_MAPREG_START &&
@@ -152,10 +158,11 @@ void bus_pci_data_access(struct cpu *cpu, struct pci_data *pci_data,
 		if (dev->cfg_reg_write == NULL ||
 		    dev->cfg_reg_write(dev, pci_data->cur_reg, *data) == 0) {
 			/*  Print a warning for unhandled writes:  */
-			debug("[ bus_pci: write to PCI DATA: data = 0x%08llx"
+			debugmsg(pci_subsys, "pci", VERBOSITY_WARNING,
+			    "write to PCI DATA: data = 0x%08llx"
 			    " (current value = 0x%08llx); NOT YET"
 			    " SUPPORTED. bus %i, device %i, function %i (%s)"
-			    " register 0x%02x ]\n", (long long)idata,
+			    " register 0x%02x\n", (long long)idata,
 			    (long long)x, pci_data->cur_bus,
 			    pci_data->cur_device, pci_data->cur_func,
 			    dev->name, pci_data->cur_reg);
@@ -177,8 +184,8 @@ void bus_pci_data_access(struct cpu *cpu, struct pci_data *pci_data,
 
 	pci_data->last_was_write_ffffffff = 0;
 
-	debug("[ bus_pci: read from PCI DATA, bus %i, device "
-	    "%i, function %i (%s) register 0x%02x: (len=%i) 0x%08lx ]\n",
+	debugmsg(pci_subsys, "pci", VERBOSITY_DEBUG,
+	    "read from PCI DATA, bus %i, device %i, function %i (%s) register 0x%02x: (len=%i) 0x%08lx\n",
 	    pci_data->cur_bus, pci_data->cur_device, pci_data->cur_func,
 	    dev->name, pci_data->cur_reg, len, (long)*data);
 }
@@ -313,17 +320,29 @@ static void allocate_device_space(struct pci_device *pd,
 	*portp = port + pd->pcibus->pci_actual_io_offset;
 	*memp  = mem  + pd->pcibus->pci_actual_mem_offset;
 
-	if (verbose >= 2) {
-		debug("pci device '%s' at", pd->name);
-		if (portsize != 0)
-			debug(" port 0x%llx-0x%llx", (long long)pd->pcibus->
-			    cur_pci_portbase, (long long)(pd->pcibus->
-			    cur_pci_portbase + portsize - 1));
-		if (memsize != 0)
-			debug(" mem 0x%llx-0x%llx", (long long)pd->pcibus->
-			    cur_pci_membase, (long long)(pd->pcibus->
-			    cur_pci_membase + memsize - 1));
-		debug("\n");
+	if (pci_subsys < 0)
+		pci_subsys = debugmsg_register_subsystem("pci");
+
+	if (portsize != 0 && memsize != 0) {
+		debugmsg(pci_subsys, "pci", VERBOSITY_INFO,
+		    "device '%s' at port 0x%llx-0x%llx mem 0x%llx-0x%llx\n",
+		    pd->name,
+		    (long long)pd->pcibus->cur_pci_portbase,
+		    (long long)(pd->pcibus->cur_pci_portbase + portsize - 1),
+		    (long long)pd->pcibus->cur_pci_membase,
+		    (long long)(pd->pcibus->cur_pci_membase + memsize - 1));
+	} else if (portsize != 0) {
+		debugmsg(pci_subsys, "pci", VERBOSITY_INFO,
+		    "device '%s' at port 0x%llx-0x%llx\n",
+		    pd->name,
+		    (long long)pd->pcibus->cur_pci_portbase,
+		    (long long)(pd->pcibus->cur_pci_portbase + portsize - 1));
+	} else if (memsize != 0) {
+		debugmsg(pci_subsys, "pci", VERBOSITY_INFO,
+		    "device '%s' at mem 0x%llx-0x%llx\n",
+		    pd->name,
+		    (long long)pd->pcibus->cur_pci_membase,
+		    (long long)(pd->pcibus->cur_pci_membase + memsize - 1));
 	}
 
 	pd->pcibus->cur_pci_portbase += portsize;
@@ -357,6 +376,9 @@ struct pci_data *bus_pci_init(struct machine *machine, const char *irq_path,
 
 	CHECK_ALLOCATION(d = (struct pci_data *) malloc(sizeof(struct pci_data)));
 	memset(d, 0, sizeof(struct pci_data));
+
+	if (pci_subsys < 0)
+		pci_subsys = debugmsg_register_subsystem("pci");
 
 	CHECK_ALLOCATION(d->irq_path     = strdup(irq_path));
 	CHECK_ALLOCATION(d->irq_path_isa = strdup(isa_irqbase));

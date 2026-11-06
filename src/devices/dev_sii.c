@@ -49,6 +49,7 @@
 
 struct sii_data {
 	struct interrupt irq;
+	int		subsys;
 
 	uint64_t	buf_start;
 	uint64_t	buf_end;
@@ -149,13 +150,15 @@ DEVICE_TICK(sii)
 	    && (d->siiregs.comm & 0x70) == (d->siiregs.cstat & 0x70) &&
 	    (d->siiregs.comm & 0x03) == (d->siiregs.dstat & 0x03) &&
 	    !(d->siiregs.cstat & SII_SIP)) {	/*  (I,T)  */
-		debug("[ sii: command INXFER to scsiid=%i ]\n",
+		debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+		    "command INXFER to scsiid=%i\n",
 		    d->siiregs.slcsr);
 		if (d->siiregs.comm & SII_DMA)
-			debug("[ sii DMA: TODO ]\n");
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG, "DMA: TODO\n");
 		else {
-			debug("[ sii: transmitting byte 0x%02x using "
-			    "PIO mode ]\n", d->siiregs.data);
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "transmitting byte 0x%02x using PIO mode\n",
+			    d->siiregs.data);
 			d->siiregs.comm &= ~SII_INXFER;
 
 /*			d->siiregs.dstat |= SII_DNE; */
@@ -180,7 +183,8 @@ DEVICE_ACCESS(sii)
 	struct sii_data *d = (struct sii_data *) extra;
 
 	if (relative_addr & 3) {
-		debug("[ sii relative_addr = 0x%x !!! ]\n",
+		debugmsg(d->subsys, "sii", VERBOSITY_WARNING,
+		    "relative_addr = 0x%x !!!\n",
 		    (int) relative_addr);
 		return 0;
 	}
@@ -196,10 +200,12 @@ DEVICE_ACCESS(sii)
 	switch (relative_addr) {
 	case 0x00:				/*  SII_SDB: Diagnostic  */
 		if (writeflag == MEM_READ) {
-			debug("[ sii: read from SDB (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from SDB (data=0x%04x)\n",
 			    d->regs[regnr]);
 		} else {
-			debug("[ sii: write to  SDB (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  SDB (data=0x%04x)\n",
 			    (int)idata);
 			d->regs[regnr] = idata;
 			return 1;
@@ -207,11 +213,13 @@ DEVICE_ACCESS(sii)
 		break;
 	case 0x0c:				/*  SII_CSR: Control/status  */
 		if (writeflag == MEM_READ) {
-			debug("[ sii: read from CSR (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from CSR (data=0x%04x)\n",
 			    d->regs[regnr]);
 		} else {
-			debug("[ sii: write to  CSR (data=0x%04x: %s %s "
-			    "%s %s %s) ]\n", (int)idata,
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  CSR (data=0x%04x: %s %s %s %s %s)\n",
+			    (int)idata,
 			    idata & SII_HPM? "HPM" : "!hpm",
 			    idata & SII_RSE? "RSE" : "!rse",
 			    idata & SII_SLE? "SLE" : "!sle",
@@ -223,18 +231,20 @@ DEVICE_ACCESS(sii)
 		break;
 	case 0x10:				/*  SII_ID: SCSI ID  */
 		if (writeflag == MEM_READ) {
-			debug("[ sii: read from ID (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from ID (data=0x%04x)\n",
 			    d->regs[regnr]);
 		} else {
-			debug("[ sii: write to  ID (data=0x%04x: scsi id %i)"
-			    " ]\n", (int)idata, (int)(idata & 7));
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  ID (data=0x%04x: scsi id %i)\n",
+			    (int)idata, (int)(idata & 7));
 			if (!(idata & SII_ID_IO))
-				debug("WARNING: sii ID bit SII_ID_IO not "
-				    "set on write!\n");
+				debugmsg(d->subsys, "sii", VERBOSITY_WARNING,
+				    "WARNING: ID bit SII_ID_IO not set on write!\n");
 			idata &= ~SII_ID_IO;
 			if ((idata & ~0x7) != 0)
-				debug("WARNING: sii ID bits that should "
-				    "be zero are not zero!\n");
+				debugmsg(d->subsys, "sii", VERBOSITY_WARNING,
+				    "WARNING: ID bits that should be zero are not zero!\n");
 			idata &= 0x7;
 			d->regs[regnr] = idata & 0x7;
 			return 1;
@@ -242,15 +252,16 @@ DEVICE_ACCESS(sii)
 		break;
 	case 0x14:			/*  SII_SLCSR: Selector control  */
 		if (writeflag == MEM_READ) {
-			debug("[ sii: read from SLCSR (data=0x%04x: "
-			    "scsi_id=%i) ]\n", d->regs[regnr],
-			    d->regs[regnr] & 7);
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from SLCSR (data=0x%04x: scsi_id=%i)\n",
+			    d->regs[regnr], d->regs[regnr] & 7);
 		} else {
-			debug("[ sii: write to  SLCSR (data=0x%04x: "
-			    "scsi_id=%i) ]\n", (int)idata, (int)(idata & 7));
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  SLCSR (data=0x%04x: scsi_id=%i)\n",
+			    (int)idata, (int)(idata & 7));
 			if ((idata & ~0x7) != 0)
-				debug("WARNING: sii SLCSR bits that should "
-				    "be zero are not zero!\n");
+				debugmsg(d->subsys, "sii", VERBOSITY_WARNING,
+				    "WARNING: SLCSR bits that should be zero are not zero!\n");
 			idata &= 0x7;
 			d->regs[regnr] = idata & 0x7;
 			return 1;
@@ -259,24 +270,28 @@ DEVICE_ACCESS(sii)
 	case 0x18:		/*  SII_DESTAT: Selection detector status  */
 		if (writeflag == MEM_READ) {
 			/*  TODO: set DESTAT from somewhere else?  */
-			debug("[ sii: read from DESTAT (data=0x%04x: "
-			    "scsi_id=%i) ]\n", d->regs[regnr],
-			    d->regs[regnr] & 7);
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from DESTAT (data=0x%04x: scsi_id=%i)\n",
+			    d->regs[regnr], d->regs[regnr] & 7);
 		} else {
-			debug("[ sii: write to  DESTAT (data=0x%04x: "
-			    "scsi_id=%i) ]\n", (int)idata, (int)(idata & 7));
-			debug("WARNING: sii DESTAT is read-only!\n");
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  DESTAT (data=0x%04x: scsi_id=%i)\n",
+			    (int)idata, (int)(idata & 7));
+			debugmsg(d->subsys, "sii", VERBOSITY_WARNING,
+			    "WARNING: DESTAT is read-only!\n");
 			return 1;
 		}
 		break;
 	case 0x20:				/*  SII_DATA: Data register  */
 		if (writeflag == MEM_READ) {
 			/*  TODO  */
-			debug("[ sii: read from DATA (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from DATA (data=0x%04x)\n",
 			    d->regs[regnr]);
 		} else {
 			/*  TODO  */
-			debug("[ sii: write to  DATA (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  DATA (data=0x%04x)\n",
 			    (int)idata);
 			idata &= 0xff;
 			d->regs[regnr] = idata;
@@ -285,14 +300,16 @@ DEVICE_ACCESS(sii)
 		break;
 	case 0x24:				/*  SII_DMCTRL: DMA control  */
 		if (writeflag == MEM_READ) {
-			debug("[ sii: read from DMCTRL (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from DMCTRL (data=0x%04x)\n",
 			    d->regs[regnr]);
 		} else {
-			debug("[ sii: write to  DMCTRL (data=0x%04x: %s) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  DMCTRL (data=0x%04x: %s)\n",
 			    (int)idata, (idata & 3)==0? "async" : "sync");
 			if ((idata & ~0x3) != 0)
-				debug("WARNING: sii DMCTRL bits that "
-				    "should be zero are not zero!\n");
+				debugmsg(d->subsys, "sii", VERBOSITY_WARNING,
+				    "WARNING: DMCTRL bits that should be zero are not zero!\n");
 			idata &= 0x3;
 			d->regs[regnr] = idata;
 			return 1;
@@ -300,10 +317,12 @@ DEVICE_ACCESS(sii)
 		break;
 	case 0x48:			/*  SII_CSTAT: Connection status  */
 		if (writeflag == MEM_READ) {
-			debug("[ sii: read from CSTAT (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from CSTAT (data=0x%04x)\n",
 			    d->regs[regnr]);
 		} else {
-			debug("[ sii: write to  CSTAT (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  CSTAT (data=0x%04x)\n",
 			    (int)idata);
 
 			/*  readonly / writeoncetoclear bits according
@@ -343,10 +362,12 @@ DEVICE_ACCESS(sii)
 		break;
 	case 0x4c:			/*  SII_DSTAT: Data transfer status  */
 		if (writeflag == MEM_READ) {
-			debug("[ sii: read from DSTAT (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from DSTAT (data=0x%04x)\n",
 			    d->regs[regnr]);
 		} else {
-			debug("[ sii: write to  DSTAT (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  DSTAT (data=0x%04x)\n",
 			    (int)idata);
 
 			/*  readonly / writeoncetoclear bits
@@ -380,11 +401,13 @@ DEVICE_ACCESS(sii)
 		break;
 	case 0x50:				/*  SII_COMM: Command  */
 		if (writeflag == MEM_READ) {
-			debug("[ sii: read from COMM (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from COMM (data=0x%04x)\n",
 			    d->regs[regnr]);
 		} else {
-			debug("[ sii: write to  COMM (data=0x%04x: %s %s "
-			    "%s command=0x%02x rest=0x%02x) ]\n", (int)idata,
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  COMM (data=0x%04x: %s %s %s command=0x%02x rest=0x%02x)\n",
+			    (int)idata,
 			    idata & SII_DMA?    "DMA" : "!dma",
 			    idata & SII_DO_RST? "RST" : "!rst",
 			    idata & SII_RSL?    "RSL" : "!rsl",
@@ -406,25 +429,29 @@ DEVICE_ACCESS(sii)
 		break;
 	case 0x54:			/*  SII_DICTRL: Diagnostics control  */
 		if (writeflag == MEM_READ) {
-			debug("[ sii: read from DICTRL (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from DICTRL (data=0x%04x)\n",
 			    d->regs[regnr]);
 		} else {
-			debug("[ sii: write to  DICTRL (data=0x%04x: "
-			    "port=%s) ]\n", (int)idata,
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  DICTRL (data=0x%04x: port=%s)\n",
+			    (int)idata,
 			    idata & SII_PRE? "enabled" : "disabled");
 			if ((idata & ~0xf) != 0)
-				debug("WARNING: sii DICTRL bits that "
-				    "should be zero are not zero!\n");
+				debugmsg(d->subsys, "sii", VERBOSITY_WARNING,
+				    "WARNING: DICTRL bits that should be zero are not zero!\n");
 			d->regs[regnr] = idata;
 			return 1;
 		}
 		break;
 	default:
 		if (writeflag==MEM_READ) {
-			debug("[ sii: read from %08lx (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "read from %08lx (data=0x%04x)\n",
 			    (long)relative_addr, d->regs[regnr]);
 		} else {
-			debug("[ sii: write to  %08lx (data=0x%04x) ]\n",
+			debugmsg(d->subsys, "sii", VERBOSITY_DEBUG,
+			    "write to  %08lx (data=0x%04x)\n",
 			    (long)relative_addr, (int)idata);
 			d->regs[regnr] = idata;
 		}
@@ -447,6 +474,7 @@ void dev_sii_init(struct machine *machine, struct memory *mem,
 	memset(d, 0, sizeof(struct sii_data));
 
 	INTERRUPT_CONNECT(irq_path, d->irq);
+	d->subsys    = debugmsg_register_subsystem("sii");
 	d->buf_start = buf_start;
 	d->buf_end   = buf_end;
 	d->regs      = (uint16_t *) &d->siiregs;

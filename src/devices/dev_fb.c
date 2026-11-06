@@ -53,6 +53,8 @@
 
 #define	FB_TICK_SHIFT		19
 
+static int fb_subsys = -1;
+
 
 /*  #define FB_DEBUG  */
 
@@ -225,12 +227,17 @@ void framebuffer_blockcopyfill(struct vfb_data *d, int fillflag, int fill_r,
 	int x, y;
 	size_t from_ofs, dest_ofs, linelen;
 
+	if (fb_subsys < 0)
+		fb_subsys = debugmsg_register_subsystem("fb");
+
 	if (fillflag)
-		debug("framebuffer_blockcopyfill(FILL, %i,%i, %i,%i, "
-		    "color %i,%i,%i)\n", x1,y1, x2,y2, fill_r, fill_g, fill_b);
+		debugmsg(fb_subsys, "fb", VERBOSITY_DEBUG,
+		    "framebuffer_blockcopyfill(FILL, %i,%i, %i,%i, color %i,%i,%i)\n",
+		    x1, y1, x2, y2, fill_r, fill_g, fill_b);
 	else
-		debug("framebuffer_blockcopyfill(COPY, %i,%i, %i,%i, from "
-		    "%i,%i)\n", x1,y1, x2,y2, from_x,from_y);
+		debugmsg(fb_subsys, "fb", VERBOSITY_DEBUG,
+		    "framebuffer_blockcopyfill(COPY, %i,%i, %i,%i, from %i,%i)\n",
+		    x1, y1, x2, y2, from_x, from_y);
 
 	/*  Clip x:  */
 	if (x1 < 0)		x1 = 0;
@@ -571,6 +578,9 @@ struct vfb_data *dev_fb_init(struct machine *machine, struct memory *mem,
 
 	CHECK_ALLOCATION(d = (struct vfb_data *) malloc(sizeof(struct vfb_data)));
 	memset(d, 0, sizeof(struct vfb_data));
+
+	if (fb_subsys < 0)
+		fb_subsys = debugmsg_register_subsystem("fb");
 
 	if (vfb_type & VFB_REVERSE_START) {
 		vfb_type &= ~VFB_REVERSE_START;

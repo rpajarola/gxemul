@@ -77,6 +77,7 @@ int dec21030_default_ysize = 768;
 
 
 struct dec21030_data {
+	int		subsys;
 	int		graphics_mode;
 	uint32_t	pixel_mask;
 	uint32_t	copy_source;
@@ -197,12 +198,14 @@ DEVICE_ACCESS(dec21030)
 	/*  Block copy source:  */
 	case TGA_REG_GCSR:
 		d->copy_source = idata;
-		debug("[ dec21030: block copy source = 0x%08x ]\n", idata);
+		debugmsg(d->subsys, "dec21030", VERBOSITY_DEBUG,
+		    "block copy source = 0x%08x\n", idata);
 		break;
 
 	/*  Block copy destination:  */
 	case TGA_REG_GCDR:
-		debug("[ dec21030: block copy destination = 0x%08x ]\n", idata);
+		debugmsg(d->subsys, "dec21030", VERBOSITY_DEBUG,
+		    "block copy destination = 0x%08x\n", idata);
 		newlen = 64;
 		/*  Both source and destination are raw framebuffer addresses,
 		    offset by 0x1000.  */
@@ -214,12 +217,13 @@ DEVICE_ACCESS(dec21030)
 
 	default:
 		if (writeflag == MEM_WRITE)
-			debug("[ dec21030: unimplemented write to address"
-			    " 0x%x (=reg 0x%x), data=0x%02x ]\n",
+			debugmsg(d->subsys, "dec21030", VERBOSITY_WARNING,
+			    "unimplemented write to address 0x%x (=reg 0x%x), data=0x%02x\n",
 			    (int)relative_addr, reg, (int)idata);
 		else
-			debug("[ dec21030: unimplemented read from address"
-			    " 0x%x (=reg 0x%x) ]\n", (int)relative_addr, reg);
+			debugmsg(d->subsys, "dec21030", VERBOSITY_WARNING,
+			    "unimplemented read from address 0x%x (=reg 0x%x)\n",
+			    (int)relative_addr, reg);
 	}
 
 	if (writeflag == MEM_READ)
@@ -235,6 +239,7 @@ DEVINIT(dec21030)
 
 	CHECK_ALLOCATION(d = (struct dec21030_data *) malloc(sizeof(struct dec21030_data)));
 	memset(d, 0, sizeof(struct dec21030_data));
+	d->subsys = debugmsg_register_subsystem("dec21030");
 
 	memory_device_register(devinit->machine->memory, devinit->name,
 	    devinit->addr, 128*1048576, dev_dec21030_access, d,

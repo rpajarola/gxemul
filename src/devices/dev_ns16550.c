@@ -51,6 +51,7 @@
 #define	DEV_NS16550_LENGTH	8
 
 struct ns_data {
+	int		subsys;
 	int		addrmult;
 	int		in_use;
 	const char	*name;
@@ -108,7 +109,6 @@ DEVICE_TICK(ns16550)
 DEVICE_ACCESS(ns16550)
 {
 	uint64_t idata = 0, odata=0;
-	size_t i;
 	struct ns_data *d = (struct ns_data *) extra;
 
 	if (writeflag == MEM_WRITE)
@@ -177,7 +177,8 @@ DEVICE_ACCESS(ns16550)
 			if (writeflag == MEM_WRITE) {
 				/*  Set the high byte of the divisor:  */
 				d->divisor = (d->divisor & 0xff) | (idata << 8);
-				debug("[ ns16550 (%s): speed set to %i bps ]\n",
+				debugmsg(d->subsys, "ns16550", VERBOSITY_DEBUG,
+				    "(%s) speed set to %i bps\n",
 				    d->name, (int)(115200 / d->divisor));
 			} else
 				odata = d->divisor >> 8;
@@ -188,8 +189,9 @@ DEVICE_ACCESS(ns16550)
 		if (writeflag == MEM_WRITE) {
 			/*  This is to supress Linux' behaviour  */
 			if (idata != 0)
-				debug("[ ns16550 (%s): write to ier: 0x%02x ]"
-				    "\n", d->name, (int)idata);
+				debugmsg(d->subsys, "ns16550", VERBOSITY_DEBUG,
+				    "(%s) write to ier: 0x%02x\n",
+				    d->name, (int)idata);
 
 			/*  Needed for NetBSD 2.0.x, but not 1.6.2?  */
 			if (!(d->reg[com_ier] & IER_ETXRDY)
@@ -204,14 +206,16 @@ DEVICE_ACCESS(ns16550)
 
 	case com_iir:	/*  interrupt identification (r), fifo control (w)  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ ns16550 (%s): write to fifo control: 0x%02x ]"
-			    "\n", d->name, (int)idata);
+			debugmsg(d->subsys, "ns16550", VERBOSITY_DEBUG,
+			    "(%s) write to fifo control: 0x%02x\n",
+			    d->name, (int)idata);
 			d->fcr = idata;
 		} else {
 			odata = d->reg[com_iir];
 			if (d->reg[com_iir] & IIR_TXRDY)
 				d->reg[com_iir] &= ~IIR_TXRDY;
-			debug("[ ns16550 (%s): read from iir: 0x%02x ]\n",
+			debugmsg(d->subsys, "ns16550", VERBOSITY_DEBUG,
+			    "(%s) read from iir: 0x%02x\n",
 			    d->name, (int)odata);
 			dev_ns16550_tick(cpu, d);
 		}
@@ -219,7 +223,8 @@ DEVICE_ACCESS(ns16550)
 
 	case com_lsr:
 		if (writeflag == MEM_WRITE) {
-			debug("[ ns16550 (%s): write to lsr: 0x%02x ]\n",
+			debugmsg(d->subsys, "ns16550", VERBOSITY_DEBUG,
+			    "(%s) write to lsr: 0x%02x\n",
 			    d->name, (int)idata);
 			d->reg[com_lsr] = idata;
 		} else {
@@ -231,12 +236,14 @@ DEVICE_ACCESS(ns16550)
 
 	case com_msr:
 		if (writeflag == MEM_WRITE) {
-			debug("[ ns16550 (%s): write to msr: 0x%02x ]\n",
+			debugmsg(d->subsys, "ns16550", VERBOSITY_DEBUG,
+			    "(%s) write to msr: 0x%02x\n",
 			    d->name, (int)idata);
 			d->reg[com_msr] = idata;
 		} else {
 			odata = d->reg[com_msr];
-			debug("[ ns16550 (%s): read from msr: 0x%02x ]\n",
+			debugmsg(d->subsys, "ns16550", VERBOSITY_DEBUG,
+			    "(%s) read from msr: 0x%02x\n",
 			    d->name, (int)odata);
 		}
 		break;
@@ -267,14 +274,16 @@ DEVICE_ACCESS(ns16550)
 
 			d->dlab = idata & 0x80? 1 : 0;
 
-			debug("[ ns16550 (%s): write to lctl: 0x%02x (%s%s"
-			    "setting mode %i%c%s) ]\n", d->name, (int)idata,
+			debugmsg(d->subsys, "ns16550", VERBOSITY_DEBUG,
+			    "(%s) write to lctl: 0x%02x (%s%ssetting mode %i%c%s)\n",
+			    d->name, (int)idata,
 			    d->dlab? "Divisor Latch access, " : "",
 			    idata&0x40? "sending BREAK, " : "",
 			    d->databits, d->parity, d->stopbits);
 		} else {
 			odata = d->reg[com_lctl];
-			debug("[ ns16550 (%s): read from lctl: 0x%02x ]\n",
+			debugmsg(d->subsys, "ns16550", VERBOSITY_DEBUG,
+			    "(%s) read from lctl: 0x%02x\n",
 			    d->name, (int)odata);
 		}
 		break;
@@ -282,7 +291,8 @@ DEVICE_ACCESS(ns16550)
 	case com_mcr:
 		if (writeflag == MEM_WRITE) {
 			d->reg[com_mcr] = idata;
-			debug("[ ns16550 (%s): write to mcr: 0x%02x ]\n",
+			debugmsg(d->subsys, "ns16550", VERBOSITY_DEBUG,
+			    "(%s) write to mcr: 0x%02x\n",
 			    d->name, (int)idata);
 			if (!(d->reg[com_iir] & IIR_TXRDY)
 			    && (idata & MCR_IENABLE))
@@ -290,22 +300,22 @@ DEVICE_ACCESS(ns16550)
 			dev_ns16550_tick(cpu, d);
 		} else {
 			odata = d->reg[com_mcr];
-			debug("[ ns16550 (%s): read from mcr: 0x%02x ]\n",
+			debugmsg(d->subsys, "ns16550", VERBOSITY_DEBUG,
+			    "(%s) read from mcr: 0x%02x\n",
 			    d->name, (int)odata);
 		}
 		break;
 
 	default:
 		if (writeflag==MEM_READ) {
-			debug("[ ns16550 (%s): read from reg %i ]\n",
+			debugmsg(d->subsys, "ns16550", VERBOSITY_WARNING,
+			    "(%s) read from reg %i\n",
 			    d->name, (int)relative_addr);
 			odata = d->reg[relative_addr];
 		} else {
-			debug("[ ns16550 (%s): write to reg %i:",
-			    d->name, (int)relative_addr);
-			for (i=0; i<len; i++)
-				debug(" %02x", data[i]);
-			debug(" ]\n");
+			debugmsg(d->subsys, "ns16550", VERBOSITY_WARNING,
+			    "(%s) write to reg %i: 0x%02x\n",
+			    d->name, (int)relative_addr, (int)idata);
 			d->reg[relative_addr] = idata;
 		}
 	}
@@ -325,6 +335,7 @@ DEVINIT(ns16550)
 
 	CHECK_ALLOCATION(d = (struct ns_data *) malloc(sizeof(struct ns_data)));
 	memset(d, 0, sizeof(struct ns_data));
+	d->subsys = debugmsg_register_subsystem("ns16550");
 
 	d->addrmult	= devinit->addr_mult;
 	d->in_use	= devinit->in_use;

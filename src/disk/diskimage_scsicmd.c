@@ -54,6 +54,7 @@
 
 static const char *diskimage_types[] = DISKIMAGE_TYPES;
 static struct scsi_transfer *first_free_scsi_transfer_alloc = NULL;
+static int scsi_subsys = -1;
 
 
 /*
@@ -444,7 +445,7 @@ static void diskimage__simh_tape_read(struct diskimage *d,
 	int fixed = xferp->cmd[1] & 0x01, sili = xferp->cmd[1] & 0x02;
 	uint32_t count = (xferp->cmd[2] << 16) + (xferp->cmd[3] << 8) +
 	    xferp->cmd[4];
-	uint32_t blocksize = fixed? d->logical_block_size : count;
+	uint32_t blocksize = fixed? (uint32_t)d->logical_block_size : count;
 	uint32_t nblocks = fixed? count : 1;
 	uint32_t reclen, n;
 	uint64_t data_ofs;
@@ -453,7 +454,11 @@ static void diskimage__simh_tape_read(struct diskimage *d,
 
 	diskimage__return_default_status_and_message(xferp);
 
-	debug(" READ tape, id=%i file=%i, cmd[1]=%02x count=%i ofs=%lli\n",
+	if (scsi_subsys < 0)
+		scsi_subsys = debugmsg_register_subsystem("scsi");
+
+	debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+	    "READ tape, id=%i file=%i, cmd[1]=%02x count=%i ofs=%lli\n",
 	    d->id, d->tape_filenr, xferp->cmd[1], (int)count,
 	    (long long)d->tape_offset);
 
@@ -765,55 +770,46 @@ int diskimage_scsicommand(struct cpu *cpu, int id, int type,
 		return 0;
 	}
 
-	// TODO: debugmsg:ify the rest of the debug messages...
-	debug("[ diskimage_scsicommand(id=%i) cmd=0x%02x: ", id, xferp->cmd[0]);
-
-#if 0
-	fatal("[ diskimage_scsicommand(id=%i) cmd=0x%02x len=%i:",
-	    id, xferp->cmd[0], xferp->cmd_len);
-	for (i=0; i<xferp->cmd_len; i++)
-		fatal(" %02x", xferp->cmd[i]);
-	fatal("\n");
-if (xferp->cmd_len > 7 && xferp->cmd[5] == 0x11)
-	single_step = true;
-#endif
+	if (scsi_subsys < 0)
+		scsi_subsys = debugmsg_register_subsystem("scsi");
 
 	if (!media_check(d, xferp)) {
-		debug(" (no medium, or a new one) ]\n");
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: no medium or a new one\n", id);
 		return 1;
 	}
 
 	switch (xferp->cmd[0]) {
 
 	case SCSICMD_TEST_UNIT_READY:
-		debug("TEST_UNIT_READY");
-		if (xferp->cmd_len != 6)
-			debug(" (weird len=%i)", xferp->cmd_len);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: TEST_UNIT_READY%s\n",
+		    id, xferp->cmd_len != 6 ? " (weird len)" : "");
 
 		/*  TODO: bits 765 of buf[1] contains the LUN  */
 		if (xferp->cmd[1] != 0x00)
-			debugmsg(SUBSYS_DISK, "scsi", VERBOSITY_WARNING,
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
 			    "WARNING: TEST_UNIT_READY with cmd[1]=0x%02x"
-			    " not yet implemented", (int)xferp->cmd[1]);
+			    " not yet implemented\n", (int)xferp->cmd[1]);
 
 		diskimage__return_default_status_and_message(xferp);
 		break;
 
 	case SCSICMD_INQUIRY:
-		debug("INQUIRY");
-		if (xferp->cmd_len != 6)
-			debug(" (weird len=%i)", xferp->cmd_len);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: INQUIRY%s\n",
+		    id, xferp->cmd_len != 6 ? " (weird len)" : "");
 		if (xferp->cmd[1] != 0x00) {
-			debugmsg(SUBSYS_DISK, "scsi", VERBOSITY_WARNING,
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
 			    "WARNING: INQUIRY with cmd[1]=0x%02x not yet "
-			    "implemented", (int)xferp->cmd[1]);
+			    "implemented\n", (int)xferp->cmd[1]);
 		}
 
 		/*  Return values:  */
 		retlen = xferp->cmd[4];
 		if (retlen < 36) {
-			debugmsg(SUBSYS_DISK, "scsi", VERBOSITY_WARNING,
-			    "WARNING: SCSI inquiry len=%i, <36!", retlen);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+			    "WARNING: SCSI inquiry len=%i, <36!\n", retlen);
 			retlen = 36;
 		}
 
@@ -930,16 +926,18 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case SCSIBLOCKCMD_READ_CAPACITY:
-		debug("READ_CAPACITY");
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: READ_CAPACITY\n", id);
 
 		if (xferp->cmd_len != 10)
-			fatal(" [ weird READ_CAPACITY len=%i, should be 10 ] ",
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+			    "weird READ_CAPACITY len=%i, should be 10\n",
 			    xferp->cmd_len);
 		else {
 			if (xferp->cmd[8] & 1) {
 				/*  Partial Medium Indicator bit...  TODO  */
-				fatal("WARNING: READ_CAPACITY with PMI bit"
-				    " set not yet implemented\n");
+				debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+				    "READ_CAPACITY with PMI bit set not yet implemented\n");
 			}
 		}
 
@@ -966,14 +964,14 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 	case SCSICMD_MODE_SENSE:
 	case SCSICMD_MODE_SENSE10:	
-		debug("MODE_SENSE");
 		q = 4; retlen = xferp->cmd[4];
 		switch (xferp->cmd_len) {
 		case 6:	break;
 		case 10:q = 8;
 			retlen = xferp->cmd[7] * 256 + xferp->cmd[8];
 			break;
-		default:fatal(" (unimplemented mode_sense len=%i)",
+		default:debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+			    "unimplemented mode_sense len=%i\n",
 			    xferp->cmd_len);
 		}
 
@@ -1003,7 +1001,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 		pagecode = xferp->cmd[2] & 0x3f;
 
-		debug("[ MODE SENSE id %i, pagecode=%i ]\n", id, pagecode);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: MODE_SENSE (pagecode=%i, len=%i)\n", id, pagecode, xferp->cmd_len);
 
 		/*  4 bytes of header for 6-byte command,
 		    8 bytes of header for 10-byte command.  */
@@ -1062,9 +1061,9 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 			}
 		} else if (pagecode != 0 &&
 		    mode_page(d, xferp->data_in + q, pagecode) == 0)
-			debugmsg(SUBSYS_DISK, "scsi", VERBOSITY_WARNING,
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
 			    "MODE_SENSE for page %i is not yet "
-			    "implemented!", pagecode);
+			    "implemented!\n", pagecode);
 		else if (pagecode != 0)
 			q += xferp->data_in[q + 1] + 2;
 
@@ -1100,8 +1099,6 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 	case SCSICMD_READ:
 	case SCSICMD_READ_10:
-		debug("READ");
-
 		if (d->is_a_tape && d->tape_simh) {
 			diskimage__simh_tape_read(d, xferp);
 			break;
@@ -1139,14 +1136,15 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 			ofs = d->tape_offset;
 
-			fatal("[ READ tape, id=%i file=%i, cmd[1]=%02x size=%i"
-			    ", ofs=%lli ]\n", id, d->tape_filenr,
-			    xferp->cmd[1], (int)size, (long long)ofs);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: READ tape, file=%i cmd[1]=%02x size=%i ofs=%lli\n",
+			    id, d->tape_filenr, xferp->cmd[1], (int)size, (long long)ofs);
 		} else {
 			if (xferp->cmd[0] == SCSICMD_READ) {
 				if (xferp->cmd_len != 6)
-					debug(" (weird len=%i)",
-					    xferp->cmd_len);
+					debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+					    "id=%i: READ weird len=%i\n",
+					    id, xferp->cmd_len);
 
 				/*
 				 *  bits 4..0 of cmd[1], and cmd[2] and cmd[3]
@@ -1163,8 +1161,9 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 					retlen = 256;
 			} else {
 				if (xferp->cmd_len != 10)
-					debug(" (weird len=%i)",
-					    xferp->cmd_len);
+					debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+					    "id=%i: READ weird len=%i\n",
+					    id, xferp->cmd_len);
 
 				/*
 				 *  cmd[2..5] hold the logical block address.
@@ -1180,7 +1179,9 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 			/*  Past the end of the medium?  */
 			if (ofs + retlen > d->nr_of_logical_blocks) {
-				debug(" (past the end) ]\n");
+				debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+				    "id=%i: READ past the end (ofs=%lli, retlen=%i)\n",
+				    id, (long long)ofs, (int)retlen);
 				check_condition(d, xferp,
 				    SENSE_KEY_ILLEGAL_REQUEST,
 				    ASC_LBA_OUT_OF_RANGE);
@@ -1195,7 +1196,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		scsi_transfer_allocbuf(&xferp->data_in_len, &xferp->data_in,
 		    size, 0);
 
-		debug(" READ  ofs=%lli size=%i\n", (long long)ofs, (int)size);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: READ ofs=%lli size=%i\n", id, (long long)ofs, (int)size);
 
 		diskimage__return_default_status_and_message(xferp);
 
@@ -1212,7 +1214,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		 *   be set to NO SENSE"..
 		 */
 		if (d->is_a_tape && d->f != NULL && feof(d->f)) {
-			debug(" feof id=%i\n", id);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: feof\n", id);
 			xferp->status[0] = 0x02;	/*  CHECK CONDITION  */
 
 			d->filemark = 1;
@@ -1228,13 +1231,12 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 	case SCSICMD_WRITE:
 	case SCSICMD_WRITE_10:
-		debug("WRITE");
-
 		/*  TODO: tape  */
 
 		if (xferp->cmd[0] == SCSICMD_WRITE) {
 			if (xferp->cmd_len != 6)
-				debug(" (weird len=%i)", xferp->cmd_len);
+				debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+				    "id=%i: WRITE weird len=%i\n", id, xferp->cmd_len);
 
 			/*
 			 *  bits 4..0 of cmd[1], and cmd[2] and cmd[3] hold the
@@ -1251,7 +1253,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 				retlen = 256;
 		} else {
 			if (xferp->cmd_len != 10)
-				debug(" (weird len=%i)", xferp->cmd_len);
+				debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+				    "id=%i: WRITE weird len=%i\n", id, xferp->cmd_len);
 
 			/*
 			 *  cmd[2..5] hold the logical block address.
@@ -1269,14 +1272,16 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		ofs *= d->logical_block_size;
 
 		if (xferp->data_out_offset != size) {
-			debug(", data_out == NULL, wanting %i bytes, \n\n",
-			    (int)size);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: WRITE waiting for %i data_out bytes\n",
+			    id, (int)size);
 			xferp->data_out_len = size;
 			return 2;
 		}
 
-		debug("WRITE ofs=%i size=%i offset=%i\n", (int)ofs,
-		    (int)size, (int)xferp->data_out_offset);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: WRITE ofs=%lli size=%i offset=%i\n",
+		    id, (long long)ofs, (int)size, (int)xferp->data_out_offset);
 
 		/*  int result = */  diskimage__internal_access(d, 1, ofs, xferp->data_out, size);
 
@@ -1286,10 +1291,9 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case SCSICMD_SYNCHRONIZE_CACHE:
-		debug("SYNCHRONIZE_CACHE");
-
-		if (xferp->cmd_len != 10)
-			debug(" (weird len=%i)", xferp->cmd_len);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: SYNCHRONIZE_CACHE%s\n",
+		    id, xferp->cmd_len != 10 ? " (weird len)" : "");
 
 		/*  TODO: actualy care about cmd[]  */
 		/*  TODO: Move to diskimage.cc and make sure that both
@@ -1301,13 +1305,29 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case SCSICMD_START_STOP_UNIT:
-		debug("START_STOP_UNIT");
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: START_STOP_UNIT (cmd[4]=0x%02x)%s\n",
+		    id, xferp->cmd[4], xferp->cmd_len != 6 ? " (weird len)" : "");
 
-		if (xferp->cmd_len != 6)
-			debug(" (weird len=%i)", xferp->cmd_len);
+		/*  LoEj without Start ejects a removable medium:  */
+		if ((xferp->cmd[4] & 0x03) == 0x02 &&
+		    diskimage_is_removable(d) && !d->no_medium) {
+			if (d->prevent_removal) {
+				check_condition(d, xferp,
+				    SENSE_KEY_ILLEGAL_REQUEST,
+				    ASC_MEDIUM_REMOVAL_PREVENTED);
+				break;
+			}
 
-		for (i=0; i<(ssize_t)xferp->cmd_len; i++)
-			debug(" %02x", xferp->cmd[i]);
+			char name[40];
+			diskimage_device_name(d, name, sizeof(name));
+			debugmsg(SUBSYS_DISK, "scsi", VERBOSITY_INFO,
+			    "the guest ejected %s from %s", d->fname, name);
+			diskimage_eject_medium(d);
+		}
+
+		diskimage__return_default_status_and_message(xferp);
+		break;
 
 		/*  LoEj without Start ejects a removable medium:  */
 		if ((xferp->cmd[4] & 0x03) == 0x02 &&
@@ -1330,17 +1350,17 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case SCSICMD_REQUEST_SENSE:
-		debug("REQUEST_SENSE");
-
 		retlen = xferp->cmd[4];
 
 		/*  TODO: bits 765 of buf[1] contains the LUN  */
 		if (xferp->cmd[1] != 0x00)
-			fatal("WARNING: REQUEST_SENSE with cmd[1]=0x%02x not"
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+			    "WARNING: REQUEST_SENSE with cmd[1]=0x%02x not"
 			    " yet implemented\n", (int)xferp->cmd[1]);
 
 		if (retlen < 18) {
-			fatal("WARNING: SCSI request sense len=%i, <18!\n",
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+			    "WARNING: SCSI request sense len=%i, <18!\n",
 			    (int)retlen);
 			retlen = 18;
 		}
@@ -1382,7 +1402,9 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 			d->sense_key = SENSE_KEY_NO_SENSE;
 			d->sense_asc = 0;
 		}
-		debug(": [2]=0x%02x ", xferp->data_in[2]);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: REQUEST_SENSE sense_key=0x%02x\n",
+		    id, xferp->data_in[2]);
 
 		/*  TODO  */
 		xferp->data_in[7] = retlen - 7;	/*  additional sense length  */
@@ -1392,13 +1414,15 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case SCSICMD_READ_BLOCK_LIMITS:
-		debug("READ_BLOCK_LIMITS");
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: READ_BLOCK_LIMITS\n", id);
 
 		retlen = 6;
 
 		/*  TODO: bits 765 of buf[1] contains the LUN  */
 		if (xferp->cmd[1] != 0x00)
-			fatal("WARNING: READ_BLOCK_LIMITS with cmd[1]="
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+			    "WARNING: READ_BLOCK_LIMITS with cmd[1]="
 			    "0x%02x not yet implemented\n", (int)xferp->cmd[1]);
 
 		/*  Return data:  */
@@ -1425,11 +1449,13 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case SCSICMD_REWIND:
-		debug("REWIND");
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: REWIND\n", id);
 
 		/*  TODO: bits 765 of buf[1] contains the LUN  */
 		if ((xferp->cmd[1] & 0xe0) != 0x00)
-			fatal("WARNING: REWIND with cmd[1]=0x%02x not yet "
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+			    "WARNING: REWIND with cmd[1]=0x%02x not yet "
 			    "implemented\n", (int)xferp->cmd[1]);
 
 		/*  Close and reopen.  */
@@ -1439,8 +1465,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 		d->f = fopen(d->fname, d->writable? "r+b" : "rb");
 		if (d->f == NULL) {
-			fprintf(stderr, "[ diskimage: could not (re)open "
-			    "'%s' ]\n", d->fname);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_ERROR,
+			    "could not (re)open '%s'\n", d->fname);
 			/*  TODO: return error  */
 		}
 
@@ -1455,25 +1481,14 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case SCSICMD_SPACE:
-		debug("SPACE");
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: SPACE code=%i\n", id, xferp->cmd[1] & 7);
 
 		/*  TODO: bits 765 of buf[1] contains the LUN  */
 		if ((xferp->cmd[1] & 0xe0) != 0x00)
-			fatal("WARNING: SPACE with cmd[1]=0x%02x not yet "
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+			    "WARNING: SPACE with cmd[1]=0x%02x not yet "
 			    "implemented\n", (int)xferp->cmd[1]);
-
-		/*
-		 *  Bits 2..0 of buf[1] contain the 'code' which describes how
-		 *  spacing should be done, and buf[2..4] contain the number of
-		 *  operations.
-		 */
-		debug("[ SPACE: buf[] = %02x %02x %02x %02x %02x %02x ]\n",
-		    xferp->cmd[0],
-		    xferp->cmd[1],
-		    xferp->cmd[2],
-		    xferp->cmd[3],
-		    xferp->cmd[4],
-		    xferp->cmd[5]);
 
 		if (d->is_a_tape && d->tape_simh) {
 			diskimage__simh_tape_space(d, xferp);
@@ -1499,12 +1514,14 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 				d->filemark = 0;
 			}
 
-			debug("{ switching to tape file %i }", d->tape_filenr);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: switching to tape file %i\n", id, d->tape_filenr);
 			diskimage__switch_tape(d);
 			d->filemark = 0;
 			break;
 		default:
-			fatal("[ diskimage.c: unimplemented SPACE type %i ]\n",
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+			    "unimplemented SPACE type %i\n",
 			    xferp->cmd[1] & 7);
 		}
 
@@ -1524,8 +1541,9 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		 */
 		retlen = 48;
 
-		debug("CDROM_READ_SUBCHANNEL/READ_CD_CAPACITY, cmd[1]=0x%02x",
-		    xferp->cmd[1]);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: CDROM_READ_SUBCHANNEL/READ_CD_CAPACITY cmd[1]=0x%02x\n",
+		    id, xferp->cmd[1]);
 
 		/*  Return data:  */
 		scsi_transfer_allocbuf(&xferp->data_in_len,
@@ -1549,12 +1567,10 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case SCSICDROM_READ_TOC:
-		debug("(CDROM_READ_TOC: ");
-		debug("lun=%i msf=%i ",
-		    xferp->cmd[1] >> 5, (xferp->cmd[1] >> 1) & 1);
-		debug("starting_track=%i ", xferp->cmd[6]);
 		retlen = xferp->cmd[7] * 256 + xferp->cmd[8];
-		debug("allocation_len=%i)\n", retlen);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: CDROM_READ_TOC lun=%i msf=%i starting_track=%i alloc_len=%i\n",
+		    id, xferp->cmd[1] >> 5, (xferp->cmd[1] >> 1) & 1, xferp->cmd[6], retlen);
 
 		/*  Return data:  */
 		scsi_transfer_allocbuf(&xferp->data_in_len,
@@ -1578,7 +1594,9 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 	case SCSICDROM_READ_DISCINFO:
 		/*  (Patch from Haavard Eidnes.)  */
-		debug("CDROM_READ_DISCINFO, cmd[1]=0x%02x", xferp->cmd[1]);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: CDROM_READ_DISCINFO cmd[1]=0x%02x\n",
+		    id, xferp->cmd[1]);
 		retlen = 34;
 		scsi_transfer_allocbuf(&xferp->data_in_len,
 		    &xferp->data_in, retlen, 1);
@@ -1606,7 +1624,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 	case SCSICDROM_READ_TRACKINFO:
 		/*  (Patch from Haavard Eidnes.)  */
-		debug("CDROM_READ_TRACKINFO");
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: CDROM_READ_TRACKINFO\n", id);
 		retlen = 36;
 		scsi_transfer_allocbuf(&xferp->data_in_len,
 		    &xferp->data_in, retlen, 1);
@@ -1650,8 +1669,6 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case SCSICMD_MODE_SELECT:
-		debug("[ SCSI MODE_SELECT: ");
-
 		/*
 		 *  TODO:
 		 *
@@ -1661,12 +1678,11 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 		if (xferp->data_out_offset == 0) {
 			xferp->data_out_len = 12;	/*  TODO  */
-			debug("data_out == NULL, wanting %i bytes ]\n",
-			    (int)xferp->data_out_len);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: MODE_SELECT data_out == NULL, wanting %i bytes\n",
+			    id, (int)xferp->data_out_len);
 			return 2;
 		}
-
-		debug("data_out!=NULL (OK), ");
 
 		/*  TODO:  Care about cmd?  */
 
@@ -1679,7 +1695,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 			    (xferp->data_out[10] << 8) + xferp->data_out[11];
 			if (len > 0)
 				d->logical_block_size = len;
-			debug("[ block length %i ]\n", len);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: MODE_SELECT block length %i\n", id, len);
 		} else
 		/*  Set sector size to 2048:  */
 		/*  00 05 00 08 00 03 ca 40 00 00 08 00  */
@@ -1691,25 +1708,31 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 			    (xferp->data_out[9] << 16) +
 			    (xferp->data_out[10] << 8) +
 			    xferp->data_out[11];
-			debug("[ setting logical_block_size to %i ]\n",
-			    d->logical_block_size);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: MODE_SELECT setting logical_block_size to %i\n",
+			    id, d->logical_block_size);
 		} else {
-			int j;
-			fatal("[ unknown MODE_SELECT: cmd =");
-			for (j=0; j<(ssize_t)xferp->cmd_len; j++)
-				fatal(" %02x", xferp->cmd[j]);
-			fatal(", data_out =");
-			for (j=0; j<(ssize_t)xferp->data_out_len; j++)
-				fatal(" %02x", xferp->data_out[j]);
-			fatal(" ]");
+			if (debugmsg_is_active(scsi_subsys, VERBOSITY_WARNING)) {
+				char cbuf[256] = "", dbuf[256] = "";
+				size_t p = 0;
+				for (int j=0; j<(ssize_t)xferp->cmd_len && p + 4 < sizeof(cbuf); j++)
+					p += snprintf(cbuf + p, sizeof(cbuf) - p, " %02x", xferp->cmd[j]);
+				p = 0;
+				for (int j=0; j<(ssize_t)xferp->data_out_len && p + 4 < sizeof(dbuf); j++)
+					p += snprintf(dbuf + p, sizeof(dbuf) - p, " %02x", xferp->data_out[j]);
+				debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+				    "id=%i: unknown MODE_SELECT: cmd =%s, data_out =%s\n",
+				    id, cbuf, dbuf);
+			}
 		}
 
-		debug(" ]\n");
 		diskimage__return_default_status_and_message(xferp);
 		break;
 
 	case SCSICMD_PREVENT_ALLOW_REMOVE:
-		debug("PREVENT_ALLOW_MEDIUM_REMOVAL %i", xferp->cmd[4] & 1);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: PREVENT_ALLOW_MEDIUM_REMOVAL %i\n",
+		    id, xferp->cmd[4] & 1);
 
 		/*  (Only the guest's own eject commands are prevented.)  */
 		d->prevent_removal = (xferp->cmd[4] & 1) != 0;
@@ -1718,11 +1741,15 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case 0xbd:
-		fatal("[ SCSI 0x%02x (len %i), TODO: ", xferp->cmd[0],
-		    xferp->cmd_len);
-		for (i=0; i<(ssize_t)xferp->cmd_len; i++)
-			fatal(" %02x", xferp->cmd[i]);
-		fatal(" ]\n");
+		if (debugmsg_is_active(scsi_subsys, VERBOSITY_WARNING)) {
+			char cbuf[256] = "";
+			size_t p = 0;
+			for (i=0; i<(ssize_t)xferp->cmd_len && p + 4 < sizeof(cbuf); i++)
+				p += snprintf(cbuf + p, sizeof(cbuf) - p, " %02x", xferp->cmd[i]);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+			    "id=%i: SCSI 0x%02x (len %i):%s\n",
+			    id, xferp->cmd[0], xferp->cmd_len, cbuf);
+		}
 
 		/*
 		 *  Used by Windows NT?
@@ -1733,7 +1760,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		 */
 
 		if (xferp->cmd_len < 12) {
-			fatal("WEIRD LEN?\n");
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+			    "id=%i: SCSI 0xbd weird len %i\n", id, xferp->cmd_len);
 			retlen = 8;
 		} else {
 			retlen = xferp->cmd[8] * 256 + xferp->cmd[9];
@@ -1748,12 +1776,11 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	default:
-		debug("[ UNIMPLEMENTED SCSI command 0x%02x, disk id=%i",
-		    xferp->cmd[0], id);
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
+		    "id=%i: UNIMPLEMENTED SCSI command 0x%02x\n",
+		    id, xferp->cmd[0]);
 		// exit(1);
 	}
-
-	debug(" ]\n");
 
 	return 1;
 }

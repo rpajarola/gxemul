@@ -41,6 +41,7 @@
 
 
 struct colorplanemask_data {
+	int		subsys;
 	unsigned char	*color_plane_mask;
 };
 
@@ -55,20 +56,21 @@ DEVICE_ACCESS(colorplanemask)
 		if (writeflag == MEM_WRITE) {
 			*d->color_plane_mask = data[0];
 		} else {
-			debug("[ colorplanemask: read isn't actually "
-			    "supported ]\n");
+			debugmsg(d->subsys, "colorplanemask", VERBOSITY_WARNING,
+			    "read isn't actually supported\n");
 			data[0] = *d->color_plane_mask;
 		}
 		break;
 
 	default:
 		if (writeflag == MEM_WRITE) {
-			debug("[ colorplanemask: unimplemented write "
-			    "to address 0x%x, data=0x%02x ]\n",
+			debugmsg(d->subsys, "colorplanemask", VERBOSITY_WARNING,
+			    "unimplemented write to address 0x%x, data=0x%02x\n",
 			    (int)relative_addr, data[0]);
 		} else {
-			debug("[ colorplanemask: unimplemented read "
-			    "from address 0x%x ]\n", (int)relative_addr);
+			debugmsg(d->subsys, "colorplanemask", VERBOSITY_WARNING,
+			    "unimplemented read from address 0x%x\n",
+			    (int)relative_addr);
 		}
 	}
 
@@ -88,6 +90,7 @@ void dev_colorplanemask_init(struct memory *mem, uint64_t baseaddr,
 	CHECK_ALLOCATION(d = (struct colorplanemask_data *)
 	    malloc(sizeof(struct colorplanemask_data)));
 	memset(d, 0, sizeof(struct colorplanemask_data));
+	d->subsys = debugmsg_register_subsystem("colorplanemask");
 
 	d->color_plane_mask = color_plane_mask;
 

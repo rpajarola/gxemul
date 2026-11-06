@@ -127,11 +127,10 @@ DEVICE_ACCESS(disk)
 				break;
 			}
 			
-			if (verbose >= 2) {
-				debug("[ disk: %s disk %i offset %lli ]\n",
-					d->command ? "WRITE" : "READ",
-					d->disk_id, (long long)d->offset);
-			}
+			debugmsg(SUBSYS_DISK, "disk", VERBOSITY_DEBUG,
+			    "%s disk %i offset %lli\n",
+			    d->command ? "WRITE" : "READ",
+			    d->disk_id, (long long)d->offset);
 			
 			d->offset += SECTOR_SIZE;
 		}

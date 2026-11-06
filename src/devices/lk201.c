@@ -41,6 +41,8 @@
 #include "thirdparty/dc7085.h"	/*  for port names  */
 #include "thirdparty/lk201.h"
 
+static int lk201_subsys = -1;
+
 
 // #define debug fatal
 
@@ -604,13 +606,17 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 
 void lk201_tx_data(struct lk201_data *d, int port, int idata)
 {
+	if (lk201_subsys < 0)
+		lk201_subsys = debugmsg_register_subsystem("lk201");
+
 	switch (port) {
 	case DCKBD_PORT:		/*  port 0  */
 		if (!d->use_fb && !d->kbd_present) {
 			/*  Simply print the character to stdout:  */
 			console_putchar(d->console_handle, idata);
 		} else {
-			debug("[ lk201: writing data to KBD: 0x%02x ]\n", idata);
+			debugmsg(lk201_subsys, "lk201", VERBOSITY_DEBUG,
+			    "writing data to KBD: 0x%02x\n", idata);
 			switch (idata) {
 			case LK_LED_DISABLE:	/*  0x11  */
 				break;
@@ -667,16 +673,19 @@ void lk201_tx_data(struct lk201_data *d, int port, int idata)
 				    0x00, DCKBD_PORT);
 				break;
 			default:
-				debug("[ lk201: unimplemented keyboard control: 0x%x ]\n",
+				debugmsg(lk201_subsys, "lk201", VERBOSITY_WARNING,
+				    "unimplemented keyboard control: 0x%x\n",
 				    idata);
 			}
 		}
 		break;
 	case DCMOUSE_PORT:		/*  port 1  */
-		debug("[ lk201: writing data to MOUSE: 0x%x ", idata);
 		switch (idata) {
 		case MOUSE_INCREMENTAL:
 			d->mouse_mode = MOUSE_INCREMENTAL;
+			debugmsg(lk201_subsys, "lk201", VERBOSITY_DEBUG,
+			    "writing data to MOUSE: 0x%x (incremental mode)\n",
+			    idata);
 			break;
 		case MOUSE_SELF_TEST:
 			/*
@@ -687,7 +696,9 @@ void lk201_tx_data(struct lk201_data *d, int port, int idata)
 			 *        0x2, according to NetBSD/pmax. But the
 			 *        other bits and bytes?
 			 */
-			debug("(mouse self-test request)");
+			debugmsg(lk201_subsys, "lk201", VERBOSITY_DEBUG,
+			    "writing data to MOUSE: 0x%x (mouse self-test request)\n",
+			    idata);
 			d->add_to_rx_queue(d->add_data,
 			    0xa0 | d->mouse_revision, DCMOUSE_PORT);
 			d->add_to_rx_queue(d->add_data, 0x02, DCMOUSE_PORT);
@@ -695,9 +706,10 @@ void lk201_tx_data(struct lk201_data *d, int port, int idata)
 			d->add_to_rx_queue(d->add_data, 0x00, DCMOUSE_PORT);
 			break;
 		default:
-			debug("UNKNOWN byte; TODO");
+			debugmsg(lk201_subsys, "lk201", VERBOSITY_WARNING,
+			    "writing data to MOUSE: 0x%x (UNKNOWN byte; TODO)\n",
+			    idata);
 		}
-		debug(" ]\n");
 		break;
 	case DCPRINTER_PORT:		/*  port 3  */
 		/*  (With a framebuffer, maybe the serial console's own.)  */
@@ -724,6 +736,9 @@ void lk201_init(struct lk201_data *d, int use_fb,
 	int console_handle, void *add_data)
 {
 	memset(d, 0, sizeof(struct lk201_data));
+
+	if (lk201_subsys < 0)
+		lk201_subsys = debugmsg_register_subsystem("lk201");
 
 	d->space_available_in_queue = space_available_in_queue;
 	d->add_to_rx_queue = add_to_rx_queue;

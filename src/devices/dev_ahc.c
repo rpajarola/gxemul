@@ -52,13 +52,10 @@
 #include "thirdparty/aic7xxx_reg.h"
 
 
-#define	AHC_DEBUG
-#define debug fatal
-
-
 #define	DEV_AHC_LENGTH		0x100
 
 struct ahc_data {
+	int		subsys;
 	unsigned char	reg[DEV_AHC_LENGTH];
 };
 
@@ -162,25 +159,21 @@ DEVICE_ACCESS(ahc)
 			    (int)relative_addr);
 	}
 
-#ifdef AHC_DEBUG
 	if (ok) {
 		if (name == NULL) {
-			if (writeflag == MEM_WRITE)
-				debug("[ ahc: write to address 0x%x: 0x"
-				    "%02x ]\n", (int)relative_addr, (int)idata);
-			else
-				debug("[ ahc: read from address 0x%x: 0x"
-				    "%02x ]\n", (int)relative_addr, (int)odata);
+			debugmsg(d->subsys, "ahc", VERBOSITY_DEBUG,
+			    "%s address 0x%x: 0x%02x\n",
+			    writeflag == MEM_WRITE ? "write to" : "read from",
+			    (int)relative_addr,
+			    (int)(writeflag == MEM_WRITE ? idata : odata));
 		} else {
-			if (writeflag == MEM_WRITE)
-				debug("[ ahc: write to %s: 0x%02x ]\n",
-				    name, (int)idata);
-			else
-				debug("[ ahc: read from %s: 0x%02x ]\n",
-				    name, (int)odata);
+			debugmsg(d->subsys, "ahc", VERBOSITY_DEBUG,
+			    "%s %s: 0x%02x\n",
+			    writeflag == MEM_WRITE ? "write to" : "read from",
+			    name,
+			    (int)(writeflag == MEM_WRITE ? idata : odata));
 		}
 	}
-#endif
 
 	if (writeflag == MEM_READ)
 		memory_writemax64(cpu, data, len, odata);
@@ -195,6 +188,7 @@ DEVINIT(ahc)
 
 	CHECK_ALLOCATION(d = (struct ahc_data *) malloc(sizeof(struct ahc_data)));
 	memset(d, 0, sizeof(struct ahc_data));
+	d->subsys = debugmsg_register_subsystem("ahc");
 
 	memory_device_register(devinit->machine->memory, devinit->name,
 	    devinit->addr, DEV_AHC_LENGTH, dev_ahc_access, d,

@@ -49,6 +49,7 @@
 /*  #define JA_DEBUG  */
 
 struct pmagja_data {
+	int			subsys;
 	struct interrupt	irq;
 	struct memory		*fb_mem;
 	struct vfb_data		*vfb_data;
@@ -89,11 +90,13 @@ for (i=0; i<len; i++)
 	case 0x0800c4:		/*  pip offset  */
 		if (writeflag==MEM_READ) {
 			odata = d->pip_offset;
-			debug("[ pmagja: read from pip offset: 0x%08llx ]\n",
+			debugmsg(d->subsys, "pmagja", VERBOSITY_DEBUG,
+			    "read from pip offset: 0x%08llx\n",
 			    (long long)odata);
 		} else {
 			d->pip_offset = idata;
-			debug("[ px: write to pip offset: 0x%08llx ]\n",
+			debugmsg(d->subsys, "pmagja", VERBOSITY_DEBUG,
+			    "write to pip offset: 0x%08llx\n",
 			    (long long)idata);
 		}
 		break;
@@ -202,6 +205,7 @@ void dev_pmagja_init(struct machine *machine, struct memory *mem,
 
 	CHECK_ALLOCATION(d = (struct pmagja_data *) malloc(sizeof(struct pmagja_data)));
 	memset(d, 0, sizeof(struct pmagja_data));
+	d->subsys = debugmsg_register_subsystem("pmagja");
 
 	INTERRUPT_CONNECT(irq_path, d->irq);
 

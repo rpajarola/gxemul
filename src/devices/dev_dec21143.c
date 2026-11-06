@@ -74,6 +74,8 @@
 #define	ROM_WIDTH		6
 
 struct dec21143_data {
+	int		subsys;
+
 	/*  NIC common data  */
 	struct nic_data	nic;
 
@@ -321,14 +323,11 @@ static void dec21143_update_rx_mode(struct dec21143_data *d)
 	int opmode_pr = (d->reg[CSR_OPMODE / 8] & OPMODE_PR) != 0;
 	int opmode_pm = (d->reg[CSR_OPMODE / 8] & OPMODE_PM) != 0;
 
-	debug("[ dec21143 rx mode: opmode_pr = %d                ]\n",
-	      opmode_pr);
-	debug("[ dec21143 rx mode: filter_needs_promiscuous = %d ]\n",
-	      d->filter_needs_promiscuous);
-	debug("[ dec21143 rx mode: opmode_pm = %d                ]\n",
-	      opmode_pm);
-	debug("[ dec21143 rx mode: filter_saturated = %d         ]\n",
-	      d->hash_filter_saturated);
+	debugmsg(d->subsys, "dec21143", VERBOSITY_DEBUG,
+	    "rx mode: opmode_pr=%d, filter_needs_promiscuous=%d, "
+	    "opmode_pm=%d, filter_saturated=%d\n",
+	    opmode_pr, d->filter_needs_promiscuous,
+	    opmode_pm, d->hash_filter_saturated);
 
 	d->promiscuous = opmode_pr;
 	d->nic.promiscuous_mode =
@@ -420,7 +419,8 @@ int dec21143_rx(struct cpu *cpu, struct dec21143_data *d)
 			d->cur_rx_addr += 4 * sizeof(uint32_t);
 	}
 
-	debug("{ RX (%llx): 0x%08x 0x%08x 0x%x 0x%x: buf %i bytes at 0x%x }\n",
+	debugmsg(d->subsys, "dec21143", VERBOSITY_DEBUG,
+	    "RX (0x%llx): 0x%08x 0x%08x 0x%x 0x%x: buf %i bytes at 0x%x\n",
 	    (long long)addr, rdes0, rdes1, rdes2, rdes3, bufsize, (int)bufaddr);
 
 	/*  Turn off all status bits, and give up ownership:  */
@@ -512,7 +512,8 @@ static void dec21143_setup_perfect(struct dec21143_data *d,
 	for (i = 0; i < TULIP_MAXADDRS; i++) {
 		dec21143_setup_copy_enaddr(&d->perfect_filter[i * 6],
 		    &setup_packet[i * 3]);
-		debug("dec21143 PERFECT[%d] %02x:%02x:%02x:%02x:%02x:%02x\n",
+		debugmsg(d->subsys, "dec21143", VERBOSITY_DEBUG,
+		    "PERFECT[%d] %02x:%02x:%02x:%02x:%02x:%02x\n",
 		    i,
 		    d->perfect_filter[i*6 + 0],
 		    d->perfect_filter[i*6 + 1],
@@ -536,24 +537,20 @@ static void dec21143_setup_hashperfect(struct dec21143_data *d,
 {
 	int i;
 
-	debug("dec21143 HASHPERFECT:");
 	for (i = 0; i < MCHASH_NWORDS; i++) {
-		if ((i % 8) == 0)
-			debug("\n\t");
-		debug(" %04x", setup_packet[i]);
 		d->hash_filter[i] = setup_packet[i];
 		d->hash_filter_saturated |= (d->hash_filter[i] == 0xffff);
 	}
-	debug("\n");
 
 	dec21143_setup_copy_enaddr(d->nic.mac_address, &setup_packet[39]);
-	debug("dec21143 HASHPERFECT %02x:%02x:%02x:%02x:%02x:%02x\n",
-	      d->nic.mac_address[0],
-	      d->nic.mac_address[1],
-	      d->nic.mac_address[2],
-	      d->nic.mac_address[3],
-	      d->nic.mac_address[4],
-	      d->nic.mac_address[5]);
+	debugmsg(d->subsys, "dec21143", VERBOSITY_DEBUG,
+	    "HASHPERFECT %02x:%02x:%02x:%02x:%02x:%02x\n",
+	    d->nic.mac_address[0],
+	    d->nic.mac_address[1],
+	    d->nic.mac_address[2],
+	    d->nic.mac_address[3],
+	    d->nic.mac_address[4],
+	    d->nic.mac_address[5]);
 
 	d->filter_needs_promiscuous = 0;
 	d->drop_packet = dec21143_drop_packet_hashperfect;
@@ -569,7 +566,7 @@ static void dec21143_setup_inverse(struct dec21143_data *d,
 	const uint32_t *setup_packet)
 {
 	dec21143_setup_perfect(d, setup_packet);
-	debug("dec21143 INVERSE ^^^^\n");
+	debugmsg(d->subsys, "dec21143", VERBOSITY_DEBUG, "INVERSE\n");
 	d->drop_packet = dec21143_drop_packet_inverse;
 }
 
@@ -584,15 +581,11 @@ static void dec21143_setup_hashonly(struct dec21143_data *d,
 {
 	int i;
 
-	debug("dec21143 HASHONLY:");
 	for (i = 0; i < MCHASH_NWORDS; i++) {
-		if ((i % 8) == 0)
-			fatal("\n\t");
-		debug(" %04x", setup_packet[i]);
 		d->hash_filter[i] = setup_packet[i];
 		d->hash_filter_saturated |= (d->hash_filter[i] == 0xffff);
 	}
-	debug("\n");
+	debugmsg(d->subsys, "dec21143", VERBOSITY_DEBUG, "HASHONLY\n");
 
 	d->drop_packet = dec21143_drop_packet_hashonly;
 }
@@ -967,9 +960,9 @@ static void mii_access(struct cpu *cpu, struct dec21143_data *d,
 			ibit = 0;
 			d->mii_state = MII_STATE_D;
 			break;
-		default:debug("[ mii_access(): UNIMPLEMENTED MII opcode "
-			    "%i (probably just a bug in GXemul's "
-			    "MII data stream handling) ]\n", d->mii_opcode);
+		default:debugmsg(d->subsys, "dec21143", VERBOSITY_WARNING,
+			    "mii_access(): UNIMPLEMENTED MII opcode %i\n",
+			    d->mii_opcode);
 			d->mii_state = MII_STATE_RESET;
 		}
 		d->mii_bit ++;
@@ -985,9 +978,9 @@ static void mii_access(struct cpu *cpu, struct dec21143_data *d,
 			    d->mii_regaddr] | obit;
 			if (d->mii_bit >= 29) {
 				d->mii_state = MII_STATE_IDLE;
-				debug("[ mii_access(): WRITE to phyaddr=0x%x "
-				    "regaddr=0x%x: 0x%04x ]\n", d->mii_phyaddr,
-				    d->mii_regaddr, tmp);
+				debugmsg(d->subsys, "dec21143", VERBOSITY_DEBUG,
+				    "mii_access(): WRITE to phyaddr=0x%x regaddr=0x%x: 0x%04x\n",
+				    d->mii_phyaddr, d->mii_regaddr, tmp);
 			}
 			break;
 		case MII_COMMAND_READ:
@@ -996,9 +989,9 @@ static void mii_access(struct cpu *cpu, struct dec21143_data *d,
 			tmp = d->mii_phy_reg[(d->mii_phyaddr << 5) +
 			    d->mii_regaddr];
 			if (d->mii_bit == 13)
-				debug("[ mii_access(): READ phyaddr=0x%x "
-				    "regaddr=0x%x: 0x%04x ]\n", d->mii_phyaddr,
-				    d->mii_regaddr, tmp);
+				debugmsg(d->subsys, "dec21143", VERBOSITY_DEBUG,
+				    "mii_access(): READ phyaddr=0x%x regaddr=0x%x: 0x%04x\n",
+				    d->mii_phyaddr, d->mii_regaddr, tmp);
 			ibit = tmp & (0x8000 >> (d->mii_bit - 13));
 			if (d->mii_bit >= 28)
 				d->mii_state = MII_STATE_IDLE;
@@ -1087,8 +1080,9 @@ static void srom_access(struct cpu *cpu, struct dec21143_data *d,
 				uint16_t romword = d->srom[d->srom_addr*2]
 				    + (d->srom[d->srom_addr*2+1] << 8);
 				if (d->srom_curbit == ROM_WIDTH + 3)
-					debug("[ dec21143: ROM read from offset"
-					    " 0x%03x: 0x%04x ]\n",
+					debugmsg(d->subsys, "dec21143",
+					    VERBOSITY_DEBUG,
+					    "ROM read from offset 0x%03x: 0x%04x\n",
 					    d->srom_addr, romword);
 				obit = romword & (0x8000 >>
 				    (d->srom_curbit - ROM_WIDTH - 3))? 1 : 0;
@@ -1215,8 +1209,8 @@ DEVICE_ACCESS(dec21143)
 
 	case CSR_RXLIST:	/*  csr3  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ dec21143: setting RXLIST to 0x%x ]\n",
-			    (int)idata);
+			debugmsg(d->subsys, "dec21143", VERBOSITY_DEBUG,
+			    "setting RXLIST to 0x%x\n", (int)idata);
 			if (idata & 0x3)
 				fatal("[ dec21143: WARNING! RXLIST not aligned"
 				    "? (0x%llx) ]\n", (long long)idata);
@@ -1227,8 +1221,8 @@ DEVICE_ACCESS(dec21143)
 
 	case CSR_TXLIST:	/*  csr4  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ dec21143: setting TXLIST to 0x%x ]\n",
-			    (int)idata);
+			debugmsg(d->subsys, "dec21143", VERBOSITY_DEBUG,
+			    "setting TXLIST to 0x%x\n", (int)idata);
 			if (idata & 0x3)
 				fatal("[ dec21143: WARNING! TXLIST not aligned"
 				    "? (0x%llx) ]\n", (long long)idata);
@@ -1335,6 +1329,7 @@ DEVINIT(dec21143)
 
 	CHECK_ALLOCATION(d = (struct dec21143_data *) malloc(sizeof(struct dec21143_data)));
 	memset(d, 0, sizeof(struct dec21143_data));
+	d->subsys = debugmsg_register_subsystem("dec21143");
 
 	INTERRUPT_CONNECT(devinit->interrupt_path, d->irq);
 	d->pci_little_endian = devinit->pci_little_endian;

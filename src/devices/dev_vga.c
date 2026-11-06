@@ -67,6 +67,7 @@
 #define	GRAPHICS_MODE_4BIT	2
 
 struct vga_data {
+	int		subsys;
 	uint64_t	videomem_base;
 	uint64_t	control_base;
 
@@ -516,8 +517,9 @@ DEVICE_TICK(vga)
 		int base = ((d->crtc_reg[VGA_CRTC_START_ADDR_HIGH] << 8)
 		    + d->crtc_reg[VGA_CRTC_START_ADDR_LOW]) * 2;
 		int new_u_y1, new_u_y2;
-		debug("[ dev_vga_tick: dyntrans access, %" PRIx64" .. %"
-		    PRIx64" ]\n", (uint64_t) low, (uint64_t) high);
+		debugmsg(d->subsys, "vga", VERBOSITY_DEBUG,
+		    "dev_vga_tick: dyntrans access, %" PRIx64" .. %"
+		    PRIx64"\n", (uint64_t) low, (uint64_t) high);
 		low -= base;
 		high -= base;
 		d->update_x1 = 0;
@@ -731,10 +733,11 @@ DEVICE_ACCESS(vga)
 	switch (relative_addr) {
 	default:
 		if (writeflag==MEM_READ) {
-			debug("[ vga: read from 0x%08lx ]\n",
-			    (long)relative_addr);
+			debugmsg(d->subsys, "vga", VERBOSITY_WARNING,
+			    "read from 0x%08lx\n", (long)relative_addr);
 		} else {
-			debug("[ vga: write to  0x%08lx: 0x%08x ]\n",
+			debugmsg(d->subsys, "vga", VERBOSITY_WARNING,
+			    "write to  0x%08lx: 0x%08x\n",
 			    (long)relative_addr, idata);
 		}
 	}
@@ -908,7 +911,8 @@ static void vga_sequencer_reg_write(struct machine *machine, struct vga_data *d,
 	case VGA_SEQ_RESET:
 	case VGA_SEQ_MAP_MASK:
 	case VGA_SEQ_SEQUENCER_MEMORY_MODE:
-		debug("[ vga_sequencer_reg_write: select %i: TODO ]\n", regnr);
+		debugmsg(d->subsys, "vga", VERBOSITY_DEBUG,
+		    "vga_sequencer_reg_write: select %i: TODO\n", regnr);
 		break;
 	default:fatal("[ vga_sequencer_reg_write: select %i ]\n", regnr);
 		/*  cpu->running = 0;  */
@@ -929,7 +933,8 @@ static void vga_graphcontr_reg_write(struct machine *machine,
 	case VGA_GRAPHCONTR_GRAPHICSMODE:
 	case VGA_GRAPHCONTR_MISC:
 	case VGA_GRAPHCONTR_MASK:
-		debug("[ vga_graphcontr_reg_write: select %i: TODO ]\n", regnr);
+		debugmsg(d->subsys, "vga", VERBOSITY_DEBUG,
+		    "vga_graphcontr_reg_write: select %i: TODO\n", regnr);
 		break;
 	default:fatal("[ vga_graphcontr_reg_write: select %i ]\n", regnr);
 		/*  cpu->running = 0;  */
@@ -1038,8 +1043,8 @@ DEVICE_ACCESS(vga_ctrl)
 				d->palette_read_index = idata;
 				d->palette_read_subindex = 0;
 			} else {
-				debug("[ dev_vga: WARNING: Read from "
-				    "VGA_DAC_ADDR_READ? TODO ]\n");
+				debugmsg(d->subsys, "vga", VERBOSITY_WARNING,
+				    "Read from VGA_DAC_ADDR_READ? TODO\n");
 				/*  TODO  */
 			}
 			break;
@@ -1161,11 +1166,13 @@ DEVICE_ACCESS(vga_ctrl)
 
 		default:
 			if (writeflag==MEM_READ) {
-				debug("[ vga_ctrl: read from 0x%08lx ]\n",
+				debugmsg(d->subsys, "vga", VERBOSITY_WARNING,
+				    "vga_ctrl: read from 0x%08lx\n",
 				    (long)relative_addr);
 			} else {
-				debug("[ vga_ctrl: write to  0x%08lx: 0x%08x"
-				    " ]\n", (long)relative_addr, (int)idata);
+				debugmsg(d->subsys, "vga", VERBOSITY_WARNING,
+				    "vga_ctrl: write to 0x%08lx: 0x%08x\n",
+				    (long)relative_addr, (int)idata);
 			}
 		}
 
@@ -1194,6 +1201,7 @@ void dev_vga_init(struct machine *machine, struct memory *mem,
 
 	CHECK_ALLOCATION(d = (struct vga_data *) malloc(sizeof(struct vga_data)));
 	memset(d, 0, sizeof(struct vga_data));
+	d->subsys = debugmsg_register_subsystem("vga");
 
 	d->console_handle = console_start_slave(machine, "vga",
 	    CONSOLE_OUTPUT_ONLY);

@@ -181,8 +181,8 @@ on = 1;
 			d->cursor_y += 5 - (d->cursor_ysize * ysize_mul);
 		}
 
-		debug("[ bt431: cursor = %03i,%03i ]\n", d->cursor_x,
-		    d->cursor_y);
+		debugmsg(d->subsys, "bt431", VERBOSITY_DEBUG,
+		    "cursor = %03i,%03i\n", d->cursor_x, d->cursor_y);
 		dev_fb_setcursor(d->vfb_data, d->cursor_x, d->cursor_y, on,
 		    d->cursor_xsize, d->cursor_ysize * ysize_mul);
 	}

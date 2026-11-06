@@ -53,6 +53,7 @@ extern int quiet_mode;
 
 struct wdc_data {
 	struct interrupt irq;
+	int		subsys;
 	int		addr_mult;
 	int		base_drive;
 	int		data_debug;
@@ -372,11 +373,11 @@ DEVICE_ACCESS(wdc_altstatus)
 	odata = status_byte(d, cpu);
 
 	if (writeflag==MEM_READ)
-		debug("[ wdc: read from ALTSTATUS: 0x%02x ]\n",
-		    (int)odata);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+		    "read from ALTSTATUS: 0x%02x\n", (int)odata);
 	else {
-		debug("[ wdc: write to ALT. CTRL: 0x%02x ]\n",
-		    (int)idata);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+		    "write to ALT. CTRL: 0x%02x\n", (int)idata);
 		if (idata & WDCTL_4BIT)
 			d->cur_command = COMMAND_RESET;
 	}
@@ -408,7 +409,8 @@ void wdc_command(struct cpu *cpu, struct wdc_data *d, int idata)
 	 */
 	if (!diskimage_exist(cpu->machine, d->drive + d->base_drive,
 	    DISKIMAGE_IDE)) {
-		debug("[ wdc: command 0x%02x drive %i, but no disk image ]\n",
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+		    "command 0x%02x drive %i, but no disk image\n",
 		    d->cur_command, d->drive + d->base_drive);
 		d->error |= WDCE_ABRT;
 		d->int_assert = 1;
@@ -416,8 +418,9 @@ void wdc_command(struct cpu *cpu, struct wdc_data *d, int idata)
 	}
 	if (diskimage_is_a_cdrom(cpu->machine, d->drive + d->base_drive,
 	    DISKIMAGE_IDE) && d->cur_command == WDCC_IDENTIFY) {
-		debug("[ wdc: IDENTIFY drive %i, but it is an ATAPI "
-		    "drive ]\n", d->drive + d->base_drive);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+		    "IDENTIFY drive %i, but it is an ATAPI drive\n",
+		    d->drive + d->base_drive);
 		d->error |= WDCE_ABRT;
 		d->int_assert = 1;
 		return;
@@ -428,36 +431,36 @@ void wdc_command(struct cpu *cpu, struct wdc_data *d, int idata)
 
 	case WDCC_READ:
 	case WDCC_READMULTI:
-		if (!quiet_mode)
-			debug("[ wdc: READ from drive %i, head %i, cyl %i, "
-			    "sector %i, nsecs %i ]\n", d->drive, d->head,
-			    d->cyl_hi*256+d->cyl_lo, d->sector, d->seccnt);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+		    "READ from drive %i, head %i, cyl %i, sector %i, nsecs %i\n",
+		    d->drive, d->head, d->cyl_hi*256+d->cyl_lo, d->sector, d->seccnt);
 		wdc__read(cpu, d);
 		break;
 
 	case WDCC_WRITE:
 	case WDCC_WRITEMULTI:
-		if (!quiet_mode)
-			debug("[ wdc: WRITE to drive %i, head %i, cyl %i, "
-			    "sector %i, nsecs %i ]\n", d->drive, d->head,
-			    d->cyl_hi*256+d->cyl_lo, d->sector, d->seccnt);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+		    "WRITE to drive %i, head %i, cyl %i, sector %i, nsecs %i\n",
+		    d->drive, d->head, d->cyl_hi*256+d->cyl_lo, d->sector, d->seccnt);
 		wdc__write(cpu, d);
 		break;
 
 	case WDCC_IDP:	/*  Initialize drive parameters  */
-		debug("[ wdc: IDP drive %i (TODO) ]\n", d->drive);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG, "IDP drive %i (TODO)\n", d->drive);
 		/*  TODO  */
 		d->int_assert = 1;
 		break;
 
 	case SET_FEATURES:
-		debug("[ wdc: SET_FEATURES drive %i (TODO), feature 0x%02x ]\n",
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+		    "SET_FEATURES drive %i (TODO), feature 0x%02x\n",
 		    d->drive, d->precomp);
 		/*  TODO  */
 		switch (d->precomp) {
 		case WDSF_SET_MODE:
-			debug("[ wdc: WDSF_SET_MODE drive %i, pio/dma flags "
-			    "0x%02x ]\n", d->drive, d->seccnt);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "WDSF_SET_MODE drive %i, pio/dma flags 0x%02x\n",
+			    d->drive, d->seccnt);
 			break;
 		default:d->error |= WDCE_ABRT;
 		}
@@ -466,14 +469,14 @@ void wdc_command(struct cpu *cpu, struct wdc_data *d, int idata)
 		break;
 
 	case WDCC_RECAL:
-		debug("[ wdc: RECAL drive %i ]\n", d->drive);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG, "RECAL drive %i\n", d->drive);
 		d->int_assert = 1;
 		break;
 
 	case WDCC_IDENTIFY:
 	case ATAPI_IDENTIFY_DEVICE:
-		debug("[ wdc: %sIDENTIFY drive %i ]\n", d->cur_command ==
-		    ATAPI_IDENTIFY_DEVICE? "ATAPI " : "", d->drive);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG, "%sIDENTIFY drive %i\n",
+		    d->cur_command == ATAPI_IDENTIFY_DEVICE? "ATAPI " : "", d->drive);
 		wdc_initialize_identify_struct(cpu, d);
 		/*  The IDENTIFY data is sent out in low/high byte order:  */
 		for (i=0; i<sizeof(d->identify_struct); i+=2) {
@@ -484,25 +487,25 @@ void wdc_command(struct cpu *cpu, struct wdc_data *d, int idata)
 		break;
 
 	case WDCC_IDLE_IMMED:
-		debug("[ wdc: IDLE_IMMED drive %i ]\n", d->drive);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG, "IDLE_IMMED drive %i\n", d->drive);
 		/*  TODO: interrupt here?  */
 		d->int_assert = 1;
 		break;
 
 	case WDCC_SETMULTI:
-		debug("[ wdc: SETMULTI drive %i ]\n", d->drive);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG, "SETMULTI drive %i\n", d->drive);
 		/*  TODO: interrupt here?  */
 		d->int_assert = 1;
 		break;
 
 	case ATAPI_SOFT_RESET:
-		debug("[ wdc: ATAPI_SOFT_RESET drive %i ]\n", d->drive);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG, "ATAPI_SOFT_RESET drive %i\n", d->drive);
 		/*  TODO: interrupt here?  */
 		d->int_assert = 1;
 		break;
 
 	case ATAPI_PKT_CMD:
-		debug("[ wdc: ATAPI_PKT_CMD drive %i ]\n", d->drive);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG, "ATAPI_PKT_CMD drive %i\n", d->drive);
 		/*  TODO: interrupt here?  */
 		/*  d->int_assert = 1;  */
 		d->atapi_cmd_in_progress = 1;
@@ -510,7 +513,7 @@ void wdc_command(struct cpu *cpu, struct wdc_data *d, int idata)
 		break;
 
 	case WDCC_DIAGNOSE:
-		debug("[ wdc: WDCC_DIAGNOSE drive %i: TODO ]\n", d->drive);
+		debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG, "WDCC_DIAGNOSE drive %i: TODO\n", d->drive);
 		/*  TODO: interrupt here?  */
 		d->int_assert = 1;
 		d->error = 1;		/*  No error?  */
@@ -579,16 +582,16 @@ DEVICE_ACCESS(wdc)
 				}
 			}
 
-			if (d->data_debug) {
-				const char *s = "0x%04" PRIx64" ]\n";
+			if (debugmsg_is_active(d->subsys, VERBOSITY_DEBUG)) {
+				const char *s = "0x%04" PRIx64;
 				if (len == 1)
-					s = "0x%02" PRIx64" ]\n";
+					s = "0x%02" PRIx64;
 				if (len == 4)
-					s = "0x%08" PRIx64" ]\n";
+					s = "0x%08" PRIx64;
 				if (len == 8)
-					s = "0x%016" PRIx64" ]\n";
-				debug("[ wdc: read from DATA: ");
-				debug(s, (uint64_t) odata);
+					s = "0x%016" PRIx64;
+				debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+				    "read from DATA: %s\n", s, (uint64_t) odata);
 			}
 
 			if (d->atapi_cmd_in_progress) {
@@ -620,16 +623,16 @@ DEVICE_ACCESS(wdc)
 			}
 		} else {
 			int inbuf_len;
-			if (d->data_debug) {
-				const char *s = "0x%04" PRIx64" ]\n";
+			if (debugmsg_is_active(d->subsys, VERBOSITY_DEBUG)) {
+				const char *s = "0x%04" PRIx64;
 				if (len == 1)
-					s = "0x%02" PRIx64" ]\n";
+					s = "0x%02" PRIx64;
 				if (len == 4)
-					s = "0x%08" PRIx64" ]\n";
+					s = "0x%08" PRIx64;
 				if (len == 8)
-					s = "0x%016" PRIx64" ]\n";
-				debug("[ wdc: write to DATA: ");
-				debug(s, (uint64_t) idata);
+					s = "0x%016" PRIx64;
+				debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+				    "write to DATA: %s\n", s, (uint64_t) idata);
 			}
 			if (!d->write_in_progress &&
 			    !d->atapi_cmd_in_progress) {
@@ -684,7 +687,7 @@ DEVICE_ACCESS(wdc)
 					scsi_transfer_free(d->atapi_st);
 				d->atapi_st = scsi_transfer_alloc();
 
-				debug("[ wdc: ATAPI command ]\n");
+				debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG, "ATAPI command\n");
 
 				while (inbuf_len > 0) {
 					scsi_cmd[x++] = wdc_get_inbuf(d);
@@ -774,10 +777,12 @@ DEVICE_ACCESS(wdc)
 	case wd_error:	/*  1: error (r), precomp (w)  */
 		if (writeflag == MEM_READ) {
 			odata = d->error;
-			debug("[ wdc: read from ERROR: 0x%02x ]\n", (int)odata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "read from ERROR: 0x%02x\n", (int)odata);
 		} else {
 			d->precomp = idata;
-			debug("[ wdc: write to PRECOMP: 0x%02x ]\n",(int)idata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "write to PRECOMP: 0x%02x\n", (int)idata);
 		}
 		break;
 
@@ -787,20 +792,24 @@ DEVICE_ACCESS(wdc)
 			if (d->atapi_cmd_in_progress) {
 				odata = d->atapi_phase & (WDCI_CMD | WDCI_IN);
 			}
-			debug("[ wdc: read from SECCNT: 0x%02x ]\n",(int)odata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "read from SECCNT: 0x%02x\n", (int)odata);
 		} else {
 			d->seccnt = idata;
-			debug("[ wdc: write to SECCNT: 0x%02x ]\n", (int)idata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "write to SECCNT: 0x%02x\n", (int)idata);
 		}
 		break;
 
 	case wd_sector:	/*  3: first sector  */
 		if (writeflag == MEM_READ) {
 			odata = d->sector;
-			debug("[ wdc: read from SECTOR: 0x%02x ]\n",(int)odata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "read from SECTOR: 0x%02x\n", (int)odata);
 		} else {
 			d->sector = idata;
-			debug("[ wdc: write to SECTOR: 0x%02x ]\n", (int)idata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "write to SECTOR: 0x%02x\n", (int)idata);
 		}
 		break;
 
@@ -817,10 +826,12 @@ DEVICE_ACCESS(wdc)
 					x = 32768;
 				odata = x & 255;
 			}
-			debug("[ wdc: read from CYL_LO: 0x%02x ]\n",(int)odata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "read from CYL_LO: 0x%02x\n", (int)odata);
 		} else {
 			d->cyl_lo = idata;
-			debug("[ wdc: write to CYL_LO: 0x%02x ]\n", (int)idata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "write to CYL_LO: 0x%02x\n", (int)idata);
 		}
 		break;
 
@@ -837,10 +848,12 @@ DEVICE_ACCESS(wdc)
 					x = 32768;
 				odata = (x >> 8) & 255;
 			}
-			debug("[ wdc: read from CYL_HI: 0x%02x ]\n",(int)odata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "read from CYL_HI: 0x%02x\n", (int)odata);
 		} else {
 			d->cyl_hi = idata;
-			debug("[ wdc: write to CYL_HI: 0x%02x ]\n", (int)idata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "write to CYL_HI: 0x%02x\n", (int)idata);
 		}
 		break;
 
@@ -848,40 +861,41 @@ DEVICE_ACCESS(wdc)
 		if (writeflag==MEM_READ) {
 			odata = (d->sectorsize << 6) + (d->lba << 5) +
 			    (d->drive << 4) + (d->head);
-			debug("[ wdc: read from SDH: 0x%02x (sectorsize %i,"
-			    " lba=%i, drive %i, head %i) ]\n", (int)odata,
-			    d->sectorsize, d->lba, d->drive, d->head);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "read from SDH: 0x%02x (sectorsize %i, lba=%i, drive %i, head %i)\n",
+			    (int)odata, d->sectorsize, d->lba, d->drive, d->head);
 		} else {
 			d->sectorsize = (idata >> 6) & 3;
 			d->lba   = (idata >> 5) & 1;
 			d->drive = (idata >> 4) & 1;
 			d->head  = idata & 0xf;
-			debug("[ wdc: write to SDH: 0x%02x (sectorsize %i,"
-			    " lba=%i, drive %i, head %i) ]\n", (int)idata,
-			    d->sectorsize, d->lba, d->drive, d->head);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "write to SDH: 0x%02x (sectorsize %i, lba=%i, drive %i, head %i)\n",
+			    (int)idata, d->sectorsize, d->lba, d->drive, d->head);
 		}
 		break;
 
 	case wd_command:	/*  7: command or status  */
 		if (writeflag==MEM_READ) {
 			odata = status_byte(d, cpu);
-			if (!quiet_mode)
-				debug("[ wdc: read from STATUS: 0x%02x ]\n",
-				    (int)odata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "read from STATUS: 0x%02x\n", (int)odata);
 			INTERRUPT_DEASSERT(d->irq);
 			d->int_assert = 0;
 		} else {
-			debug("[ wdc: write to COMMAND: 0x%02x ]\n",(int)idata);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "write to COMMAND: 0x%02x\n", (int)idata);
 			wdc_command(cpu, d, idata);
 		}
 		break;
 
 	default:
 		if (writeflag==MEM_READ)
-			debug("[ wdc: read from 0x%02x ]\n",
-			    (int)relative_addr);
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "read from 0x%02x\n", (int)relative_addr);
 		else
-			debug("[ wdc: write to  0x%02x: 0x%02x ]\n",
+			debugmsg(d->subsys, "wdc", VERBOSITY_DEBUG,
+			    "write to  0x%02x: 0x%02x\n",
 			    (int)relative_addr, (int)idata);
 	}
 
@@ -913,8 +927,9 @@ DEVINIT(wdc)
 	memset(d, 0, sizeof(struct wdc_data));
 
 	INTERRUPT_CONNECT(devinit->interrupt_path, d->irq);
+	d->subsys     = debugmsg_register_subsystem("wdc");
 	d->addr_mult  = devinit->addr_mult;
-	d->data_debug = 1;
+	d->data_debug = 0;
 	d->io_enabled = 1;
 	d->error      = 1;
 

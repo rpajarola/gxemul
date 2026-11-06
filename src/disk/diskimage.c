@@ -719,7 +719,8 @@ int diskimage_access(struct machine *machine, int id, int type, int writeflag,
 
 	offset -= d->override_base_offset;
 	if (offset < 0 && offset + d->override_base_offset >= 0) {
-		debug("[ reading before start of disk image ]\n");
+		debugmsg(SUBSYS_DISK, "diskimage", VERBOSITY_DEBUG,
+		    "reading before start of disk image\n");
 		/*  Returning zeros.  */
 		memset(buf, 0, len);
 		return 1;
