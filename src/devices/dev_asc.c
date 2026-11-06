@@ -136,6 +136,7 @@ struct asc_data {
 	int		clock_mhz;
 
 	void		*turbochannel;
+	int		subsys;
 	struct interrupt irq;
 	int		irq_asserted;
 
@@ -412,14 +413,13 @@ static int dev_asc_transfer(struct cpu *cpu, struct asc_data *d, int dmaflag)
 					lenIn2 = lenIn;
 				}
 
-#ifdef ASC_DEBUG
-				if (!quiet_mode) {
-					int i;
-					for (i=0; i<lenIn; i++)
-						debug(" %02x", d->xferp->
-						    data_in[i]);
+				if (debugmsg_is_active(d->subsys, VERBOSITY_DEBUG)) {
+					char hexbuf[1024];
+					size_t hpos = 0;
+					for (i = 0; (size_t)i < lenIn && hpos + 4 < sizeof(hexbuf); i++)
+						hpos += snprintf(hexbuf + hpos, sizeof(hexbuf) - hpos, " %02x", d->xferp->data_in[i]);
+					debugmsg(d->subsys, "asc", VERBOSITY_DEBUG, "data_in:%s\n", hexbuf);
 				}
-#endif
 
 				/*
 				 *  Are we using an external DMA controller?
@@ -563,13 +563,13 @@ fatal("TODO.......asdgasin\n");
 					all_done = 0;
 			}
 
-#ifdef ASC_DEBUG
-			if (!quiet_mode) {
-				int i;
-				for (i=0; i<len; i++)
-					debug(" %02x", d->xferp->data_out[i]);
+			if (debugmsg_is_active(d->subsys, VERBOSITY_DEBUG)) {
+				char hexbuf[1024];
+				size_t hpos = 0;
+				for (i = 0; i < len && hpos + 4 < sizeof(hexbuf); i++)
+					hpos += snprintf(hexbuf + hpos, sizeof(hexbuf) - hpos, " %02x", d->xferp->data_out[i]);
+				debugmsg(d->subsys, "asc", VERBOSITY_DEBUG, "data_out:%s\n", hexbuf);
 			}
-#endif
 			len = 0;
 
 			d->reg_ro[NCR_TCL] = len & 255;
@@ -602,9 +602,8 @@ fatal("TODO.......asdgasin\n");
 			while (d->fifo_in != d->fifo_out) {
 				ch = dev_asc_fifo_read(d);
 				d->xferp->msg_out[i++] = ch;
-#ifdef ASC_DEBUG
-				debug("0x%02x ", ch);
-#endif
+				debugmsg(d->subsys, "asc", VERBOSITY_DEBUG,
+				    "msg_out: 0x%02x\n", ch);
 			}
 
 #ifdef MACH
@@ -925,32 +924,28 @@ DEVICE_ACCESS(asc_dma)
 
 	if (writeflag==MEM_READ) {
 		memcpy(data, d->dma + relative_addr, len);
-#ifdef ASC_DEBUG
-		{
-			int i;
-			debug("[ asc: read from DMA addr 0x%05x:",
-			    (int) relative_addr);
-			for (i=0; i<len; i++)
-				debug(" %02x", data[i]);
-			debug(" ]\n");
+		if (debugmsg_is_active(d->subsys, VERBOSITY_DEBUG)) {
+			char hexbuf[1024];
+			size_t hpos = 0;
+			for (size_t i = 0; i < len && hpos + 4 < sizeof(hexbuf); i++)
+				hpos += snprintf(hexbuf + hpos, sizeof(hexbuf) - hpos, " %02x", data[i]);
+			debugmsg(d->subsys, "asc", VERBOSITY_DEBUG,
+			    "read from DMA addr 0x%05x:%s\n", (int) relative_addr, hexbuf);
 		}
-#endif
 
 		/*  Don't return the common way, as that
 		    would overwrite data.  */
 		return 1;
 	} else {
 		memcpy(d->dma + relative_addr, data, len);
-#ifdef ASC_DEBUG
-		{
-			int i;
-			debug("[ asc: write to  DMA addr 0x%05x:",
-			    (int) relative_addr);
-			for (i=0; i<len; i++)
-				debug(" %02x", data[i]);
-			debug(" ]\n");
+		if (debugmsg_is_active(d->subsys, VERBOSITY_DEBUG)) {
+			char hexbuf[1024];
+			size_t hpos = 0;
+			for (size_t i = 0; i < len && hpos + 4 < sizeof(hexbuf); i++)
+				hpos += snprintf(hexbuf + hpos, sizeof(hexbuf) - hpos, " %02x", data[i]);
+			debugmsg(d->subsys, "asc", VERBOSITY_DEBUG,
+			    "write to DMA addr 0x%05x:%s\n", (int) relative_addr, hexbuf);
 		}
-#endif
 		/*  Quick return.  */
 		return 1;
 	}
@@ -1452,6 +1447,7 @@ void *dev_asc_init(struct machine *machine, struct memory *mem,
 
 	INTERRUPT_CONNECT(irq_path, d->irq);
 	d->turbochannel = turbochannel;
+	d->subsys       = debugmsg_register_subsystem("asc");
 	d->mode         = mode;
 
 	d->reg_ro[NCR_CFG3] = NCRF9XCFG3_CDB;

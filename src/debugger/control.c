@@ -386,6 +386,7 @@ static void disconnect_client(void)
 	sub_offset = NULL;
 	n_sub_console = 0;
 	control_log_level = -1;
+	debugmsg_recompute_active();
 	cJSON_Delete(log_queue);
 	log_queue = NULL;
 	log_dropped = 0;
@@ -2405,6 +2406,7 @@ CTL_HANDLER(cmd_subscribe)
 			return fail(err, "bad_arg", "'log' should be \"error\", "
 			    "\"warning\", \"info\", \"debug\", or false");
 		control_log_level = level;
+		debugmsg_recompute_active();
 	}
 
 	cJSON *cl = cJSON_AddArrayToObject(result, "console");
@@ -2416,6 +2418,138 @@ CTL_HANDLER(cmd_subscribe)
 		    level_names[control_log_level]);
 	else
 		cJSON_AddBoolToObject(result, "log", false);
+	return true;
+}
+
+
+CTL_HANDLER(cmd_log_set)
+{
+	cJSON *subsys_item = cJSON_GetObjectItemCaseSensitive(req, "subsystem");
+	cJSON *level_item = cJSON_GetObjectItemCaseSensitive(req, "level");
+	cJSON *dest_item = cJSON_GetObjectItemCaseSensitive(req, "destination");
+	cJSON *file_item = cJSON_GetObjectItemCaseSensitive(req, "file");
+
+	if (file_item != NULL) {
+		if (!cJSON_IsString(file_item))
+			return fail(err, "bad_arg", "'file' should be a string path");
+		if (!debugmsg_set_logfile(file_item->valuestring))
+			return fail(err, "file_error", "could not open log file '%s'",
+			    file_item->valuestring);
+	}
+
+	if (dest_item != NULL) {
+		int mask = debugmsg_get_destinations();
+		if (cJSON_IsString(dest_item)) {
+			const char *d = dest_item->valuestring;
+			if (strcasecmp(d, "none") == 0 || strcasecmp(d, "off") == 0)
+				mask = DEBUG_DEST_NONE;
+			else if (strcasecmp(d, "console") == 0)
+				mask |= DEBUG_DEST_CONSOLE;
+			else if (strcasecmp(d, "file") == 0)
+				mask |= DEBUG_DEST_FILE;
+			else if (strcasecmp(d, "stderr") == 0)
+				mask |= DEBUG_DEST_STDERR;
+			else
+				return fail(err, "bad_arg", "unknown destination '%s'", d);
+		} else if (cJSON_IsArray(dest_item)) {
+			mask = DEBUG_DEST_NONE;
+			cJSON *elem;
+			cJSON_ArrayForEach(elem, dest_item) {
+				if (!cJSON_IsString(elem))
+					continue;
+				const char *d = elem->valuestring;
+				if (strcasecmp(d, "console") == 0)
+					mask |= DEBUG_DEST_CONSOLE;
+				else if (strcasecmp(d, "file") == 0)
+					mask |= DEBUG_DEST_FILE;
+				else if (strcasecmp(d, "stderr") == 0)
+					mask |= DEBUG_DEST_STDERR;
+			}
+		} else if (cJSON_IsFalse(dest_item)) {
+			mask = DEBUG_DEST_NONE;
+		}
+		debugmsg_set_destinations(mask);
+	}
+
+	if (level_item != NULL) {
+		int v = -1;
+		if (cJSON_IsNumber(level_item)) {
+			v = level_item->valueint;
+		} else if (cJSON_IsString(level_item)) {
+			if (!debugmsg_parse_level(level_item->valuestring, &v))
+				return fail(err, "bad_arg", "invalid level '%s'",
+				    level_item->valuestring);
+		} else if (cJSON_IsFalse(level_item)) {
+			v = VERBOSITY_OFF;
+		} else {
+			return fail(err, "bad_arg", "'level' should be string or number");
+		}
+
+		const char *subsys = "ALL";
+		if (subsys_item != NULL && cJSON_IsString(subsys_item))
+			subsys = subsys_item->valuestring;
+
+		if (strcasecmp(subsys, "ALL") == 0) {
+			debugmsg_set_verbosity_level(SUBSYS_ALL, v);
+		} else {
+			int id = debugmsg_register_subsystem(subsys);
+			debugmsg_set_verbosity_level(id, v);
+		}
+	}
+
+	cJSON *dests = cJSON_AddArrayToObject(result, "destinations");
+	int cur_dests = debugmsg_get_destinations();
+	if (cur_dests & DEBUG_DEST_CONSOLE)
+		cJSON_AddItemToArray(dests, cJSON_CreateString("console"));
+	if (cur_dests & DEBUG_DEST_FILE)
+		cJSON_AddItemToArray(dests, cJSON_CreateString("file"));
+	if (cur_dests & DEBUG_DEST_STDERR)
+		cJSON_AddItemToArray(dests, cJSON_CreateString("stderr"));
+
+	const char *logpath = debugmsg_get_logfile();
+	if (logpath != NULL)
+		cJSON_AddStringToObject(result, "file", logpath);
+	else
+		cJSON_AddNullToObject(result, "file");
+
+	return true;
+}
+
+
+CTL_HANDLER(cmd_log_get)
+{
+	cJSON *subsys_item = cJSON_GetObjectItemCaseSensitive(req, "subsystem");
+
+	cJSON *dests = cJSON_AddArrayToObject(result, "destinations");
+	int cur_dests = debugmsg_get_destinations();
+	if (cur_dests & DEBUG_DEST_CONSOLE)
+		cJSON_AddItemToArray(dests, cJSON_CreateString("console"));
+	if (cur_dests & DEBUG_DEST_FILE)
+		cJSON_AddItemToArray(dests, cJSON_CreateString("file"));
+	if (cur_dests & DEBUG_DEST_STDERR)
+		cJSON_AddItemToArray(dests, cJSON_CreateString("stderr"));
+
+	const char *logpath = debugmsg_get_logfile();
+	if (logpath != NULL)
+		cJSON_AddStringToObject(result, "file", logpath);
+	else
+		cJSON_AddNullToObject(result, "file");
+
+	cJSON *subsystems = cJSON_AddObjectToObject(result, "subsystems");
+	const char *subsys = subsys_item != NULL && cJSON_IsString(subsys_item) ?
+	    subsys_item->valuestring : NULL;
+
+	for (size_t i = 0; i < debugmsg_nr_of_subsystems; i++) {
+		const char *name = debugmsg_subsystem_name_by_id((int)i);
+		if (i == SUBSYS_STARTUP)
+			name = "startup";
+		if (subsys != NULL && strcasecmp(subsys, "ALL") != 0 &&
+		    strcasecmp(subsys, name) != 0)
+			continue;
+		cJSON_AddStringToObject(subsystems, name,
+		    debugmsg_level_name(debugmsg_current_verbosity[i]));
+	}
+
 	return true;
 }
 
@@ -2825,6 +2959,8 @@ static const struct {
 	{ "trace_read",		cmd_trace_read,		"since max" },
 	{ "devices",		cmd_devices,		"" },
 	{ "subscribe",		cmd_subscribe,		"console log" },
+	{ "log_set",		cmd_log_set,		"subsystem level destination file" },
+	{ "log_get",		cmd_log_get,		"subsystem" },
 	{ "screendump",		cmd_screendump,		"file screen" },
 	{ "keyboard",		cmd_keyboard,		"text keys" },
 	{ "mouse",		cmd_mouse,		"x y dx dy button action screen" },
@@ -3347,6 +3483,7 @@ int control_client_main(int argc, char *argv[])
 		{ "watch_del", "watch", true },
 		{ "trace_read", "since", true },
 		{ "screendump", "file", false },
+		{ "log_get", "subsystem", false },
 		{ "console_read", "since", true },
 		{ "console_write", "data", false },
 		{ "mem_read", "addr", false },

@@ -525,6 +525,15 @@ the machine, with reason <tt>watch</tt>, and the event has the
 	<tt>"warning"</tt>, <tt>"info"</tt>, <tt>"debug"</tt>, or
 	<tt>false</tt>)</td>
     <td>what is now subscribed to: <tt>console</tt>, <tt>log</tt></td></tr>
+<tr><td><tt>log_set</tt></td>
+    <td><tt>subsystem</tt> (subsystem name or <tt>"all"</tt>), <tt>level</tt>
+	(<tt>"off"</tt>, <tt>"error"</tt>, <tt>"warning"</tt>, <tt>"info"</tt>,
+	<tt>"debug"</tt>), <tt>destination</tt> (<tt>"none"</tt>, <tt>"file"</tt>,
+	<tt>"console"</tt>, <tt>"stderr"</tt>, or a list), <tt>file</tt> (a file path)</td>
+    <td>current <tt>destinations</tt>, <tt>file</tt></td></tr>
+<tr><td><tt>log_get</tt></td>
+    <td><tt>subsystem</tt> (optional: a subsystem name)</td>
+    <td><tt>destinations</tt>, <tt>file</tt>, <tt>subsystems</tt></td></tr>
 </table>
 
 <p>For a client which stays connected: after subscribing, it gets

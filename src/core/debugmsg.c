@@ -60,6 +60,7 @@
  *	move registering to individual subsystems.
  */
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -73,6 +74,8 @@
 #include "machine.h"
 #include "misc.h"
 
+#undef debugmsg
+#undef debugmsg_cpu
 
 int verbose = 0;
 int quiet_mode = 0;
@@ -85,7 +88,12 @@ size_t debugmsg_nr_of_subsystems = 0;
 static const char **debugmsg_subsystem_name = NULL;
 int *debugmsg_current_verbosity = NULL;
 
-static const int default_verbosity = VERBOSITY_INFO;
+int debugmsg_active_verbosity = -1;
+int debugmsg_destinations = DEBUG_DEST_NONE;
+static char *debugmsg_logfile_path = NULL;
+static FILE *debugmsg_logfile = NULL;
+
+static int default_verbosity = VERBOSITY_WARNING;
 
 static size_t debug_indent = 0;
 static bool debug_old_currently_at_start_of_line = true;
@@ -137,128 +145,192 @@ static void debugmsg_va(struct cpu* cpu, int subsystem,
 		va_copy(ap2, argp);
 		vsnprintf(msg, sizeof(msg), fmt, ap2);
 		va_end(ap2);
-		control_log(cpu, subsystem >= 0? debugmsg_subsystem_name[
-		    subsystem] : "", name, verbosity, msg);
+		control_log(cpu, (subsystem >= 0 && (size_t)subsystem < debugmsg_nr_of_subsystems) ?
+		    debugmsg_subsystem_name[subsystem] : "", name, verbosity, msg);
 	}
 
-	if (!single_step && !ENOUGH_VERBOSITY(subsystem, verbosity))
+	bool ss = single_step || about_to_enter_single_step;
+	bool subsys_enabled = (subsystem >= 0 &&
+	    (size_t)subsystem < debugmsg_nr_of_subsystems &&
+	    debugmsg_current_verbosity[subsystem] >= verbosity);
+
+	bool do_console = ((debugmsg_destinations & DEBUG_DEST_CONSOLE) && subsys_enabled) ||
+	    (ss && subsystem == SUBSYS_CPU);
+	bool do_file = ((debugmsg_destinations & DEBUG_DEST_FILE) && debugmsg_logfile != NULL && subsys_enabled);
+	bool do_stderr = ((debugmsg_destinations & DEBUG_DEST_STDERR) && subsys_enabled);
+
+	if (!do_console && !do_file && !do_stderr)
 		return;
 
-	char buf[DEBUG_BUFSIZE];
+	char msg_buf[DEBUG_BUFSIZE];
+	msg_buf[0] = msg_buf[DEBUG_BUFSIZE - 1] = 0;
+	vsnprintf(msg_buf, DEBUG_BUFSIZE, fmt, argp);
 
-	buf[0] = buf[DEBUG_BUFSIZE - 1] = 0;
-	vsnprintf(buf, DEBUG_BUFSIZE, fmt, argp);
+	/* 1. Console output (with color / decorations if enabled) */
+	if (do_console) {
+		char* s = msg_buf;
+		bool debug_currently_at_start_of_line = true;
+		bool show_decorations = emul_executing && !ss;
 
-	char* s = buf;
-	bool ss = single_step || about_to_enter_single_step;
-	bool debug_currently_at_start_of_line = true;
-	bool show_decorations = emul_executing && !ss;
+		if (console_are_slaves_allowed())
+			show_decorations = false;
 
-	if (console_are_slaves_allowed())
-		show_decorations = false;
-
-	while (true) {
-		if (debug_currently_at_start_of_line) {
-			if (show_decorations) {
-				color_normal();
-				printf("[ ");
-			} else {
-				for (size_t i = 0; i < debug_indent * DEBUG_INDENTATION; ++i)
-					printf(" ");
-			}
-
-			bool print_subsystem_name =
-			    debugmsg_subsystem_name[subsystem][0] != '\0' &&
-			    (debug_indent == 0 || (name == NULL || name[0] == '\0'));
-			bool print_colon = false;
-
-			if (cpu != NULL) {
-				// With multiple machines being emulated in the
-				// same emulation instance, print both the machine
-				// name and cpu id. If it is just one machine,
-				// only print the cpu id if there are multiple
-				// CPUs in order to not clutter the output
-				// needlessly.
-				struct emul* emul = cpu->machine->emul;
-				if (emul->n_machines > 1) {
-					printf("machine \"%s\" cpu%i: ",
-					    cpu->machine->name ? cpu->machine->name : "(no name)",
-					    cpu->cpu_id);
-					if (subsystem == SUBSYS_CPU)
-						print_subsystem_name = false;
-				} else if (cpu->machine->ncpus > 1) {
-					printf("cpu%i: ", cpu->cpu_id);
-					if (subsystem == SUBSYS_CPU)
-						print_subsystem_name = false;
+		while (*s) {
+			if (debug_currently_at_start_of_line) {
+				if (show_decorations) {
+					color_normal();
+					printf("[ ");
+				} else {
+					for (size_t i = 0; i < debug_indent * DEBUG_INDENTATION; ++i)
+						printf(" ");
 				}
+
+				bool print_subsystem_name =
+				    (subsystem >= 0 && (size_t)subsystem < debugmsg_nr_of_subsystems) &&
+				    debugmsg_subsystem_name[subsystem][0] != '\0' &&
+				    (debug_indent == 0 || (name == NULL || name[0] == '\0'));
+				bool print_colon = false;
+
+				if (cpu != NULL) {
+					struct emul* emul = cpu->machine->emul;
+					if (emul->n_machines > 1) {
+						printf("machine \"%s\" cpu%i: ",
+						    cpu->machine->name ? cpu->machine->name : "(no name)",
+						    cpu->cpu_id);
+						if (subsystem == SUBSYS_CPU)
+							print_subsystem_name = false;
+					} else if (cpu->machine->ncpus > 1) {
+						printf("cpu%i: ", cpu->cpu_id);
+						if (subsystem == SUBSYS_CPU)
+							print_subsystem_name = false;
+					}
+				}
+
+				if (verbosity == VERBOSITY_ERROR)
+					color_error(false);
+				else
+					color_debugmsg_subsystem();
+
+				if (print_subsystem_name) {
+					printf("%s", debugmsg_subsystem_name[subsystem]);
+					print_colon = true;
+				}
+
+				if (name != NULL && name[0] != '\0' &&
+				    (!print_subsystem_name || strcasecmp(debugmsg_subsystem_name[subsystem], name) != 0)) {
+					if (print_subsystem_name)
+						printf(" ");
+
+					if (verbosity != VERBOSITY_ERROR)
+						color_debugmsg_name();
+
+					printf("%s", name);
+					print_colon = true;
+				}
+
+				if (print_colon)
+					printf(": ");
+
+				if (show_decorations) {
+					for (size_t i = 0; i < debug_indent * DEBUG_INDENTATION; ++i)
+						printf(" ");
+				}
+
+				if (verbosity == VERBOSITY_ERROR)
+					color_error(true);
+				else
+					color_normal();
 			}
 
-			if (verbosity == VERBOSITY_ERROR)
-				color_error(false);
-			else
-				color_debugmsg_subsystem();
+			debug_currently_at_start_of_line = false;
 
-			if (print_subsystem_name) {
-				printf("%s", debugmsg_subsystem_name[subsystem]);
-				print_colon = true;
-			}
-
-			if (name != NULL && name[0] != '\0') {
-				if (print_subsystem_name)
-					printf(" ");
-
-				if (verbosity != VERBOSITY_ERROR)
-					color_debugmsg_name();
-
-				printf("%s", name);
-
-				print_colon = true;
-			}
-
-			if (print_colon)
-				printf(": ");
-
-			if (show_decorations) {
-				for (size_t i = 0; i < debug_indent * DEBUG_INDENTATION; ++i)
-					printf(" ");
-			}
-
-			if (verbosity == VERBOSITY_ERROR)
-				color_error(true);
-			else
+			switch (*s) {
+			case '\n':
 				color_normal();
-		}
-
-		debug_currently_at_start_of_line = false;
-
-		if (!*s)
-			break;
-
-		switch (*s) {
-		case '\n':
-			color_normal();
-			if (show_decorations) {
-				printf(" ]");
+				if (show_decorations)
+					printf(" ]");
+				debug_currently_at_start_of_line = true;
+				printf("\n");
+				break;
+			default:
+				printf("%c", *s);
 			}
-
-			debug_currently_at_start_of_line = true;
-			printf("\n");
-			break;
-
-		default:
-			printf("%c", *s);
+			s++;
 		}
 
-		s++;
+		color_normal();
+		if (show_decorations && !debug_currently_at_start_of_line)
+			printf(" ]\n");
+		else if (!debug_currently_at_start_of_line)
+			printf("\n");
 	}
 
-	color_normal();
+	/* 2. File and stderr output (clean plain text without ANSI escape sequences) */
+	if (do_file || do_stderr) {
+		char line_buf[DEBUG_BUFSIZE + 256];
+		char prefix[256];
+		prefix[0] = '\0';
+		size_t pfx_len = 0;
 
-	if (show_decorations)
-		printf(" ]");
+		if (cpu != NULL) {
+			struct emul* emul = cpu->machine->emul;
+			if (emul->n_machines > 1)
+				pfx_len += snprintf(prefix + pfx_len, sizeof(prefix) - pfx_len,
+				    "machine \"%s\" cpu%i: ",
+				    cpu->machine->name ? cpu->machine->name : "(no name)",
+				    cpu->cpu_id);
+			else if (cpu->machine->ncpus > 1)
+				pfx_len += snprintf(prefix + pfx_len, sizeof(prefix) - pfx_len,
+				    "cpu%i: ", cpu->cpu_id);
+		}
 
-	if (!debug_currently_at_start_of_line)
-		printf("\n");
+		const char *subsys_name = (subsystem >= 0 && (size_t)subsystem < debugmsg_nr_of_subsystems) ?
+		    debugmsg_subsystem_name[subsystem] : "";
+		if (subsys_name[0] != '\0') {
+			pfx_len += snprintf(prefix + pfx_len, sizeof(prefix) - pfx_len,
+			    "%s", subsys_name);
+		}
+
+		if (name != NULL && name[0] != '\0' &&
+		    (subsys_name[0] == '\0' || strcasecmp(subsys_name, name) != 0)) {
+			pfx_len += snprintf(prefix + pfx_len, sizeof(prefix) - pfx_len,
+			    "%s%s", subsys_name[0] != '\0' ? " " : "", name);
+		}
+
+		if (pfx_len > 0)
+			pfx_len += snprintf(prefix + pfx_len, sizeof(prefix) - pfx_len, ": ");
+
+		char *s = msg_buf;
+		while (*s) {
+			char *nl = strchr(s, '\n');
+			size_t cur_len = nl ? (size_t)(nl - s) : strlen(s);
+
+			if (cur_len > 0 && s[cur_len - 1] == '\r')
+				cur_len--;
+
+			if (cur_len > 0 || (nl && *(nl + 1) != '\0')) {
+				line_buf[0] = '\0';
+				size_t lpos = 0;
+				for (size_t i = 0; i < debug_indent * DEBUG_INDENTATION && lpos + 1 < sizeof(line_buf); i++)
+					line_buf[lpos++] = ' ';
+				lpos += snprintf(line_buf + lpos, sizeof(line_buf) - lpos,
+				    "%s%.*s\n", prefix, (int)cur_len, s);
+
+				if (do_file)
+					fputs(line_buf, debugmsg_logfile);
+				if (do_stderr)
+					fputs(line_buf, stderr);
+			}
+
+			if (!nl)
+				break;
+			s = nl + 1;
+		}
+		if (do_file)
+			fflush(debugmsg_logfile);
+		if (do_stderr)
+			fflush(stderr);
+	}
 }
 
 
@@ -422,27 +494,193 @@ void fatal(const char *fmt, ...)
 }
 
 
+void debugmsg_recompute_active(void)
+{
+	int active = -1;
+
+	if (control_log_level > active)
+		active = control_log_level;
+
+	if (single_step || about_to_enter_single_step) {
+		if (VERBOSITY_INFO > active)
+			active = VERBOSITY_INFO;
+	}
+
+	if (debugmsg_destinations & (DEBUG_DEST_CONSOLE | DEBUG_DEST_FILE | DEBUG_DEST_STDERR)) {
+		for (size_t i = 0; i < debugmsg_nr_of_subsystems; ++i) {
+			if (debugmsg_current_verbosity[i] > active)
+				active = debugmsg_current_verbosity[i];
+		}
+	}
+
+	debugmsg_active_verbosity = active;
+}
+
+
+bool debugmsg_set_logfile(const char *path)
+{
+	if (path == NULL || strcmp(path, "off") == 0 ||
+	    strcmp(path, "none") == 0 || path[0] == '\0') {
+		if (debugmsg_logfile != NULL) {
+			fclose(debugmsg_logfile);
+			debugmsg_logfile = NULL;
+		}
+		free(debugmsg_logfile_path);
+		debugmsg_logfile_path = NULL;
+		debugmsg_destinations &= ~DEBUG_DEST_FILE;
+		debugmsg_recompute_active();
+		return true;
+	}
+
+	FILE *f = fopen(path, "a");
+	if (f == NULL) {
+		fprintf(stderr, "debugmsg: could not open logfile '%s': %s\n",
+		    path, strerror(errno));
+		return false;
+	}
+
+	if (debugmsg_logfile != NULL)
+		fclose(debugmsg_logfile);
+	debugmsg_logfile = f;
+	free(debugmsg_logfile_path);
+	debugmsg_logfile_path = strdup(path);
+	debugmsg_destinations |= DEBUG_DEST_FILE;
+	debugmsg_recompute_active();
+	return true;
+}
+
+
+const char *debugmsg_get_logfile(void)
+{
+	return debugmsg_logfile_path;
+}
+
+
+void debugmsg_set_destinations(int dest_mask)
+{
+	debugmsg_destinations = dest_mask;
+	debugmsg_recompute_active();
+}
+
+
+int debugmsg_get_destinations(void)
+{
+	return debugmsg_destinations;
+}
+
+
+bool debugmsg_parse_level(const char *s, int *level_out)
+{
+	if (s == NULL || s[0] == '\0')
+		return false;
+
+	if (strcasecmp(s, "off") == 0 || strcasecmp(s, "none") == 0 ||
+	    strcmp(s, "-1") == 0) {
+		*level_out = VERBOSITY_OFF;
+		return true;
+	}
+	if (strcasecmp(s, "error") == 0 || strcasecmp(s, "err") == 0 ||
+	    strcasecmp(s, "e") == 0 || strcmp(s, "0") == 0) {
+		*level_out = VERBOSITY_ERROR;
+		return true;
+	}
+	if (strcasecmp(s, "warning") == 0 || strcasecmp(s, "warn") == 0 ||
+	    strcasecmp(s, "w") == 0 || strcmp(s, "1") == 0) {
+		*level_out = VERBOSITY_WARNING;
+		return true;
+	}
+	if (strcasecmp(s, "info") == 0 || strcasecmp(s, "inf") == 0 ||
+	    strcasecmp(s, "i") == 0 || strcmp(s, "2") == 0) {
+		*level_out = VERBOSITY_INFO;
+		return true;
+	}
+	if (strcasecmp(s, "debug") == 0 || strcasecmp(s, "dbg") == 0 ||
+	    strcasecmp(s, "d") == 0 || strcmp(s, "3") == 0) {
+		*level_out = VERBOSITY_DEBUG;
+		return true;
+	}
+
+	char *end = NULL;
+	long val = strtol(s, &end, 10);
+	if (end != NULL && *end == '\0') {
+		*level_out = (int)val;
+		return true;
+	}
+	return false;
+}
+
+
+const char *debugmsg_level_name(int level)
+{
+	switch (level) {
+	case VERBOSITY_OFF:
+		return "off";
+	case VERBOSITY_ERROR:
+		return "error";
+	case VERBOSITY_WARNING:
+		return "warning";
+	case VERBOSITY_INFO:
+		return "info";
+	case VERBOSITY_DEBUG:
+		return "debug";
+	default: {
+		static char buf[32];
+		snprintf(buf, sizeof(buf), "%i", level);
+		return buf;
+	}
+	}
+}
+
+
+int debugmsg_subsystem_lookup(const char *name)
+{
+	if (name == NULL || name[0] == '\0')
+		return -1;
+	for (size_t i = 0; i < debugmsg_nr_of_subsystems; ++i)
+		if (strcasecmp(name, debugmsg_subsystem_name[i]) == 0)
+			return (int)i;
+	return -1;
+}
+
+
+const char *debugmsg_subsystem_name_by_id(int subsys)
+{
+	if (subsys >= 0 && (size_t)subsys < debugmsg_nr_of_subsystems)
+		return debugmsg_subsystem_name[subsys];
+	return "";
+}
+
+
 void debugmsg_set_verbosity_level(int subsystem, int verbosity)
 {
-	if (subsystem != SUBSYS_ALL)
-		debugmsg_current_verbosity[subsystem] = verbosity;
-	else
+	if (subsystem != SUBSYS_ALL) {
+		if (subsystem >= 0 && (size_t)subsystem < debugmsg_nr_of_subsystems)
+			debugmsg_current_verbosity[subsystem] = verbosity;
+	} else {
 		for (size_t i = 0; i < debugmsg_nr_of_subsystems; ++i)
 			debugmsg_current_verbosity[i] = verbosity;
+		default_verbosity = verbosity;
+	}
+	debugmsg_recompute_active();
 }
 
 
 void debugmsg_add_verbosity_level(int subsystem, int verbosity_delta)
 {
-	if (subsystem != SUBSYS_ALL)
-		debugmsg_current_verbosity[subsystem] += verbosity_delta;
-	else
+	if (subsystem != SUBSYS_ALL) {
+		if (subsystem >= 0 && (size_t)subsystem < debugmsg_nr_of_subsystems)
+			debugmsg_current_verbosity[subsystem] += verbosity_delta;
+	} else {
 		for (size_t i = 0; i < debugmsg_nr_of_subsystems; ++i)
 			debugmsg_current_verbosity[i] += verbosity_delta;
+		default_verbosity += verbosity_delta;
+	}
 
 	for (size_t i = 0; i < debugmsg_nr_of_subsystems; ++i)
-		if (debugmsg_current_verbosity[i] < 0)
-			debugmsg_current_verbosity[i] = 0;
+		if (debugmsg_current_verbosity[i] < VERBOSITY_OFF)
+			debugmsg_current_verbosity[i] = VERBOSITY_OFF;
+
+	debugmsg_recompute_active();
 }
 
 
@@ -453,29 +691,26 @@ void debugmsg_add_verbosity_level(int subsystem, int verbosity_delta)
  */
 int debugmsg_register_subsystem(const char* name)
 {
-	// TODO: Another way would be to support multiple names with e.g.
-	// a suffix. Such as "le0", "le1", "le2" for the name "le".
-	// But for now, simply return the same subsystem for all of them.
-	ssize_t subsys = -1;
+	if (name == NULL || name[0] == '\0')
+		return SUBSYS_STARTUP;
+
 	for (size_t i = 0; i < debugmsg_nr_of_subsystems; ++i)
-		if (strcmp(name, debugmsg_subsystem_name[i]) == 0)
-			subsys = i;
+		if (strcasecmp(name, debugmsg_subsystem_name[i]) == 0)
+			return (int)i;
 
-	if (subsys >= 0)
-		return subsys;
-	
-	subsys = debugmsg_nr_of_subsystems;
+	ssize_t subsys = debugmsg_nr_of_subsystems;
 
-	debugmsg_nr_of_subsystems ++;
+	debugmsg_nr_of_subsystems++;
 	debugmsg_subsystem_name = realloc(debugmsg_subsystem_name,
 	    sizeof(char*) * debugmsg_nr_of_subsystems);
 	debugmsg_current_verbosity = realloc(debugmsg_current_verbosity,
-	    sizeof(int) * debugmsg_nr_of_subsystems);;
+	    sizeof(int) * debugmsg_nr_of_subsystems);
 
 	debugmsg_subsystem_name[subsys] = strdup(name);
-	debugmsg_set_verbosity_level(subsys, default_verbosity);
+	debugmsg_current_verbosity[subsys] = default_verbosity;
 
-	return subsys;
+	debugmsg_recompute_active();
+	return (int)subsys;
 }
 
 
@@ -486,44 +721,30 @@ int debugmsg_register_subsystem(const char* name)
  */
 void debugmsg_change_settings(char *subsystem_name, char *n)
 {
-	int ns = 0;
-
-	for (size_t i = 0; i < debugmsg_nr_of_subsystems; ++i) {
-		if (strcasecmp("ALL", subsystem_name) != 0) {
-			if (strcmp(subsystem_name, debugmsg_subsystem_name[i]) != 0)
-				continue;
-		}
-
-		int v = atoi(n);
-
-		switch (*n) {
-		case 'e':
-		case 'E':
-			v = 0;
-			break;
-		case 'w':
-		case 'W':
-			v = 1;
-			break;
-		case 'i':
-		case 'I':
-			v = 2;
-			break;
-		case 'd':
-		case 'D':
-			v = 3;
-			break;
-		}
-		
-		debugmsg_current_verbosity[i] = v;
-
-		++ns;
+	int v;
+	if (!debugmsg_parse_level(n, &v)) {
+		printf("Invalid verbosity level '%s' (use off, error, warning, info, debug)\n", n);
+		return;
 	}
 
-	if (ns == 0)
-		printf("Unknown debugmsg subsystem name '%s'\n", subsystem_name);
-	else
-		debugmsg_print_settings(subsystem_name);
+	if (strcasecmp("ALL", subsystem_name) == 0) {
+		debugmsg_set_verbosity_level(SUBSYS_ALL, v);
+		debugmsg_print_settings("ALL");
+		return;
+	}
+
+	int subsys = debugmsg_subsystem_lookup(subsystem_name);
+	if (subsys < 0) {
+		/* Register subsystem dynamically so it can be configured before device init */
+		subsys = debugmsg_register_subsystem(subsystem_name);
+	}
+
+	debugmsg_set_verbosity_level(subsys, v);
+	debugmsg_print_settings(subsystem_name);
+
+	if (v >= VERBOSITY_INFO && debugmsg_destinations == DEBUG_DEST_NONE && control_log_level < 0) {
+		printf("(Note: debug output is not sent to console by default. Use 'log file <path>' or 'log console on' to view.)\n");
+	}
 }
 
 
@@ -534,12 +755,21 @@ void debugmsg_change_settings(char *subsystem_name, char *n)
  */
 void debugmsg_print_settings(const char *subsystem_name)
 {
+	if (subsystem_name == NULL || subsystem_name[0] == '\0' || strcasecmp("ALL", subsystem_name) == 0) {
+		printf("Debug log destinations:\n");
+		printf("  Console:  %s\n", (debugmsg_destinations & DEBUG_DEST_CONSOLE) ? "on" : "off (default)");
+		printf("  Stderr:   %s\n", (debugmsg_destinations & DEBUG_DEST_STDERR) ? "on" : "off");
+		printf("  File:     %s\n", (debugmsg_destinations & DEBUG_DEST_FILE) && debugmsg_logfile_path ?
+		    debugmsg_logfile_path : "none");
+		printf("  Active highest level: %s\n\n", debugmsg_level_name(debugmsg_active_verbosity));
+	}
+
 	int n = 0;
 
 	for (size_t i = 0; i < debugmsg_nr_of_subsystems; ++i) {
 		if (subsystem_name != NULL && subsystem_name[0] != '\0' &&
 		    strcasecmp("ALL", subsystem_name) != 0) {
-			if (strcmp(subsystem_name, debugmsg_subsystem_name[i]) != 0)
+			if (strcasecmp(subsystem_name, debugmsg_subsystem_name[i]) != 0)
 				continue;
 		}
 
@@ -547,29 +777,10 @@ void debugmsg_print_settings(const char *subsystem_name)
 		if (i == SUBSYS_STARTUP)
 			name = "(startup related)";
 
-		char buf[100];
-		switch (debugmsg_current_verbosity[i]) {
-		case VERBOSITY_ERROR:
-			snprintf(buf, sizeof(buf), "0: ERROR");
-			break;
-		case VERBOSITY_WARNING:
-			snprintf(buf, sizeof(buf), "1: WARNING");
-			break;
-		case VERBOSITY_INFO:
-			snprintf(buf, sizeof(buf), "2: INFO");
-			break;
-		case VERBOSITY_DEBUG:
-			snprintf(buf, sizeof(buf), "3: DEBUG");
-			break;
-		default:
-			snprintf(buf, sizeof(buf), "%i", debugmsg_current_verbosity[i]);
-			break;
-		}
-
 		if (n == 0)
 			printf("Subsystem:          Level:\n");
 
-		printf("%17s   %s\n", name, buf);
+		printf("%17s   %s\n", name, debugmsg_level_name(debugmsg_current_verbosity[i]));
 
 		++n;
 	}
@@ -584,11 +795,15 @@ void debugmsg_print_settings(const char *subsystem_name)
  *
  *  Initializes the debugmsg functionality.
  */
-void debugmsg_init()
+void debugmsg_init(void)
 {
+	default_verbosity = VERBOSITY_WARNING;
+	debugmsg_destinations = DEBUG_DEST_NONE;
+	debugmsg_active_verbosity = -1;
+
 	debugmsg_nr_of_subsystems = 11;
 	debugmsg_subsystem_name = malloc(sizeof(char*) * debugmsg_nr_of_subsystems);
-	debugmsg_current_verbosity = malloc(sizeof(int) * debugmsg_nr_of_subsystems);;
+	debugmsg_current_verbosity = malloc(sizeof(int) * debugmsg_nr_of_subsystems);
 
 	debugmsg_subsystem_name[SUBSYS_STARTUP]   = "";
 	debugmsg_subsystem_name[SUBSYS_EMUL]      = "emul";
@@ -603,7 +818,35 @@ void debugmsg_init()
 	debugmsg_subsystem_name[SUBSYS_DISPLAY]   = "display";
 
 	// Default verbosity levels.
-	debugmsg_set_verbosity_level(SUBSYS_ALL, default_verbosity);
+	for (size_t i = 0; i < debugmsg_nr_of_subsystems; ++i)
+		debugmsg_current_verbosity[i] = default_verbosity;
+
+	/* Environment variable overrides: */
+	const char *logfile = getenv("GXEMUL_LOGFILE");
+	if (logfile != NULL && logfile[0] != '\0')
+		debugmsg_set_logfile(logfile);
+
+	const char *loglevel = getenv("GXEMUL_LOGLEVEL");
+	if (loglevel != NULL && loglevel[0] != '\0') {
+		char *s = strdup(loglevel);
+		char *p = s;
+		while (p != NULL && *p != '\0') {
+			char *comma = strchr(p, ',');
+			if (comma != NULL)
+				*comma++ = '\0';
+			char *eq = strchr(p, '=');
+			if (eq != NULL) {
+				*eq++ = '\0';
+				debugmsg_change_settings(p, eq);
+			} else {
+				debugmsg_change_settings("ALL", p);
+			}
+			p = comma;
+		}
+		free(s);
+	}
+
+	debugmsg_recompute_active();
 }
 
 

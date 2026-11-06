@@ -233,23 +233,86 @@ int decstation_prom_emul(struct cpu *cpu);
 #define	SUBSYS_EXCEPTION	8	/*  CPU exceptions  */
 #define	SUBSYS_PROMEMUL		9	/*  PROM emulation related  */
 #define	SUBSYS_DISPLAY		10	/*  Framebuffer windows  */
+
+#define	VERBOSITY_OFF		-1
 #define	VERBOSITY_ERROR		0
 #define	VERBOSITY_WARNING	1
 #define	VERBOSITY_INFO		2
 #define	VERBOSITY_DEBUG		3
-#define	ENOUGH_VERBOSITY(subsys,reqverb)	(debugmsg_current_verbosity[(subsys)] >= (reqverb))
+
+#define	DEBUG_DEST_NONE		0
+#define	DEBUG_DEST_CONSOLE	(1 << 0)
+#define	DEBUG_DEST_FILE		(1 << 1)
+#define	DEBUG_DEST_STDERR	(1 << 2)
+
+extern int debugmsg_active_verbosity;
+extern int debugmsg_destinations;
 extern int *debugmsg_current_verbosity;
+extern size_t debugmsg_nr_of_subsystems;
+
 void debug_indentation(int diff);
 void debug(const char *fmt, ...);
 void fatal(const char *fmt, ...);
-void debugmsg_init();
+void debugmsg_init(void);
 int debugmsg_register_subsystem(const char* name);
+int debugmsg_subsystem_lookup(const char *name);
+const char *debugmsg_subsystem_name_by_id(int subsys);
+bool debugmsg_parse_level(const char *s, int *level_out);
+const char *debugmsg_level_name(int level);
 void debugmsg_change_settings(char *subsystem_name, char *n);
 void debugmsg_print_settings(const char *subsystem_name);
 void debugmsg_add_verbosity_level(int subsystem, int verbosity_delta);
 void debugmsg_set_verbosity_level(int subsystem, int verbosity);
-void debugmsg(int subsystem, const char *name, int verbosity_required, const char *fmt, ...);
-void debugmsg_cpu(struct cpu* cpu, int subsystem, const char *name, int verbosity_required, const char *fmt, ...);
+bool debugmsg_set_logfile(const char *path);
+const char *debugmsg_get_logfile(void);
+void debugmsg_set_destinations(int dest_mask);
+int debugmsg_get_destinations(void);
+void debugmsg_recompute_active(void);
+
+void (debugmsg)(int subsystem, const char *name, int verbosity_required, const char *fmt, ...);
+void (debugmsg_cpu)(struct cpu* cpu, int subsystem, const char *name, int verbosity_required, const char *fmt, ...);
+
+static inline bool debugmsg_is_active(int subsys, int reqverb)
+{
+	extern int debugmsg_active_verbosity;
+	extern int control_log_level;
+	extern int debugmsg_destinations;
+	extern int *debugmsg_current_verbosity;
+	extern size_t debugmsg_nr_of_subsystems;
+	extern bool single_step;
+	extern bool about_to_enter_single_step;
+
+	if (__builtin_expect(debugmsg_active_verbosity < reqverb, 1))
+		return false;
+
+	if (control_log_level >= reqverb)
+		return true;
+
+	if ((single_step || about_to_enter_single_step) && subsys == SUBSYS_CPU)
+		return true;
+
+	if (debugmsg_destinations != 0 && subsys >= 0 &&
+	    (size_t)subsys < debugmsg_nr_of_subsystems &&
+	    debugmsg_current_verbosity[subsys] >= reqverb)
+		return true;
+
+	return false;
+}
+
+#define	ENOUGH_VERBOSITY(subsys,reqverb)	debugmsg_is_active((subsys), (reqverb))
+#define	DEBUGMSG_ENABLED(subsys,reqverb)	debugmsg_is_active((subsys), (reqverb))
+
+#define debugmsg(subsys, name, verb, ...) \
+	do { \
+		if (__builtin_expect(debugmsg_is_active((subsys), (verb)), 0)) \
+			(debugmsg)((subsys), (name), (verb), __VA_ARGS__); \
+	} while (0)
+
+#define debugmsg_cpu(cpu, subsys, name, verb, ...) \
+	do { \
+		if (__builtin_expect(debugmsg_is_active((subsys), (verb)), 0)) \
+			(debugmsg_cpu)((cpu), (subsys), (name), (verb), __VA_ARGS__); \
+	} while (0)
 
 
 /*  dreamcast.c:  */

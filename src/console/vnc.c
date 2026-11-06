@@ -140,7 +140,7 @@ struct vnc_client {
 static int listen_fd = -1;
 static char *password = NULL;		/*  NULL for none  */
 static bool wrong_password = false;
-static bool trace = false;		/*  GXEMUL_VNC_DEBUG  */
+static int vnc_subsys = -1;
 static uint32_t wrong_password_at;	/*  ms ticks  */
 #ifndef _WIN32
 static char *unix_path = NULL;
@@ -148,10 +148,10 @@ static char *unix_path = NULL;
 static struct vnc_client clients[VNC_MAX_CLIENTS];
 
 
-/*  The protocol, as it happens, with GXEMUL_VNC_DEBUG set:  */
-#define	TRACE(c, ...)	do { if (trace) {				\
-		fprintf(stderr, "vnc[%i]: ", (int) ((c) - clients));	\
-		fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); }	\
+/*  The protocol, as it happens, with vnc debug verbosity set:  */
+#define	TRACE(c, ...)	do {						\
+		debugmsg(vnc_subsys, "vnc", VERBOSITY_DEBUG,		\
+		    "[%i] " __VA_ARGS__, (int) ((c) - clients));	\
 	} while (0)
 
 
@@ -1215,12 +1215,13 @@ static long client_message(struct vnc_client *c, const unsigned char *p,
 
 		c->encoding = ENC_RAW;
 		c->desktop_size = c->desktop_name = false;
-		if (trace) {
-			fprintf(stderr, "vnc[%i]: SetEncodings:",
-			    (int) (c - clients));
-			for (size_t i = 4; i < len; i += 4)
-				fprintf(stderr, " %i", (int32_t) get32(p + i));
-			fputc('\n', stderr);
+		if (debugmsg_is_active(vnc_subsys, VERBOSITY_DEBUG)) {
+			char encbuf[512];
+			size_t epos = 0;
+			for (size_t i = 4; i < len && epos + 16 < sizeof(encbuf); i += 4)
+				epos += snprintf(encbuf + epos, sizeof(encbuf) - epos, " %i", (int32_t) get32(p + i));
+			debugmsg(vnc_subsys, "vnc", VERBOSITY_DEBUG,
+			    "[%i] SetEncodings:%s\n", (int) (c - clients), encbuf);
 		}
 		/*  The first encoding there is, in the client's order:  */
 		bool chosen = false;
@@ -1457,7 +1458,9 @@ void vnc_init(const char *spec)
 	for (int i = 0; i < VNC_MAX_CLIENTS; i++)
 		clients[i].fd = -1;
 
-	trace = getenv("GXEMUL_VNC_DEBUG") != NULL;
+	vnc_subsys = debugmsg_register_subsystem("vnc");
+	if (getenv("GXEMUL_VNC_DEBUG") != NULL)
+		debugmsg_set_verbosity_level(vnc_subsys, VERBOSITY_DEBUG);
 
 	const char *pw = getenv("GXEMUL_VNC_PASSWORD");
 	if (pw != NULL && pw[0] != '\0') {

@@ -82,6 +82,7 @@
 struct scc_data {
 	struct interrupt	irq;
 	int		irq_asserted;
+	int		subsys;
 
 	int		use_fb;
 	int		console_handle;
@@ -226,7 +227,8 @@ static unsigned char rx_nextchar(struct scc_data *d, int portnr)
 
 static void scc_assert_irq(struct scc_data *d, const char *reason)
 {
-	(void) reason;
+	debugmsg(d->subsys, "scc", VERBOSITY_DEBUG,
+	    "assert IRQ (%s)\n", reason != NULL? reason : "");
 	if (!d->irq_asserted) {
 		d->irq_asserted = 1;
 		INTERRUPT_ASSERT(d->irq);
@@ -235,7 +237,8 @@ static void scc_assert_irq(struct scc_data *d, const char *reason)
 
 static void scc_deassert_irq(struct scc_data *d, const char *reason)
 {
-	(void) reason;
+	debugmsg(d->subsys, "scc", VERBOSITY_DEBUG,
+	    "deassert IRQ (%s)\n", reason != NULL? reason : "");
 	if (d->irq_asserted) {
 		d->irq_asserted = 0;
 		INTERRUPT_DEASSERT(d->irq);
@@ -670,15 +673,11 @@ DEVICE_ACCESS(scc)
 			    port == SCC_CHANNEL_B)
 				fatal("WARNING! scc channel B has no RR3\n");
 
-#ifdef SCC_DEBUG
-			fatal("[ scc: port %i, register %i, read value "
-			    "0x%02x ]\n", port, d->register_selected[port],
-			    (int)odata);
-#endif
+			debugmsg(d->subsys, "scc", VERBOSITY_DEBUG,
+			    "port %i, register %i, read value 0x%02x\n",
+			    port, d->register_selected[port], (int)odata);
 			d->register_select_in_progress[port] = 0;
 			d->register_selected[port] = 0;
-			/*  debug("[ scc: (port %i) read from 0x%08lx ]\n",
-			    port, (long)relative_addr);  */
 		} else {
 			/*
 			 *  If no register is selected, then this is a write
@@ -762,11 +761,9 @@ DEVICE_ACCESS(scc)
 						    SCC_RR3_RX_IP_B;
 					scc_clear_ip(d, ip);
 				}
-#ifdef SCC_DEBUG
-				fatal("[ scc: port %i, register %i, write "
-				    "value 0x%02x ]\n", port,
-				    d->register_selected[port], idata);
-#endif
+				debugmsg(d->subsys, "scc", VERBOSITY_DEBUG,
+				    "port %i, register %i, write value 0x%02x\n",
+				    port, d->register_selected[port], (int)idata);
 
 				d->scc_register_r[port * N_SCC_REGS +
 				    SCC_RR12] = d->scc_register_w[port *
@@ -791,12 +788,13 @@ DEVICE_ACCESS(scc)
 				scc_clear_ip(d, port == SCC_CHANNEL_A?
 				    SCC_RR3_RX_IP_A : SCC_RR3_RX_IP_B);
 
-//			debug("[ scc: (port %i) read from 0x%08lx: 0x%02x ]\n",
-//			    port, (long)relative_addr, (int)odata);
+			debugmsg(d->subsys, "scc", VERBOSITY_DEBUG,
+			    "(port %i) read data from 0x%08lx: 0x%02x\n",
+			    port, (long)relative_addr, (int)odata);
 		} else {
-			/*  debug("[ scc: (port %i) write to  0x%08lx: "
-			    "0x%08x ]\n", port, (long)relative_addr,
-			    (int)idata);  */
+			debugmsg(d->subsys, "scc", VERBOSITY_DEBUG,
+			    "(port %i) write data to 0x%08lx: 0x%08x\n",
+			    port, (long)relative_addr, (int)idata);
 
 			scc_tx(d, port, idata);
 
@@ -830,10 +828,12 @@ DEVICE_ACCESS(scc)
 		break;
 	default:
 		if (writeflag==MEM_READ) {
-			debug("[ scc: (port %i) read from 0x%08lx ]\n",
+			debugmsg(d->subsys, "scc", VERBOSITY_DEBUG,
+			    "(port %i) read from 0x%08lx\n",
 			    port, (long)relative_addr);
 		} else {
-			debug("[ scc: (port %i) write to  0x%08lx: 0x%08x ]\n",
+			debugmsg(d->subsys, "scc", VERBOSITY_DEBUG,
+			    "(port %i) write to  0x%08lx: 0x%08x\n",
 			    port, (long)relative_addr, (int)idata);
 		}
 	}
@@ -866,6 +866,7 @@ void *dev_scc_init(struct machine *machine, struct memory *mem,
 
 	INTERRUPT_CONNECT(irq_path, d->irq);
 	d->scc_nr  = scc_nr;
+	d->subsys  = debugmsg_register_subsystem("scc");
 	d->use_fb  = use_fb;
 	d->addrmul = addrmul;
 	/*  Only SCC 1 reads keystrokes from its console (see the tick

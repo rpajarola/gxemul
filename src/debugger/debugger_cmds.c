@@ -1128,41 +1128,117 @@ static void debugger_cmd_unassemble(struct machine *m, char *args)
  */
 static void debugger_cmd_verbosity(struct machine *m, char *args)
 {
+	while (*args == ' ')
+		args++;
+
+	if (*args == '\0') {
+		debugmsg_print_settings(NULL);
+		return;
+	}
+
+	/* Check for destination subcommands */
+	if (strncasecmp(args, "console", 7) == 0 && (args[7] == ' ' || args[7] == '\0')) {
+		char *p = args + 7;
+		while (*p == ' ') p++;
+		if (*p == '\0') {
+			printf("Debug console output is %s.\n",
+			    (debugmsg_get_destinations() & DEBUG_DEST_CONSOLE) ? "enabled" : "disabled");
+			return;
+		}
+		if (strcasecmp(p, "on") == 0 || strcmp(p, "1") == 0) {
+			debugmsg_set_destinations(debugmsg_get_destinations() | DEBUG_DEST_CONSOLE);
+			printf("Debug console output enabled.\n");
+		} else if (strcasecmp(p, "off") == 0 || strcmp(p, "0") == 0) {
+			debugmsg_set_destinations(debugmsg_get_destinations() & ~DEBUG_DEST_CONSOLE);
+			printf("Debug console output disabled.\n");
+		} else {
+			printf("syntax: verbosity console [on|off]\n");
+		}
+		return;
+	}
+
+	if (strncasecmp(args, "stderr", 6) == 0 && (args[6] == ' ' || args[6] == '\0')) {
+		char *p = args + 6;
+		while (*p == ' ') p++;
+		if (*p == '\0') {
+			printf("Debug stderr output is %s.\n",
+			    (debugmsg_get_destinations() & DEBUG_DEST_STDERR) ? "enabled" : "disabled");
+			return;
+		}
+		if (strcasecmp(p, "on") == 0 || strcmp(p, "1") == 0) {
+			debugmsg_set_destinations(debugmsg_get_destinations() | DEBUG_DEST_STDERR);
+			printf("Debug stderr output enabled.\n");
+		} else if (strcasecmp(p, "off") == 0 || strcmp(p, "0") == 0) {
+			debugmsg_set_destinations(debugmsg_get_destinations() & ~DEBUG_DEST_STDERR);
+			printf("Debug stderr output disabled.\n");
+		} else {
+			printf("syntax: verbosity stderr [on|off]\n");
+		}
+		return;
+	}
+
+	if (strncasecmp(args, "file", 4) == 0 && (args[4] == ' ' || args[4] == '\0')) {
+		char *p = args + 4;
+		while (*p == ' ') p++;
+		if (*p == '\0') {
+			const char *cur = debugmsg_get_logfile();
+			printf("Debug log file is %s.\n", cur ? cur : "none");
+			return;
+		}
+		if (strcasecmp(p, "off") == 0 || strcasecmp(p, "none") == 0) {
+			debugmsg_set_logfile(NULL);
+			printf("Debug file output disabled.\n");
+		} else {
+			if (debugmsg_set_logfile(p))
+				printf("Debug log file set to '%s'.\n", p);
+		}
+		return;
+	}
+
+	if (strncasecmp(args, "output", 6) == 0 && (args[6] == ' ' || args[6] == '\0')) {
+		char *p = args + 6;
+		while (*p == ' ') p++;
+		if (*p == '\0') {
+			debugmsg_print_settings(NULL);
+			return;
+		}
+		if (strcasecmp(p, "none") == 0 || strcasecmp(p, "off") == 0) {
+			debugmsg_set_destinations(DEBUG_DEST_NONE);
+			printf("All debug text output disabled.\n");
+			return;
+		}
+		debugger_cmd_verbosity(m, p);
+		return;
+	}
+
+	/* Subsystem verbosity: [subsystem [level]] */
 	char *subsystem = args;
 	char *n = subsystem;
-	if (*n) {
-		while (*n && *n != ' ')
-			n++;
-		while (*n && *n == ' ')
-			n++;
-	}
+	while (*n && *n != ' ')
+		n++;
+
+	char subsys_buf[100];
+	size_t len = n - subsystem;
+	if (len >= sizeof(subsys_buf))
+		len = sizeof(subsys_buf) - 1;
+	memcpy(subsys_buf, subsystem, len);
+	subsys_buf[len] = '\0';
+
+	while (*n == ' ')
+		n++;
 
 	if (*n == '\0') {
-		debugmsg_print_settings(subsystem);
+		debugmsg_print_settings(subsys_buf);
 		return;
 	}
 
-	char s[200];
-	snprintf(s, sizeof(s), "%s", subsystem);
-	size_t i = n - subsystem - 1;
-	if (i < sizeof(s))
-		s[i] = '\0';
-	else {
-		printf("syntax: verbosity [subsystem [n]]\n");
-		return;
-	}
+	char *level_str = n;
+	char *end = level_str;
+	while (*end && *end != ' ')
+		end++;
+	*end = '\0';
 
-	char *n2 = n;
-	while (*n2 && *n2 != ' ')
-		n2++;
-	*n2 = '\0';
-
-	/* printf("subsystem = '%s'\n", s);
-	if (*n)
-		printf("n = '%s'\n", n);
-	*/
-
-	debugmsg_change_settings(s, n);
+	debugmsg_change_settings(subsys_buf, level_str);
 }
 
 
@@ -1371,6 +1447,9 @@ static struct cmd cmds[] = {
 
 	{ "lookup", "name|addr", 0, debugger_cmd_lookup,
 		"lookup a symbol by name or address" },
+
+	{ "log", "[subsystem [level] | file <path> | console on/off | stderr on/off]", 0, debugger_cmd_verbosity,
+		"configure debug logging and subsystem verbosity" },
 
 	{ "machine", "", 0, debugger_cmd_machine,
 		"Print a summary of the current machine" },

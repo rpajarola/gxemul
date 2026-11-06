@@ -263,6 +263,9 @@ static void usage(bool longusage)
 	       "            (on localhost only, unless a host is given; with a "
 	       "password\n"
 	       "            if GXEMUL_VNC_PASSWORD is set)\n");
+	printf("  --log file | console | stderr\n"
+	       "            configure debug logging destination (debug output is "
+	       "off by default)\n");
 	printf("\n");
 	printf("If you are selecting a machine type to emulate directly "
 	    "on the command line,\nthen you must specify one or more names"
@@ -853,6 +856,28 @@ int main(int argc, char *argv[])
 		}
 	if (vnc_spec != NULL)
 		vnc_init(vnc_spec);
+
+	/*  --log <file|console|stderr> or --debug-log <file|console|stderr>:  */
+	for (i = 1; i < argc; i++)
+		if (strcmp(argv[i], "--log") == 0 ||
+		    strcmp(argv[i], "--debug-log") == 0) {
+			if (i + 1 >= argc) {
+				fprintf(stderr, "%s needs a file path, 'console', or 'stderr'.\n", argv[i]);
+				return 1;
+			}
+			const char *target = argv[i + 1];
+			if (strcmp(target, "console") == 0) {
+				debugmsg_set_destinations(debugmsg_get_destinations() | DEBUG_DEST_CONSOLE);
+			} else if (strcmp(target, "stderr") == 0) {
+				debugmsg_set_destinations(debugmsg_get_destinations() | DEBUG_DEST_STDERR);
+			} else {
+				debugmsg_set_logfile(target);
+			}
+			memmove(&argv[i], &argv[i + 2],
+			    sizeof(char *) * (argc - i - 1));
+			argc -= 2;
+			i--;
+		}
 
 	/*  --export machine.json folder:  */
 	if (argc >= 2 && strcmp(argv[1], "--export") == 0)
