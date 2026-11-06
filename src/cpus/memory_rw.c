@@ -291,6 +291,7 @@ not just the device in question.
 					len = mem->devices[i].length - paddr;
 
 				if (cpu->update_translation_table != NULL &&
+				    !(misc_flags & PHYSICAL) &&
 				    !(ok & MEMORY_NOT_FULL_PAGE) &&
 				    mem->devices[i].flags & DM_DYNTRANS_OK) {
 					int wf = writeflag == MEM_WRITE? 1 : 0;
@@ -519,6 +520,7 @@ not just the device in question.
 	    && (cpu->cd.mips.cpu_type.mmu_model != MMU3K ||
             !(cpu->cd.mips.coproc[0]->reg[COP0_STATUS] & MIPS1_ISOL_CACHES))
 #endif
+	    && !(misc_flags & PHYSICAL)
 	    && !(ok & MEMORY_NOT_FULL_PAGE)
 	    && !no_exceptions)
 		cpu->update_translation_table(cpu, vaddr & ~offset_mask,
