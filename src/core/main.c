@@ -257,6 +257,8 @@ static void usage(bool longusage)
 	       "            (see doc/control.html); for AI agents, %s --mcp\n"
 	       "            unix:path|tcp:port is an MCP server which uses it\n",
 	    progname, progname);
+	printf("  --config machine.json\n"
+	       "            start emulation using the specified configuration file\n");
 	printf("  --vnc tcp:port | tcp:host:port | unix:path\n"
 	       "            show the framebuffer to VNC clients instead of in "
 	       "a window\n"
@@ -525,18 +527,27 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 	extra_argv = argv;
 
 	/*  A machine configuration file (instead of a program to load)?  */
-	if (type == NULL && subtype == NULL && extra_argc == 1 &&
-	    machine_config_is_config_file(extra_argv[0])) {
+	if (config_file != NULL || (extra_argc > 0 &&
+	    machine_config_is_config_file(extra_argv[0]))) {
+		const char *cfg = (config_file != NULL) ? config_file : extra_argv[0];
 		if (config_options_used) {
 			fprintf(stderr, "Options which describe the machine "
-			    "(such as -d, -M, or -X) can't be used with\na "
+			    "(such as -E, -e, -d, -M, or -X) can't be used with\na "
 			    "machine configuration file; change the file "
-			    "instead (%s --edit %s).\n", progname,
-			    extra_argv[0]);
+			    "instead (%s --edit %s).\n", progname, cfg);
 			exit(1);
 		}
-		config_file = extra_argv[0];
-		extra_argc = 0;
+		if (config_file == NULL) {
+			config_file = extra_argv[0];
+			extra_argc--;
+			extra_argv++;
+		}
+		if (extra_argc > 0) {
+			fprintf(stderr, "unexpected extra argument \"%s\" after "
+			    "machine configuration file \"%s\"\n",
+			    extra_argv[0], config_file);
+			exit(1);
+		}
 		return 0;
 	}
 
@@ -879,6 +890,20 @@ int main(int argc, char *argv[])
 			i--;
 		}
 
+	/*  --config machine.json:  */
+	for (i = 1; i < argc; i++)
+		if (strcmp(argv[i], "--config") == 0) {
+			if (i + 1 >= argc) {
+				fprintf(stderr, "--config needs a configuration file path.\n");
+				return 1;
+			}
+			config_file = argv[i + 1];
+			memmove(&argv[i], &argv[i + 2],
+			    sizeof(char *) * (argc - i - 1));
+			argc -= 2;
+			break;
+		}
+
 	/*  --export machine.json folder:  */
 	if (argc >= 2 && strcmp(argv[1], "--export") == 0)
 		return export_machine(argc, argv);
@@ -950,8 +975,7 @@ int main(int argc, char *argv[])
 		}
 		appdirs_add_recent(c->path);
 		if (!machine_config_apply(c, emul, emul->machines[0])) {
-			fprintf(stderr, "Could not initialize the "
-			    "emulation.\n");
+			machine_config_free(c);
 			return 1;
 		}
 		machine_config_free(c);

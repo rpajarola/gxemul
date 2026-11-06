@@ -813,61 +813,80 @@ static const char *bus_names[] = { "default", "scsi", "ide" };
 
 
 /*  Lookup helpers, which record the first type error in *errp:  */
-static void get_str(cJSON *o, const char *key, char **field, char **errp)
+static void get_str(cJSON *o, const char *sec, const char *key, char **field, char **errp)
 {
 	cJSON *v = cJSON_GetObjectItemCaseSensitive(o, key);
 	if (v == NULL || cJSON_IsNull(v))
 		return;
 	if (!cJSON_IsString(v)) {
-		if (*errp == NULL)
-			*errp = xprintf("\"%s\" should be a string", key);
+		if (*errp == NULL) {
+			if (sec != NULL && sec[0] != '\0')
+				*errp = xprintf("in \"%s\": \"%s\" should be a string", sec, key);
+			else
+				*errp = xprintf("\"%s\" should be a string", key);
+		}
 		return;
 	}
 	machine_config_set(field, v->valuestring);
 }
 
-static void get_int(cJSON *o, const char *key, int *field, char **errp)
+static void get_int(cJSON *o, const char *sec, const char *key, int *field, char **errp)
 {
 	cJSON *v = cJSON_GetObjectItemCaseSensitive(o, key);
 	if (v == NULL)
 		return;
 	if (!cJSON_IsNumber(v)) {
-		if (*errp == NULL)
-			*errp = xprintf("\"%s\" should be a number", key);
+		if (*errp == NULL) {
+			if (sec != NULL && sec[0] != '\0')
+				*errp = xprintf("in \"%s\": \"%s\" should be a number", sec, key);
+			else
+				*errp = xprintf("\"%s\" should be a number", key);
+		}
 		return;
 	}
 	*field = v->valueint;
 }
 
-static void get_bool(cJSON *o, const char *key, bool *field, char **errp)
+static void get_bool(cJSON *o, const char *sec, const char *key, bool *field, char **errp)
 {
 	cJSON *v = cJSON_GetObjectItemCaseSensitive(o, key);
 	if (v == NULL)
 		return;
 	if (!cJSON_IsBool(v)) {
-		if (*errp == NULL)
-			*errp = xprintf("\"%s\" should be true or false", key);
+		if (*errp == NULL) {
+			if (sec != NULL && sec[0] != '\0')
+				*errp = xprintf("in \"%s\": \"%s\" should be true or false", sec, key);
+			else
+				*errp = xprintf("\"%s\" should be true or false", key);
+		}
 		return;
 	}
 	*field = cJSON_IsTrue(v);
 }
 
-static void get_list(cJSON *o, const char *key, int *np, char ***listp,
+static void get_list(cJSON *o, const char *sec, const char *key, int *np, char ***listp,
 	char **errp)
 {
 	cJSON *v = cJSON_GetObjectItemCaseSensitive(o, key), *e;
 	if (v == NULL)
 		return;
 	if (!cJSON_IsArray(v)) {
-		if (*errp == NULL)
-			*errp = xprintf("\"%s\" should be a list", key);
+		if (*errp == NULL) {
+			if (sec != NULL && sec[0] != '\0')
+				*errp = xprintf("in \"%s\": \"%s\" should be a list", sec, key);
+			else
+				*errp = xprintf("\"%s\" should be a list", key);
+		}
 		return;
 	}
 	cJSON_ArrayForEach(e, v) {
 		if (!cJSON_IsString(e)) {
-			if (*errp == NULL)
-				*errp = xprintf("\"%s\" should be a list of "
-				    "strings", key);
+			if (*errp == NULL) {
+				if (sec != NULL && sec[0] != '\0')
+					*errp = xprintf("in \"%s\": \"%s\" should be a list of strings", sec, key);
+				else
+					*errp = xprintf("\"%s\" should be a list of strings", key);
+			}
 			return;
 		}
 		machine_config_add_string(np, listp, e->valuestring);
@@ -893,6 +912,264 @@ static cJSON *section(cJSON *root, const char *key, char **errp)
 	}
 	return v;
 }
+
+
+static int levenshtein_distance(const char *s1, const char *s2)
+{
+	int len1 = strlen(s1);
+	int len2 = strlen(s2);
+	int prev[64], curr[64];
+	int i, j;
+
+	if (len1 >= 64) len1 = 63;
+	if (len2 >= 64) len2 = 63;
+
+	for (j = 0; j <= len2; j++)
+		prev[j] = j;
+
+	for (i = 1; i <= len1; i++) {
+		curr[0] = i;
+		for (j = 1; j <= len2; j++) {
+			int cost = (tolower((unsigned char)s1[i - 1]) ==
+			            tolower((unsigned char)s2[j - 1])) ? 0 : 1;
+			int del = prev[j] + 1;
+			int ins = curr[j - 1] + 1;
+			int sub = prev[j - 1] + cost;
+			int min = del < ins ? del : ins;
+			if (sub < min)
+				min = sub;
+			curr[j] = min;
+		}
+		memcpy(prev, curr, (len2 + 1) * sizeof(int));
+	}
+	return prev[len2];
+}
+
+struct key_alias {
+	const char *alias;
+	const char *canonical;
+};
+
+static char *suggest_key(const char *key, const char **valid_keys, int n_valid,
+	const struct key_alias *aliases, int n_aliases)
+{
+	int i;
+	int best_dist = 999;
+	const char *best_match = NULL;
+	int key_len = strlen(key);
+	char buf[512];
+
+	/* Check aliases for exact match */
+	if (aliases != NULL) {
+		for (i = 0; i < n_aliases; i++) {
+			if (strcasecmp(key, aliases[i].alias) == 0)
+				return xprintf("(did you mean \"%s\"?)", aliases[i].canonical);
+		}
+	}
+
+	/* Check closest match among valid keys */
+	for (i = 0; i < n_valid; i++) {
+		int dist = levenshtein_distance(key, valid_keys[i]);
+		if (dist < best_dist) {
+			best_dist = dist;
+			best_match = valid_keys[i];
+		}
+	}
+
+	/* Check closest match among aliases */
+	if (aliases != NULL) {
+		for (i = 0; i < n_aliases; i++) {
+			int dist = levenshtein_distance(key, aliases[i].alias);
+			if (dist < best_dist) {
+				best_dist = dist;
+				best_match = aliases[i].canonical;
+			}
+		}
+	}
+
+	int max_dist = (key_len >= 7) ? 3 : 2;
+	if (best_match != NULL && best_dist <= max_dist)
+		return xprintf("(did you mean \"%s\"?)", best_match);
+
+	/* Otherwise list valid keys */
+	snprintf(buf, sizeof(buf), "(valid fields: ");
+	for (i = 0; i < n_valid; i++) {
+		if (i > 0)
+			strncat(buf, ", ", sizeof(buf) - strlen(buf) - 1);
+		strncat(buf, valid_keys[i], sizeof(buf) - strlen(buf) - 1);
+	}
+	strncat(buf, ")", sizeof(buf) - strlen(buf) - 1);
+	return xstrdup(buf);
+}
+
+static bool check_unknown_fields(cJSON *obj, const char *section_name,
+	const char **valid_keys, int n_valid,
+	const struct key_alias *aliases, int n_aliases, char **errp)
+{
+	cJSON *child;
+	if (obj == NULL || !cJSON_IsObject(obj))
+		return true;
+
+	cJSON_ArrayForEach(child, obj) {
+		if (child->string == NULL)
+			continue;
+		bool found = false;
+		int i;
+		for (i = 0; i < n_valid; i++) {
+			if (strcmp(child->string, valid_keys[i]) == 0) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			if (*errp == NULL) {
+				char *suggestion = suggest_key(child->string,
+				    valid_keys, n_valid, aliases, n_aliases);
+				if (section_name != NULL && section_name[0] != '\0')
+					*errp = xprintf("in \"%s\": unknown field \"%s\" %s",
+					    section_name, child->string, suggestion);
+				else
+					*errp = xprintf("unknown field \"%s\" %s",
+					    child->string, suggestion);
+				free(suggestion);
+			}
+			return false;
+		}
+	}
+	return true;
+}
+
+static const char *root_keys[] = {
+	"boot", "devices", "display", "drives", "gxemul",
+	"machine", "name", "network", "serial", "slots"
+};
+static const struct key_alias root_aliases[] = {
+	{ "drive", "drives" },
+	{ "slot", "slots" },
+	{ "device", "devices" },
+	{ "net", "network" },
+	{ "displays", "display" },
+	{ "serials", "serial" },
+	{ "firmware", "boot" }
+};
+
+static const char *machine_keys[] = {
+	"byte_order", "cpu", "cpus", "emulated_hz", "memory_mb",
+	"model", "random_bootstrap_cpu", "random_memory", "serial_nr", "type"
+};
+static const struct key_alias machine_aliases[] = {
+	{ "memory", "memory_mb" },
+	{ "ram", "memory_mb" },
+	{ "mem", "memory_mb" },
+	{ "ram_mb", "memory_mb" },
+	{ "hz", "emulated_hz" },
+	{ "frequency", "emulated_hz" },
+	{ "speed", "emulated_hz" },
+	{ "endian", "byte_order" },
+	{ "endianness", "byte_order" },
+	{ "endianity", "byte_order" },
+	{ "serial_number", "serial_nr" },
+	{ "serial", "serial_nr" },
+	{ "ncpus", "cpus" },
+	{ "processors", "cpus" },
+	{ "cpu_name", "cpu" }
+};
+
+static const char *boot_keys[] = {
+	"bootarg", "bootname", "load", "netboot", "nvram",
+	"prom_emulation", "rom", "skip_failing_tests", "start_paused"
+};
+static const struct key_alias boot_aliases[] = {
+	{ "kernel", "load" },
+	{ "image", "load" },
+	{ "binary", "load" },
+	{ "file", "load" },
+	{ "files", "load" },
+	{ "prom", "prom_emulation" },
+	{ "bootargs", "bootarg" },
+	{ "boot_flags", "bootarg" },
+	{ "flags", "bootarg" },
+	{ "args", "bootarg" },
+	{ "arg", "bootarg" },
+	{ "paused", "start_paused" },
+	{ "pause", "start_paused" },
+	{ "skip_tests", "skip_failing_tests" }
+};
+
+static const char *drive_keys[] = {
+	"boot", "bus", "file", "id", "kind",
+	"overlay", "product", "readonly", "revision", "vendor"
+};
+static const struct key_alias drive_aliases[] = {
+	{ "path", "file" },
+	{ "image", "file" },
+	{ "disk", "file" },
+	{ "name", "file" },
+	{ "filename", "file" },
+	{ "type", "kind" },
+	{ "device", "kind" },
+	{ "read_only", "readonly" },
+	{ "ro", "readonly" },
+	{ "writeable", "readonly" },
+	{ "target", "id" },
+	{ "scsi_id", "id" },
+	{ "drive_id", "id" },
+	{ "unit", "id" },
+	{ "rev", "revision" }
+};
+
+static const char *display_keys[] = {
+	"cards", "enabled", "scale"
+};
+static const struct key_alias display_aliases[] = {
+	{ "enable", "enabled" },
+	{ "on", "enabled" },
+	{ "active", "enabled" },
+	{ "scaling", "scale" },
+	{ "size", "scale" },
+	{ "zoom", "scale" },
+	{ "n_cards", "cards" },
+	{ "card", "cards" },
+	{ "framebuffers", "cards" }
+};
+
+static const char *serial_keys[] = {
+	"telnet"
+};
+static const struct key_alias serial_aliases[] = {
+	{ "tcp", "telnet" },
+	{ "network", "telnet" }
+};
+
+static const char *network_keys[] = {
+	"enabled", "gateway", "ipv4", "ipv4len", "l2tp",
+	"local_port", "mac", "remotes", "tapdev", "type"
+};
+static const struct key_alias network_aliases[] = {
+	{ "enable", "enabled" },
+	{ "tap", "tapdev" },
+	{ "device", "tapdev" },
+	{ "interface", "tapdev" },
+	{ "ip", "ipv4" },
+	{ "ip_address", "ipv4" },
+	{ "netmask", "ipv4len" },
+	{ "mask", "ipv4len" },
+	{ "port", "local_port" },
+	{ "remote", "remotes" },
+	{ "peers", "remotes" },
+	{ "ethernet", "mac" },
+	{ "mac_address", "mac" }
+};
+
+static const char *l2tp_keys[] = {
+	"cookie", "counter", "enabled", "session"
+};
+static const struct key_alias l2tp_aliases[] = {
+	{ "enable", "enabled" },
+	{ "session_id", "session" },
+	{ "id", "session" },
+	{ "counters", "counter" }
+};
 
 
 static char *read_file(const char *path, char **errp)
@@ -929,38 +1206,31 @@ static char *read_file(const char *path, char **errp)
 /*
  *  machine_config_is_config_file():
  *
- *  Returns true if a file looks like a machine configuration (a JSON object
- *  with a "gxemul" key), so that "gxemul machine.json" can tell it from a
- *  program to load.
+ *  Returns true if a file looks like a machine configuration (a JSON file,
+ *  or a file whose first non-whitespace character is '{').
  */
 bool machine_config_is_config_file(const char *path)
 {
-	char *err = NULL, *text;
-	FILE *f = fopen(path, "rb");
-	cJSON *root;
-	bool r;
+	int len;
+	FILE *f;
 	int ch;
 
-	/*  A quick look first, so that a kernel isn't read for nothing:  */
+	if (path == NULL)
+		return false;
+
+	len = strlen(path);
+	if (len >= 5 && strcasecmp(path + len - 5, ".json") == 0)
+		return true;
+
+	/*  A quick look: does the file start with '{'?  */
+	f = fopen(path, "rb");
 	if (f == NULL)
 		return false;
 	do
 		ch = fgetc(f);
 	while (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n');
 	fclose(f);
-	if (ch != '{')
-		return false;
-
-	text = read_file(path, &err);
-	free(err);
-	if (text == NULL)
-		return false;
-	root = cJSON_Parse(text);
-	free(text);
-	r = cJSON_IsObject(root) &&
-	    cJSON_GetObjectItemCaseSensitive(root, "gxemul") != NULL;
-	cJSON_Delete(root);
-	return r;
+	return ch == '{';
 }
 
 
@@ -1010,12 +1280,57 @@ struct machine_config *machine_config_parse(const char *text,
 	root = cJSON_Parse(text);
 	if (root == NULL) {
 		const char *where = cJSON_GetErrorPtr();
-		int line = 1;
-		const char *p;
-		for (p = text; where != NULL && p < where && *p; p++)
-			if (*p == '\n')
-				line ++;
-		*errp = xprintf("%s, line %i: not valid JSON", path, line);
+		int line = 1, col = 1;
+		const char *p, *token;
+		char snippet[40];
+		size_t snip_len = 0;
+
+		if (where != NULL) {
+			for (p = text; p < where && *p; p++) {
+				if (*p == '\n') {
+					line++;
+					col = 1;
+				} else {
+					col++;
+				}
+			}
+
+			token = where;
+			while (*token == ' ' || *token == '\t')
+				token++;
+
+			if (*token == '\r' || *token == '\n' || *token == '\0') {
+				const char *back = where;
+				while (back > text && (*(back - 1) == ' ' ||
+				       *(back - 1) == '\t' || *(back - 1) == '\r' ||
+				       *(back - 1) == '\n'))
+					back--;
+				if (back > text) {
+					const char *start = back - 1;
+					while (start > text && *(start - 1) != ' ' &&
+					       *(start - 1) != '\t' && *(start - 1) != '\r' &&
+					       *(start - 1) != '\n')
+						start--;
+					token = start;
+				}
+			}
+
+			while (*token && *token != '\r' && *token != '\n' &&
+			       snip_len < sizeof(snippet) - 1) {
+				char ch = *token++;
+				if (ch >= 32 && ch <= 126)
+					snippet[snip_len++] = ch;
+				else
+					snippet[snip_len++] = '.';
+			}
+		}
+		snippet[snip_len] = '\0';
+		if (snip_len > 0)
+			*errp = xprintf("%s, line %i, col %i: JSON syntax error near '%s'",
+			    path, line, col, snippet);
+		else
+			*errp = xprintf("%s, line %i: JSON syntax error (unexpected end of input)",
+			    path, line);
 		return NULL;
 	}
 
@@ -1033,40 +1348,50 @@ struct machine_config *machine_config_parse(const char *text,
 		c->dir = dirname_of(c->path);
 	}
 
-	get_int(root, "gxemul", &version, &err);
+	check_unknown_fields(root, "", root_keys,
+	    sizeof(root_keys) / sizeof(root_keys[0]),
+	    root_aliases, sizeof(root_aliases) / sizeof(root_aliases[0]), &err);
+
+	get_int(root, "", "gxemul", &version, &err);
 	if (err == NULL && version > CONFIG_VERSION)
 		err = xprintf("written by a newer GXemul (version %i)",
 		    version);
-	get_str(root, "name", &c->name, &err);
+	get_str(root, "", "name", &c->name, &err);
 
 	if ((o = section(root, "machine", &err)) != NULL) {
 		int hz = 0;
-		get_str(o, "type", &c->type, &err);
-		get_str(o, "model", &c->model, &err);
-		get_str(o, "cpu", &c->cpu, &err);
-		get_int(o, "cpus", &c->ncpus, &err);
-		get_int(o, "memory_mb", &c->memory_mb, &err);
-		get_int(o, "emulated_hz", &hz, &err);
+		check_unknown_fields(o, "machine", machine_keys,
+		    sizeof(machine_keys) / sizeof(machine_keys[0]),
+		    machine_aliases, sizeof(machine_aliases) / sizeof(machine_aliases[0]), &err);
+		get_str(o, "machine", "type", &c->type, &err);
+		get_str(o, "machine", "model", &c->model, &err);
+		get_str(o, "machine", "cpu", &c->cpu, &err);
+		get_int(o, "machine", "cpus", &c->ncpus, &err);
+		get_int(o, "machine", "memory_mb", &c->memory_mb, &err);
+		get_int(o, "machine", "emulated_hz", &hz, &err);
 		c->emulated_hz = hz;
-		get_str(o, "byte_order", &c->byte_order, &err);
-		get_bool(o, "random_memory", &c->random_memory, &err);
-		get_bool(o, "random_bootstrap_cpu",
+		get_str(o, "machine", "byte_order", &c->byte_order, &err);
+		get_bool(o, "machine", "random_memory", &c->random_memory, &err);
+		get_bool(o, "machine", "random_bootstrap_cpu",
 		    &c->random_bootstrap_cpu, &err);
-		get_int(o, "serial_nr", &c->serial_nr, &err);
+		get_int(o, "machine", "serial_nr", &c->serial_nr, &err);
 	}
 
 	if ((o = section(root, "boot", &err)) != NULL) {
-		get_bool(o, "prom_emulation", &c->prom_emulation, &err);
-		get_str(o, "rom", &c->rom, &err);
-		get_list(o, "load", &c->n_load, &c->load, &err);
-		get_str(o, "bootname", &c->bootname, &err);
+		check_unknown_fields(o, "boot", boot_keys,
+		    sizeof(boot_keys) / sizeof(boot_keys[0]),
+		    boot_aliases, sizeof(boot_aliases) / sizeof(boot_aliases[0]), &err);
+		get_bool(o, "boot", "prom_emulation", &c->prom_emulation, &err);
+		get_str(o, "boot", "rom", &c->rom, &err);
+		get_list(o, "boot", "load", &c->n_load, &c->load, &err);
+		get_str(o, "boot", "bootname", &c->bootname, &err);
 		v = cJSON_GetObjectItemCaseSensitive(o, "bootarg");
 		if (v != NULL && !cJSON_IsNull(v))
-			get_str(o, "bootarg", &c->bootarg, &err);
-		get_bool(o, "netboot", &c->force_netboot, &err);
-		get_bool(o, "start_paused", &c->start_paused, &err);
-		get_str(o, "nvram", &c->nvram, &err);
-		get_bool(o, "skip_failing_tests", &c->skip_failing_tests,
+			get_str(o, "boot", "bootarg", &c->bootarg, &err);
+		get_bool(o, "boot", "netboot", &c->force_netboot, &err);
+		get_bool(o, "boot", "start_paused", &c->start_paused, &err);
+		get_str(o, "boot", "nvram", &c->nvram, &err);
+		get_bool(o, "boot", "skip_failing_tests", &c->skip_failing_tests,
 		    &err);
 	}
 
@@ -1082,40 +1407,81 @@ struct machine_config *machine_config_parse(const char *text,
 					    "a list of objects");
 				break;
 			}
+			check_unknown_fields(e, "drives", drive_keys,
+			    sizeof(drive_keys) / sizeof(drive_keys[0]),
+			    drive_aliases, sizeof(drive_aliases) / sizeof(drive_aliases[0]), &err);
 			machine_config_add_drive(c, "", MC_DRIVE_DISK, -1);
 			d = &c->drives[c->n_drives - 1];
-			get_str(e, "file", &d->file, &err);
+			get_str(e, "drives", "file", &d->file, &err);
 			s = xstrdup("disk");
-			get_str(e, "kind", &s, &err);
+			get_str(e, "drives", "kind", &s, &err);
 			if ((d->kind = name_index(s, kind_names, 4)) < 0) {
-				if (err == NULL)
-					err = xprintf("unknown drive kind "
-					    "\"%s\"", s);
+				if (err == NULL) {
+					char *suggest = NULL;
+					if (strcasecmp(s, "cd") == 0 || strcasecmp(s, "iso") == 0)
+						suggest = xstrdup(" (did you mean \"cdrom\"?)");
+					else if (strcasecmp(s, "hdd") == 0 || strcasecmp(s, "harddisk") == 0)
+						suggest = xstrdup(" (did you mean \"disk\"?)");
+					else {
+						int bd = 999, k;
+						const char *bm = NULL;
+						for (k = 0; k < 4; k++) {
+							int dist = levenshtein_distance(s, kind_names[k]);
+							if (dist < bd) {
+								bd = dist;
+								bm = kind_names[k];
+							}
+						}
+						if (bm != NULL && bd <= 2)
+							suggest = xprintf(" (did you mean \"%s\"?)", bm);
+					}
+					err = xprintf("in \"drives\": unknown drive kind \"%s\"%s "
+					    "(valid kinds: disk, cdrom, tape, floppy)",
+					    s, suggest != NULL ? suggest : "");
+					free(suggest);
+				}
 				d->kind = MC_DRIVE_DISK;
 			}
 			machine_config_set(&s, "default");
-			get_str(e, "bus", &s, &err);
+			get_str(e, "drives", "bus", &s, &err);
 			if ((d->bus = name_index(s, bus_names, 3)) < 0) {
-				if (err == NULL)
-					err = xprintf("unknown bus \"%s\"", s);
+				if (err == NULL) {
+					const char *bm = NULL;
+					int bd = 999, k;
+					for (k = 0; k < 3; k++) {
+						int dist = levenshtein_distance(s, bus_names[k]);
+						if (dist < bd) {
+							bd = dist;
+							bm = bus_names[k];
+						}
+					}
+					char *suggest = (bm != NULL && bd <= 2) ?
+					    xprintf(" (did you mean \"%s\"?)", bm) : xstrdup("");
+					err = xprintf("in \"drives\": unknown bus \"%s\"%s "
+					    "(valid buses: default, scsi, ide)", s, suggest);
+					free(suggest);
+				}
 				d->bus = MC_BUS_DEFAULT;
 			}
 			free(s);
 			s = NULL;
-			get_int(e, "id", &d->id, &err);
-			get_bool(e, "readonly", &d->readonly, &err);
-			get_bool(e, "overlay", &d->overlay, &err);
-			get_bool(e, "boot", &d->boot, &err);
-			get_str(e, "vendor", &d->vendor, &err);
-			get_str(e, "product", &d->product, &err);
-			get_str(e, "revision", &d->revision, &err);
+			get_int(e, "drives", "id", &d->id, &err);
+			get_bool(e, "drives", "readonly", &d->readonly, &err);
+			get_bool(e, "drives", "overlay", &d->overlay, &err);
+			get_bool(e, "drives", "boot", &d->boot, &err);
+			get_str(e, "drives", "vendor", &d->vendor, &err);
+			get_str(e, "drives", "product", &d->product, &err);
+			get_str(e, "drives", "revision", &d->revision, &err);
 		}
 	}
 
 	if ((o = section(root, "display", &err)) != NULL) {
-		get_bool(o, "enabled", &c->display, &err);
-		get_int(o, "scale", &c->scale, &err);
-		get_int(o, "cards", &c->gfx_cards, &err);
+		check_unknown_fields(o, "display", display_keys,
+		    sizeof(display_keys) / sizeof(display_keys[0]),
+		    display_aliases, sizeof(display_aliases) / sizeof(display_aliases[0]), &err);
+		get_bool(o, "display", "enabled", &c->display, &err);
+		get_int(o, "display", "scale", &c->scale, &err);
+		get_int(o, "display", "cards", &c->gfx_cards, &err);
 
 		/*  (Earlier, 1 = actual size, 2 = half, -2 = double.)  */
 		if (c->scale == 1)
@@ -1126,8 +1492,12 @@ struct machine_config *machine_config_parse(const char *text,
 			c->scale = 200;
 	}
 
-	if ((o = section(root, "serial", &err)) != NULL)
-		get_bool(o, "telnet", &c->serial_telnet, &err);
+	if ((o = section(root, "serial", &err)) != NULL) {
+		check_unknown_fields(o, "serial", serial_keys,
+		    sizeof(serial_keys) / sizeof(serial_keys[0]),
+		    serial_aliases, sizeof(serial_aliases) / sizeof(serial_aliases[0]), &err);
+		get_bool(o, "serial", "telnet", &c->serial_telnet, &err);
+	}
 
 	if ((o = section(root, "slots", &err)) != NULL) {
 		cJSON_ArrayForEach(e, o) {
@@ -1136,7 +1506,7 @@ struct machine_config *machine_config_parse(const char *text,
 			if (*end != '\0' || slot < 0 || slot >= MC_MAX_SLOTS ||
 			    !cJSON_IsString(e)) {
 				if (err == NULL)
-					err = xprintf("bad slot \"%s\" (slots "
+					err = xprintf("in \"slots\": bad slot \"%s\" (slots "
 					    "are 0..%i, with a file name)",
 					    e->string, MC_MAX_SLOTS - 1);
 				continue;
@@ -1150,21 +1520,27 @@ struct machine_config *machine_config_parse(const char *text,
 		char *type = NULL;
 		bool l2tp = false;
 		int t;
-		get_bool(o, "enabled", &c->net, &err);
-		get_str(o, "type", &type, &err);
-		get_str(o, "ipv4", &c->net_ipv4, &err);
-		get_int(o, "ipv4len", &c->net_ipv4len, &err);
-		get_int(o, "local_port", &c->net_local_port, &err);
-		get_list(o, "remotes", &c->n_net_remotes, &c->net_remotes,
+		check_unknown_fields(o, "network", network_keys,
+		    sizeof(network_keys) / sizeof(network_keys[0]),
+		    network_aliases, sizeof(network_aliases) / sizeof(network_aliases[0]), &err);
+		get_bool(o, "network", "enabled", &c->net, &err);
+		get_str(o, "network", "type", &type, &err);
+		get_str(o, "network", "ipv4", &c->net_ipv4, &err);
+		get_int(o, "network", "ipv4len", &c->net_ipv4len, &err);
+		get_int(o, "network", "local_port", &c->net_local_port, &err);
+		get_list(o, "network", "remotes", &c->n_net_remotes, &c->net_remotes,
 		    &err);
-		get_str(o, "tapdev", &c->net_tapdev, &err);
-		get_str(o, "mac", &c->net_mac, &err);
-		get_bool(o, "gateway", &c->net_gateway, &err);
+		get_str(o, "network", "tapdev", &c->net_tapdev, &err);
+		get_str(o, "network", "mac", &c->net_mac, &err);
+		get_bool(o, "network", "gateway", &c->net_gateway, &err);
 		if ((v = section(o, "l2tp", &err)) != NULL) {
-			get_bool(v, "enabled", &l2tp, &err);
-			get_int(v, "session", &session, &err);
-			get_str(v, "cookie", &c->net_l2tp_cookie, &err);
-			get_bool(v, "counter", &c->net_l2tp_counter, &err);
+			check_unknown_fields(v, "network.l2tp", l2tp_keys,
+			    sizeof(l2tp_keys) / sizeof(l2tp_keys[0]),
+			    l2tp_aliases, sizeof(l2tp_aliases) / sizeof(l2tp_aliases[0]), &err);
+			get_bool(v, "network.l2tp", "enabled", &l2tp, &err);
+			get_int(v, "network.l2tp", "session", &session, &err);
+			get_str(v, "network.l2tp", "cookie", &c->net_l2tp_cookie, &err);
+			get_bool(v, "network.l2tp", "counter", &c->net_l2tp_counter, &err);
 		}
 		c->net_l2tp_session = session;
 
@@ -1174,9 +1550,32 @@ struct machine_config *machine_config_parse(const char *text,
 					break;
 			if (t < MC_N_NET_TYPES)
 				c->net_type = t;
-			else if (err == NULL)
-				err = xprintf("the network type \"%s\" isn't "
-				    "simulated, bridged, udp, or l2tpv3", type);
+			else if (err == NULL) {
+				char *suggest = NULL;
+				if (strcasecmp(type, "l2tp") == 0)
+					suggest = xstrdup(" (did you mean \"l2tpv3\"?)");
+				else if (strcasecmp(type, "nat") == 0)
+					suggest = xstrdup(" (did you mean \"simulated\"?)");
+				else if (strcasecmp(type, "bridge") == 0)
+					suggest = xstrdup(" (did you mean \"bridged\"?)");
+				else {
+					int bd = 999, k;
+					const char *bm = NULL;
+					for (k = 0; k < MC_N_NET_TYPES; k++) {
+						int dist = levenshtein_distance(type, net_type_names[k]);
+						if (dist < bd) {
+							bd = dist;
+							bm = net_type_names[k];
+						}
+					}
+					if (bm != NULL && bd <= 2)
+						suggest = xprintf(" (did you mean \"%s\"?)", bm);
+				}
+				err = xprintf("in \"network\": unknown network type \"%s\"%s "
+				    "(valid types: simulated, bridged, udp, l2tpv3)",
+				    type, suggest != NULL ? suggest : "");
+				free(suggest);
+			}
 			free(type);
 		} else if (c->net_tapdev[0] != '\0')
 			c->net_type = MC_NET_BRIDGED;
@@ -1186,7 +1585,7 @@ struct machine_config *machine_config_parse(const char *text,
 			c->net_type = MC_NET_SIMULATED;
 	}
 
-	get_list(root, "devices", &c->n_devices, &c->devices, &err);
+	get_list(root, "", "devices", &c->n_devices, &c->devices, &err);
 
 	cJSON_Delete(root);
 
@@ -1411,6 +1810,8 @@ static bool lookup_machine(const char *type, const char *model,
 	struct machine_entry *me;
 	int i, j, k;
 
+	*errp = NULL;
+
 	for (me = first_machine_entry; me != NULL; me = me->next)
 		for (i = 0; i < me->n_aliases; i++) {
 			if (strcasecmp(me->aliases[i], type) != 0)
@@ -1427,14 +1828,72 @@ static bool lookup_machine(const char *type, const char *model,
 						    machine_subtype;
 						return true;
 					}
-			*errp = model[0] ? xprintf("unknown model \"%s\" for "
-			    "machine type \"%s\"", model, type) : xprintf(
-			    "machine type \"%s\" needs a model", type);
+
+			/* Model not matched: build list of valid models */
+			char valid_models[1024] = "";
+			const char *best_model = NULL;
+			int best_dist = 999;
+			int mlen = strlen(model);
+
+			for (j = 0; j < me->n_subtypes; j++) {
+				if (j > 0)
+					strncat(valid_models, ", ",
+					    sizeof(valid_models) - strlen(valid_models) - 1);
+				if (me->subtype[j]->n_aliases > 0)
+					strncat(valid_models, me->subtype[j]->aliases[0],
+					    sizeof(valid_models) - strlen(valid_models) - 1);
+
+				for (k = 0; k < me->subtype[j]->n_aliases; k++) {
+					int d = levenshtein_distance(model, me->subtype[j]->aliases[k]);
+					if (d < best_dist) {
+						best_dist = d;
+						best_model = me->subtype[j]->aliases[k];
+					}
+				}
+			}
+
+			int max_d = (mlen >= 7) ? 3 : 2;
+			char *hint = (best_model != NULL && best_dist <= max_d && model[0] != '\0') ?
+			    xprintf(" (did you mean \"%s\"?)", best_model) : xstrdup("");
+
+			if (model[0] != '\0')
+				*errp = xprintf("unknown model \"%s\" for machine type \"%s\"%s (valid models: %s)",
+				    model, type, hint, valid_models);
+			else
+				*errp = xprintf("machine type \"%s\" needs a model (valid models: %s)",
+				    type, valid_models);
+			free(hint);
 			return false;
 		}
 
-	*errp = type[0] ? xprintf("unknown machine type \"%s\"", type) :
-	    xstrdup("no machine type");
+	if (type[0] != '\0') {
+		const char *best_type = NULL;
+		int best_dist = 999;
+		int tlen = strlen(type);
+
+		for (me = first_machine_entry; me != NULL; me = me->next) {
+			for (i = 0; i < me->n_aliases; i++) {
+				int d = levenshtein_distance(type, me->aliases[i]);
+				if (d < best_dist) {
+					best_dist = d;
+					best_type = me->aliases[i];
+				}
+			}
+		}
+
+		int max_d = (tlen >= 7) ? 3 : 2;
+		if (best_type != NULL && best_dist <= max_d)
+			*errp = xprintf("unknown machine type \"%s\" (did you mean \"%s\"?); "
+			    "run gxemul -H for a list of available machine types",
+			    type, best_type);
+		else
+			*errp = xprintf("unknown machine type \"%s\"; "
+			    "run gxemul -H for a list of available machine types",
+			    type);
+	} else {
+		*errp = xstrdup("no machine type specified in configuration; "
+		    "run gxemul -H for a list of available machine types");
+	}
 	return false;
 }
 
@@ -1559,6 +2018,12 @@ char *machine_config_check_ex(const struct machine_config *c,
 	if (!lookup_machine(c->type, c->model, &t, &st, &err))
 		return err;
 
+	if (c->byte_order[0] != '\0' &&
+	    strcasecmp(c->byte_order, "big") != 0 &&
+	    strcasecmp(c->byte_order, "little") != 0)
+		return xprintf("unknown byte order \"%s\" (valid options: big, little)",
+		    c->byte_order);
+
 	if (c->memory_mb < 0)
 		return xstrdup("the memory size can't be negative");
 	if (c->net_mac[0]) {
@@ -1635,8 +2100,10 @@ char *machine_config_check_ex(const struct machine_config *c,
 			}
 			free(f);
 		}
-		if (d->id > 7)
-			return xprintf("drive %i: IDs are 0..7", i + 1);
+		if (d->id < -1 || d->id > 7)
+			return xprintf("drive %i: ID must be 0..7 or -1 (automatic)", i + 1);
+		if (d->bus == MC_BUS_IDE && d->id > 1)
+			return xprintf("drive %i: IDE drive ID must be 0 or 1", i + 1);
 		for (j = 0; j < i; j++)
 			if (d->id >= 0 && c->drives[j].id == d->id &&
 			    c->drives[j].bus == d->bus &&
