@@ -537,6 +537,7 @@ struct vr41xx_data *dev_vr41xx_init(struct machine *machine,
 
 /*  lk201.c:  */
 struct lk201_data {
+	int			subsys;
         int                     use_fb;
 	int			kbd_present;	/*  answers commands without fb  */
 	int			console_handle;

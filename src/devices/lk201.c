@@ -41,11 +41,6 @@
 #include "thirdparty/dc7085.h"	/*  for port names  */
 #include "thirdparty/lk201.h"
 
-static int lk201_subsys = -1;
-
-
-// #define debug fatal
-
 
 /*  LK201 key codes which aren't in thirdparty/lk201.h:  */
 #define	LK_KEY_FIND		0x8a
@@ -466,9 +461,11 @@ static int lk201_send_mouse_update_sequence(struct lk201_data *d, int xdelta,
 
 	default:
 		/*  TODO:  prompt mode and perhaps more stuff  */
-		fatal("[ lk201: mouse mode 0x%02x unknown: TODO ]\n",
-		    d->mouse_mode);
-		exit(1);
+		if (d->subsys <= 0)
+			d->subsys = debugmsg_register_subsystem("lk201");
+		debugmsg(d->subsys, "lk201", VERBOSITY_WARNING,
+		    "mouse mode 0x%02x unknown: TODO\n", d->mouse_mode);
+		return 0;
 	}
 
 	return 1;
@@ -606,8 +603,8 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 
 void lk201_tx_data(struct lk201_data *d, int port, int idata)
 {
-	if (lk201_subsys < 0)
-		lk201_subsys = debugmsg_register_subsystem("lk201");
+	if (d->subsys <= 0)
+		d->subsys = debugmsg_register_subsystem("lk201");
 
 	switch (port) {
 	case DCKBD_PORT:		/*  port 0  */
@@ -615,7 +612,7 @@ void lk201_tx_data(struct lk201_data *d, int port, int idata)
 			/*  Simply print the character to stdout:  */
 			console_putchar(d->console_handle, idata);
 		} else {
-			debugmsg(lk201_subsys, "lk201", VERBOSITY_DEBUG,
+			debugmsg(d->subsys, "lk201", VERBOSITY_DEBUG,
 			    "writing data to KBD: 0x%02x\n", idata);
 			switch (idata) {
 			case LK_LED_DISABLE:	/*  0x11  */
@@ -673,7 +670,7 @@ void lk201_tx_data(struct lk201_data *d, int port, int idata)
 				    0x00, DCKBD_PORT);
 				break;
 			default:
-				debugmsg(lk201_subsys, "lk201", VERBOSITY_WARNING,
+				debugmsg(d->subsys, "lk201", VERBOSITY_WARNING,
 				    "unimplemented keyboard control: 0x%x\n",
 				    idata);
 			}
@@ -683,7 +680,7 @@ void lk201_tx_data(struct lk201_data *d, int port, int idata)
 		switch (idata) {
 		case MOUSE_INCREMENTAL:
 			d->mouse_mode = MOUSE_INCREMENTAL;
-			debugmsg(lk201_subsys, "lk201", VERBOSITY_DEBUG,
+			debugmsg(d->subsys, "lk201", VERBOSITY_DEBUG,
 			    "writing data to MOUSE: 0x%x (incremental mode)\n",
 			    idata);
 			break;
@@ -696,7 +693,7 @@ void lk201_tx_data(struct lk201_data *d, int port, int idata)
 			 *        0x2, according to NetBSD/pmax. But the
 			 *        other bits and bytes?
 			 */
-			debugmsg(lk201_subsys, "lk201", VERBOSITY_DEBUG,
+			debugmsg(d->subsys, "lk201", VERBOSITY_DEBUG,
 			    "writing data to MOUSE: 0x%x (mouse self-test request)\n",
 			    idata);
 			d->add_to_rx_queue(d->add_data,
@@ -706,7 +703,7 @@ void lk201_tx_data(struct lk201_data *d, int port, int idata)
 			d->add_to_rx_queue(d->add_data, 0x00, DCMOUSE_PORT);
 			break;
 		default:
-			debugmsg(lk201_subsys, "lk201", VERBOSITY_WARNING,
+			debugmsg(d->subsys, "lk201", VERBOSITY_WARNING,
 			    "writing data to MOUSE: 0x%x (UNKNOWN byte; TODO)\n",
 			    idata);
 		}
@@ -736,9 +733,7 @@ void lk201_init(struct lk201_data *d, int use_fb,
 	int console_handle, void *add_data)
 {
 	memset(d, 0, sizeof(struct lk201_data));
-
-	if (lk201_subsys < 0)
-		lk201_subsys = debugmsg_register_subsystem("lk201");
+	d->subsys = debugmsg_register_subsystem("lk201");
 
 	d->space_available_in_queue = space_available_in_queue;
 	d->add_to_rx_queue = add_to_rx_queue;
