@@ -1669,6 +1669,7 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	case SCSICMD_MODE_SELECT:
+	case SCSICMD_MODE_SELECT10:
 		/*
 		 *  TODO:
 		 *
@@ -1677,7 +1678,18 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		 */
 
 		if (xferp->data_out_offset == 0) {
-			xferp->data_out_len = 12;	/*  TODO  */
+			size_t param_len;
+			if (xferp->cmd[0] == SCSICMD_MODE_SELECT)
+				param_len = xferp->cmd_len > 4 ? xferp->cmd[4] : 12;
+			else
+				param_len = xferp->cmd_len >= 9 ?
+				    (((size_t)xferp->cmd[7] << 8) | xferp->cmd[8]) : 0;
+
+			if (param_len == 0) {
+				diskimage__return_default_status_and_message(xferp);
+				break;
+			}
+			xferp->data_out_len = param_len;
 			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
 			    "id=%i: MODE_SELECT data_out == NULL, wanting %i bytes\n",
 			    id, (int)xferp->data_out_len);
@@ -1689,7 +1701,7 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		/*  A block descriptor: the block length (e.g. 512 or 2048 for
 		    a CD-ROM, or for a tape's fixed block mode), or 0 (a tape's
 		    variable mode, which keeps the fixed length):  */
-		if (xferp->data_out_len >= 12 &&
+		if (xferp->data_out != NULL && xferp->data_out_len >= 12 &&
 		    xferp->data_out[3] == 0x08) {
 			int len = (xferp->data_out[9] << 16) +
 			    (xferp->data_out[10] << 8) + xferp->data_out[11];
@@ -1700,7 +1712,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		} else
 		/*  Set sector size to 2048:  */
 		/*  00 05 00 08 00 03 ca 40 00 00 08 00  */
-		if (xferp->data_out[0] == 0x00 &&
+		if (xferp->data_out != NULL && xferp->data_out_len >= 12 &&
+		    xferp->data_out[0] == 0x00 &&
 		    xferp->data_out[1] == 0x05 &&
 		    xferp->data_out[2] == 0x00 &&
 		    xferp->data_out[3] == 0x08) {

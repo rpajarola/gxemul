@@ -208,6 +208,7 @@ extern unsigned long diskimage_media_generation;
 #define	SCSICMD_WRITE			0x0a
 #define	SCSICMD_WRITE_10		0x2a
 #define	SCSICMD_MODE_SELECT		0x15
+#define	SCSICMD_MODE_SELECT10		0x55
 #define	SCSICMD_MODE_SENSE		0x1a
 #define	SCSICMD_START_STOP_UNIT		0x1b
 #define	SCSICMD_PREVENT_ALLOW_REMOVE	0x1e

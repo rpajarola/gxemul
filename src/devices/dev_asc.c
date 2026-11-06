@@ -332,8 +332,8 @@ static void dev_asc_fifo_write(struct asc_data *d, unsigned char data)
 static void dev_asc_newxfer(struct asc_data *d)
 {
 	if (d->xferp != NULL) {
-		printf("WARNING! dev_asc_newxfer(): freeing previous"
-		    " transfer\n");
+		debugmsg(d->subsys, "asc", VERBOSITY_WARNING,
+		    "dev_asc_newxfer: freeing previous transfer\n");
 		scsi_transfer_free(d->xferp);
 		d->xferp = NULL;
 	}
@@ -505,9 +505,11 @@ fatal("TODO.......asdgasin\n");
 				len2 = 65536;
 
 			if (len == 0) {
-				fprintf(stderr, "d->xferp->data_out_len == "
-				    "0 ?\n");
-				exit(1);
+				debugmsg(d->subsys, "asc", VERBOSITY_WARNING,
+				    "dev_asc_transfer: data_out_len is 0, using len2=%i\n",
+				    len2);
+				len = len2;
+				d->xferp->data_out_len = len2;
 			}
 
 			/*  TODO: Make sure that len2 doesn't go outside
@@ -1281,7 +1283,52 @@ DEVICE_ACCESS(asc)
 				break;
 			}
 
-			dev_asc_newxfer(d);
+			if (d->live_phase && d->xferp != NULL &&
+			    d->cur_phase == PHASE_DATA_OUT) {
+				size_t count = d->reg_wo[NCR_TCL] +
+				    d->reg_wo[NCR_TCM] * 256;
+				size_t pad, alloc_len;
+
+				if (count == 0)
+					count = 65536;
+
+				alloc_len = d->xferp->data_out_len;
+				if (alloc_len == 0)
+					alloc_len = count;
+
+				if (d->xferp->data_out == NULL) {
+					scsi_transfer_allocbuf(&d->xferp->data_out_len,
+					    &d->xferp->data_out, alloc_len, 1);
+				}
+
+				pad = count;
+				if (d->xferp->data_out_offset + pad > d->xferp->data_out_len)
+					pad = d->xferp->data_out_len - d->xferp->data_out_offset;
+
+				memset(d->xferp->data_out + d->xferp->data_out_offset, 0, pad);
+				d->xferp->data_out_offset += pad;
+
+				count -= pad;
+
+				if (d->xferp->data_out_offset >= d->xferp->data_out_len) {
+					diskimage_scsicommand(cpu, (d->reg_wo[NCR_SELID] & 7)
+					    + d->target_offset, DISKIMAGE_SCSI, d->xferp);
+					d->cur_phase = PHASE_STATUS;
+				}
+
+				d->reg_ro[NCR_TCL] = count & 255;
+				d->reg_ro[NCR_TCM] = (count >> 8) & 255;
+				if (count == 0)
+					d->reg_ro[NCR_STAT] |= NCRSTAT_TC;
+				d->reg_ro[NCR_STAT] |= NCRSTAT_INT;
+				d->reg_ro[NCR_INTR] |= NCRINTR_BS;
+				d->reg_ro[NCR_STAT] = (d->reg_ro[NCR_STAT] &
+				    ~7) | d->cur_phase;
+				break;
+			}
+
+			if (d->xferp == NULL)
+				dev_asc_newxfer(d);
 			{
 				int ok;
 
