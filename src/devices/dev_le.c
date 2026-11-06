@@ -327,16 +327,12 @@ static void le_chip_init(struct le_data *d)
 	d->tdra += ((le_read_16bit(d, d->init_block_addr + 22) & 0xff) << 16);
 	d->tlen = 1 << ((le_read_16bit(d, d->init_block_addr + 22) >> 13) & 7);
 
-	debug("[ le: DEBUG: mode                 %04x ]\n", d->mode);
-	debug("[ le: DEBUG: padr    %02x:%02x:%02x:%02x:%02x:%02x ]\n",
-	      macaddr[0], macaddr[1], macaddr[2],
-	      macaddr[3], macaddr[4], macaddr[5]);
-	debug("[ le: DEBUG: ladrf %04x:%04x:%04x:%04x ]\n",
-	      d->ladrf[0], d->ladrf[1], d->ladrf[2], d->ladrf[3]);
-	debug("[ le: DEBUG: rdra               %06llx ]\n", d->rdra);
-	debug("[ le: DEBUG: rlen                  %3i ]\n", d->rlen);
-	debug("[ le: DEBUG: tdra               %06llx ]\n", d->tdra);
-	debug("[ le: DEBUG: tlen                  %3i ]\n", d->tlen);
+	debugmsg(d->subsys, "le", VERBOSITY_DEBUG,
+	    "init: mode %04x, padr %02x:%02x:%02x:%02x:%02x:%02x, ladrf %04x:%04x:%04x:%04x, rdra 0x%06llx, rlen %3i, tdra 0x%06llx, tlen %3i\n",
+	    d->mode, macaddr[0], macaddr[1], macaddr[2],
+	    macaddr[3], macaddr[4], macaddr[5],
+	    d->ladrf[0], d->ladrf[1], d->ladrf[2], d->ladrf[3],
+	    (long long)d->rdra, d->rlen, (long long)d->tdra, d->tlen);
 
 	/*  Set TXON and RXON, unless they are disabled by 'mode':  */
 	if (d->mode & LE_MODE_DTX)
@@ -919,22 +915,24 @@ DEVICE_ACCESS(le_sram)
 	if (relative_addr < SRAM_SIZE && relative_addr + len <= SRAM_SIZE) {
 		if (writeflag == MEM_READ) {
 			memcpy(data, d->sram + relative_addr, len);
-			if (!quiet_mode) {
-				debug("[ le: read from SRAM offset 0x%05x:",
-				    relative_addr);
-				for (i=0; i<len; i++)
-					debug(" %02x", data[i]);
-				debug(" ]\n");
+			if (debugmsg_is_active(d->subsys, VERBOSITY_DEBUG)) {
+				char hexbuf[1024];
+				size_t hpos = 0;
+				for (i = 0; (size_t)i < len && hpos + 4 < sizeof(hexbuf); i++)
+					hpos += snprintf(hexbuf + hpos, sizeof(hexbuf) - hpos, " %02x", data[i]);
+				debugmsg(d->subsys, "le", VERBOSITY_DEBUG,
+				    "read from SRAM offset 0x%05x:%s\n", (int)relative_addr, hexbuf);
 			}
 			retval = 9;	/*  9 cycles  */
 		} else {
 			memcpy(d->sram + relative_addr, data, len);
-			if (!quiet_mode) {
-				debug("[ le: write to SRAM offset 0x%05x:",
-				    relative_addr);
-				for (i=0; i<len; i++)
-					debug(" %02x", data[i]);
-				debug(" ]\n");
+			if (debugmsg_is_active(d->subsys, VERBOSITY_DEBUG)) {
+				char hexbuf[1024];
+				size_t hpos = 0;
+				for (i = 0; (size_t)i < len && hpos + 4 < sizeof(hexbuf); i++)
+					hpos += snprintf(hexbuf + hpos, sizeof(hexbuf) - hpos, " %02x", data[i]);
+				debugmsg(d->subsys, "le", VERBOSITY_DEBUG,
+				    "write to SRAM offset 0x%05x:%s\n", (int)relative_addr, hexbuf);
 			}
 			retval = 6;	/*  6 cycles  */
 		}

@@ -55,6 +55,8 @@ extern int quiet_mode;
 struct bt459_data {
 	uint32_t	bt459_reg[DEV_BT459_NREGS];
 
+	int		subsys;
+
 	unsigned char	cur_addr_hi;
 	unsigned char	cur_addr_lo;
 
@@ -238,9 +240,8 @@ static void bt459_update_cursor_position(struct bt459_data *d,
 		d->cursor_x = new_cursor_x;
 		d->cursor_y = new_cursor_y;
 
-		if (!quiet_mode)
-			debug("[ bt459: cursor = %03i,%03i ]\n",
-			    d->cursor_x, d->cursor_y);
+		debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG,
+		    "cursor = %03i,%03i\n", d->cursor_x, d->cursor_y);
 
 		on = d->cursor_on;
 		if (d->cursor_xsize == 0 || d->cursor_ysize == 0)
@@ -366,9 +367,7 @@ DEVICE_ACCESS(bt459_irq)
 //	if (writeflag == MEM_WRITE)
 //		idata = memory_readmax64(cpu, data, len);
 
-#ifdef BT459_DEBUG
-	fatal("[ bt459: IRQ ack ]\n");
-#endif
+	debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG, "IRQ ack\n");
 
 	d->interrupts_enable = 1;
 
@@ -394,11 +393,10 @@ DEVICE_ACCESS(bt459)
 	if (d->type == BT459_BA || d->type == BT459_BBA)
 		relative_addr &= 0xc;
 
-#ifdef BT459_DEBUG
 	if (writeflag == MEM_WRITE)
-		fatal("[ bt459: write to addr 0x%02x: %08x ]\n",
+		debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG,
+		    "write to addr 0x%02x: 0x%08x\n",
 		    (int)relative_addr, (int)idata);
-#endif
 
 	/*
 	 *  Vertical retrace interrupts are acked either by
@@ -429,38 +427,33 @@ DEVICE_ACCESS(bt459)
 	switch (relative_addr) {
 	case 0x00:		/*  Low byte of address:  */
 		if (writeflag == MEM_WRITE) {
-			if (!quiet_mode)
-				debug("[ bt459: write to Low Address Byte, "
-				    "0x%02x ]\n", (int)idata);
+			debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG,
+			    "write to Low Address Byte, 0x%02x\n", (int)idata);
 			d->cur_addr_lo = idata;
 			d->palette_sub_offset = 0;
 		} else {
 			odata = d->cur_addr_lo;
-			if (!quiet_mode)
-				debug("[ bt459: read from Low Address Byte: "
-				    "0x%0x ]\n", (int)odata);
+			debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG,
+			    "read from Low Address Byte: 0x%02x\n", (int)odata);
 		}
 		break;
 	case 0x04:		/*  High byte of address:  */
 		if (writeflag == MEM_WRITE) {
-			if (!quiet_mode)
-				debug("[ bt459: write to High Address Byte, "
-				    "0x%02x ]\n", (int)idata);
+			debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG,
+			    "write to High Address Byte, 0x%02x\n", (int)idata);
 			d->cur_addr_hi = idata;
 			d->palette_sub_offset = 0;
 		} else {
 			odata = d->cur_addr_hi;
-			if (!quiet_mode)
-				debug("[ bt459: read from High Address Byte: "
-				    "0x%0x ]\n", (int)odata);
+			debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG,
+			    "read from High Address Byte: 0x%02x\n", (int)odata);
 		}
 		break;
 	case 0x08:		/*  Register access:  */
 		if (writeflag == MEM_WRITE) {
-			if (!quiet_mode)
-				debug("[ bt459: write to BT459 register "
-				    "0x%04x, value 0x%02x ]\n", btaddr,
-				    (int)idata);
+			debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG,
+			    "write to BT459 register 0x%04x, value 0x%02x\n",
+			    btaddr, (int)idata);
 			if ((btaddr >= BT459_REG_CCOLOR_1 &&
 			    btaddr <= BT459_REG_CCOLOR_3) ||
 			    (btaddr >= 0x100 && btaddr <= 0x10f)) {
@@ -492,13 +485,13 @@ DEVICE_ACCESS(bt459)
 				case 0:	d->video_on = 0;
 					memset(d->rgb_palette, 0, 256*3);
 					d->need_to_redraw_whole_screen = 1;
-					debug("[ bt459: video OFF ]\n");
+					debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG, "video OFF\n");
 					break;
 				default:d->video_on = 1;
 					memcpy(d->rgb_palette,
 					    d->local_rgb_palette, 256*3);
 					d->need_to_redraw_whole_screen = 1;
-					debug("[ bt459: video ON ]\n");
+					debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG, "video ON\n");
 				}
 				break;
 			case BT459_REG_CCR:
@@ -508,16 +501,16 @@ DEVICE_ACCESS(bt459)
 				case 0xc0:
 				case 0xc1:	d->cursor_on = 1; break;
 				default:
-					fatal("[ bt459: unimplemented CCR "
-					    "value 0x%08x ]\n", (int)idata);
+					debugmsg(d->subsys, "bt459", VERBOSITY_WARNING,
+					    "unimplemented CCR value 0x%08x\n", (int)idata);
 				}
 				if (modified)
 					d->need_to_update_cursor_shape = 1;
 				break;
 			default:
 				if (btaddr < 0x100)
-					fatal("[ bt459: write to BT459 "
-					    "register 0x%04x, value 0x%02x ]\n",
+					debugmsg(d->subsys, "bt459", VERBOSITY_WARNING,
+					    "write to BT459 register 0x%04x, value 0x%02x\n",
 					    btaddr, (int)idata);
 			}
 
@@ -549,10 +542,9 @@ DEVICE_ACCESS(bt459)
 			    d->type != BT459_BBA)
 				odata = (odata >> 16) & 255;
 
-			if (!quiet_mode)
-				debug("[ bt459: read from BT459 register "
-				    "0x%04x, value 0x%02x ]\n", btaddr,
-				    (int)odata);
+			debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG,
+			    "read from BT459 register 0x%04x, value 0x%02x\n",
+			    btaddr, (int)odata);
 		}
 
 		/*  Go to next register:  */
@@ -563,10 +555,9 @@ DEVICE_ACCESS(bt459)
 	case 0xc:		/*  Color map:  */
 		if (writeflag == MEM_WRITE) {
 			idata &= 255;
-			if (!quiet_mode)
-				debug("[ bt459: write to BT459 colormap "
-				    "0x%04x subaddr %i, value 0x%02x ]\n",
-				    btaddr, d->palette_sub_offset, (int)idata);
+			debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG,
+			    "write to BT459 colormap 0x%04x subaddr %i, value 0x%02x\n",
+			    btaddr, d->palette_sub_offset, (int)idata);
 
 			if (btaddr < 0x100) {
 				if (d->video_on &&
@@ -590,10 +581,9 @@ DEVICE_ACCESS(bt459)
 			if (btaddr < 0x100)
 				odata = d->local_rgb_palette[(btaddr & 0xff)
 				    * 3 + d->palette_sub_offset];
-			if (!quiet_mode)
-				debug("[ bt459: read from BT459 colormap "
-				    "0x%04x subaddr %i, value 0x%02x ]\n",
-				    btaddr, d->palette_sub_offset, (int)odata);
+			debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG,
+			    "read from BT459 colormap 0x%04x subaddr %i, value 0x%02x\n",
+			    btaddr, d->palette_sub_offset, (int)odata);
 		}
 
 next_color_component:
@@ -609,25 +599,25 @@ next_color_component:
 		break;
 	default:
 		if (writeflag == MEM_WRITE) {
-			debug("[ bt459: unimplemented write to address 0x%x, "
-			    "data=0x%02x ]\n", (int)relative_addr, (int)idata);
+			debugmsg(d->subsys, "bt459", VERBOSITY_WARNING,
+			    "unimplemented write to address 0x%x, data=0x%02x\n",
+			    (int)relative_addr, (int)idata);
 		} else {
-			debug("[ bt459: unimplemented read from address "
-			    "0x%x ]\n", (int)relative_addr);
+			debugmsg(d->subsys, "bt459", VERBOSITY_WARNING,
+			    "unimplemented read from address 0x%x\n",
+			    (int)relative_addr);
 		}
 	}
 
 
 	bt459_update_cursor_position(d, old_cursor_on);
 
-	if (writeflag == MEM_READ)
+	if (writeflag == MEM_READ) {
 		memory_writemax64(cpu, data, len, odata);
-
-#ifdef BT459_DEBUG
-	if (writeflag == MEM_READ)
-		fatal("[ bt459: read from addr 0x%02x: %08x ]\n",
-		    (int)relative_addr, (int)idata);
-#endif
+		debugmsg(d->subsys, "bt459", VERBOSITY_DEBUG,
+		    "read from addr 0x%02x: 0x%08x\n",
+		    (int)relative_addr, (int)odata);
+	}
 
 	return 1;
 }
@@ -651,6 +641,7 @@ void dev_bt459_init(struct machine *machine, struct memory *mem,
 	}
 
 	d->vfb_data     = vfb_data;
+	d->subsys       = debugmsg_register_subsystem("bt459");
 	d->rgb_palette  = vfb_data->rgb_palette;
 	d->planes       = planes;
 	d->type		= type;

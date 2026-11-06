@@ -47,6 +47,7 @@
 #define	MAX_QUEUE_LEN		1024
 
 struct dc_data {
+	int			subsys;
 	struct dc7085regs	regs;
 
 	int			console_handle;
@@ -178,7 +179,8 @@ DEVICE_ACCESS(dc7085)
 
 	case 0x00:	/*  CSR:  Control and Status  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ dc7085 write to CSR: 0x%04x ]\n", idata);
+			debugmsg(d->subsys, "dc7085", VERBOSITY_DEBUG,
+			    "write to CSR: 0x%04x\n", (int)idata);
 			idata &= (CSR_TIE | CSR_RIE | CSR_MSE | CSR_CLR
 			    | CSR_MAINT);
 			d->regs.dc_csr &= ~(CSR_TIE | CSR_RIE | CSR_MSE
@@ -188,17 +190,14 @@ DEVICE_ACCESS(dc7085)
 				d->regs.dc_csr &= ~(CSR_TRDY | CSR_RDONE);
 			goto do_return;
 		} else {
-			/*  read:  */
-
-			/*  fatal("[ dc7085 read from CSR: (csr = 0x%04x) ]\n",
-			    d->regs.dc_csr);  */
 			odata = d->regs.dc_csr;
 		}
 		break;
 
 	case 0x08:	/*  LPR:  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ dc7085 write to LPR: 0x%04x ]\n", idata);
+			debugmsg(d->subsys, "dc7085", VERBOSITY_DEBUG,
+			    "write to LPR: 0x%04x\n", (int)idata);
 			d->regs.dc_rbuf_lpr = idata;
 			goto do_return;
 		} else {
@@ -206,7 +205,6 @@ DEVICE_ACCESS(dc7085)
 			int avail = d->cur_rx_queue_pos_write !=
 			    d->cur_rx_queue_pos_read;
 			int ch = 0, lineno = 0;
-			/*  debug("[ dc7085 read from RBUF: ");  */
 			if (avail) {
 				ch = d->rx_queue_char[d->cur_rx_queue_pos_read];
 				lineno = d->rx_queue_lineno[
@@ -214,14 +212,7 @@ DEVICE_ACCESS(dc7085)
 				d->cur_rx_queue_pos_read++;
 				if (d->cur_rx_queue_pos_read == MAX_QUEUE_LEN)
 					d->cur_rx_queue_pos_read = 0;
-				/*  if (ch >= ' ' && ch < 127)
-					debug("'%c'", ch);
-				else
-					debug("0x%x", ch);
-				debug(" for lineno %i ", lineno);  */
-			}  /*  else
-				debug("empty ");
-			debug("]\n");  */
+			}
 			odata = (avail? RBUF_DVAL:0) |
 			    (lineno << RBUF_LINE_NUM_SHIFT) | ch;
 
@@ -232,16 +223,11 @@ DEVICE_ACCESS(dc7085)
 
 	case 0x10:	/*  TCR:  */
 		if (writeflag == MEM_WRITE) {
-			/*  fatal("[ dc7085 write to TCR: 0x%04x) ]\n",
-			    (int)idata);  */
 			d->regs.dc_tcr = idata;
 			d->regs.dc_csr &= ~CSR_TRDY;
 			INTERRUPT_DEASSERT(d->irq);
 			goto do_return;
 		} else {
-			/*  read:  */
-			/*  debug("[ dc7085 read from TCR: (tcr = 0x%04x) ]\n",
-			    d->regs.dc_tcr);  */
 			odata = d->regs.dc_tcr;
 		}
 		break;
@@ -263,7 +249,8 @@ DEVICE_ACCESS(dc7085)
 			    before it sees carrier.)  */
 			d->regs.dc_msr_tdr |= MSR_CTS2 | MSR_DSR2 | MSR_CD2 |
 			    MSR_CTS3 | MSR_DSR3 | MSR_CD3;
-			debug("[ dc7085 read from MSR: (msr_tdr = 0x%04x) ]\n",
+			debugmsg(d->subsys, "dc7085", VERBOSITY_DEBUG,
+			    "read from MSR: (msr_tdr = 0x%04x)\n",
 			    d->regs.dc_msr_tdr);
 			odata = d->regs.dc_msr_tdr;
 		}
@@ -271,14 +258,17 @@ DEVICE_ACCESS(dc7085)
 
 	default:
 		if (writeflag==MEM_READ) {
-			debug("[ dc7085 read from 0x%08lx ]\n",
-			    (long)relative_addr);
+			debugmsg(d->subsys, "dc7085", VERBOSITY_DEBUG,
+			    "read from 0x%08lx\n", (long)relative_addr);
 		} else {
-			debug("[ dc7085 write to 0x%08lx:",
-			    (long)relative_addr);
-			for (i=0; i<len; i++)
-				debug(" %02x", data[i]);
-			debug(" ]\n");
+			if (debugmsg_is_active(d->subsys, VERBOSITY_DEBUG)) {
+				char hexbuf[1024];
+				size_t hpos = 0;
+				for (i = 0; (size_t)i < len && hpos + 4 < sizeof(hexbuf); i++)
+					hpos += snprintf(hexbuf + hpos, sizeof(hexbuf) - hpos, " %02x", data[i]);
+				debugmsg(d->subsys, "dc7085", VERBOSITY_DEBUG,
+				    "write to 0x%08lx:%s\n", (long)relative_addr, hexbuf);
+			}
 		}
 	}
 
@@ -306,6 +296,8 @@ int dev_dc7085_init(struct machine *machine, struct memory *mem,
 
 	CHECK_ALLOCATION(d = (struct dc_data *) malloc(sizeof(struct dc_data)));
 	memset(d, 0, sizeof(struct dc_data));
+
+	d->subsys = debugmsg_register_subsystem("dc7085");
 
 	INTERRUPT_CONNECT(irq_path, d->irq);
 	d->use_fb = use_fb;

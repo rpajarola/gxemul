@@ -95,6 +95,7 @@
 #define	ROP_COPY		3
 
 struct sfb_data {
+	int		subsys;
 	struct vfb_data	*vfb_data;
 	struct memory	*fb_mem;	/*  holds only the window's framebuffer  */
 	unsigned char	*vram;
@@ -630,14 +631,14 @@ DEVICE_ACCESS(sfb)
 		}
 	}
 
-#ifdef SFB_DEBUG
 	if (writeflag == MEM_WRITE)
-		fatal("[ sfb: write to register 0x%02x: 0x%08x ]\n",
+		debugmsg(d->subsys, "sfb", VERBOSITY_DEBUG,
+		    "write to register 0x%02x: 0x%08x\n",
 		    (int) (r * 4), (int) idata);
 	else
-		fatal("[ sfb: read from register 0x%02x: 0x%08x ]\n",
+		debugmsg(d->subsys, "sfb", VERBOSITY_DEBUG,
+		    "read from register 0x%02x: 0x%08x\n",
 		    (int) (r * 4), (int) odata);
-#endif
 
 	if (writeflag == MEM_READ)
 		memory_writemax64(cpu, data, len, odata);
@@ -681,6 +682,7 @@ void dev_sfb_init(struct machine *machine, struct memory *mem,
 
 	CHECK_ALLOCATION(d = (struct sfb_data *) malloc(sizeof(struct sfb_data)));
 	memset(d, 0, sizeof(struct sfb_data));
+	d->subsys = debugmsg_register_subsystem("sfb");
 
 	CHECK_ALLOCATION(d->vram = (unsigned char *) malloc(SFB_VRAM_SIZE));
 	memset(d->vram, 0, SFB_VRAM_SIZE);

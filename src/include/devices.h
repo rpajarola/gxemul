@@ -103,6 +103,7 @@ struct dec_ioasic_data {
 	int		scc_r_done[2];		/*  overrun  */
 
 	int		rackmount_flag;
+	int		subsys;
 	struct interrupt *irq;
 	int		int_asserted;
 	struct cpu	*cpu;

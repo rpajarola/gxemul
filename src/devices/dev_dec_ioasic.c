@@ -119,13 +119,14 @@ size_t dec_ioasic_scsi_dma(void *dma_controller_data, unsigned char *data,
 	size_t done = 0;
 
 	if (!(d->csr & IOASIC_CSR_DMAEN_SCSI)) {
-		fatal("[ dec_ioasic: SCSI DMA of %i bytes, but SCSI DMA is"
-		    " not enabled ]\n", (int)len);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_WARNING,
+		    "SCSI DMA of %i bytes, but SCSI DMA is not enabled\n", (int)len);
 		return 0;
 	}
 	if (((d->csr & IOASIC_CSR_SCSI_DIR) != 0) != (writeflag != 0))
-		fatal("[ dec_ioasic: SCSI DMA %s memory, but the direction"
-		    " bit says otherwise ]\n", writeflag? "to" : "from");
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_WARNING,
+		    "SCSI DMA %s memory, but the direction bit says otherwise\n",
+		    writeflag? "to" : "from");
 
 	addr = dec_ioasic_dma_ptr_to_addr(d->scsi_dmaptr);
 
@@ -191,7 +192,8 @@ size_t dec_ioasic_scsi_dma(void *dma_controller_data, unsigned char *data,
 	d->scsi_dmaptr = dma_addr_to_ptr(addr);
 	dec_ioasic_reassert(d);
 
-	debug("[ dec_ioasic: SCSI DMA, %i bytes %s memory ]\n", (int)done,
+	debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+	    "SCSI DMA, %i bytes %s memory\n", (int)done,
 	    writeflag? "to" : "from");
 
 	return done;
@@ -300,9 +302,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->scsi_dmaptr;
 
-		debug("[ dec_ioasic: %s SCSI_DMAPTR, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s SCSI_DMAPTR, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_SCSI_NEXTPTR:
@@ -311,9 +314,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->scsi_nextptr;
 
-		debug("[ dec_ioasic: %s SCSI_NEXTPTR, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s SCSI_NEXTPTR, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_LANCE_DMAPTR:
@@ -322,9 +326,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->lance_dmaptr;
 
-		debug("[ dec_ioasic: %s LANCE_DMAPTR, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s LANCE_DMAPTR, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_SCC_T1_DMAPTR:
@@ -356,9 +361,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->floppy_dmaptr;
 
-		debug("[ dec_ioasic: %s FLOPPY_DMAPTR, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s FLOPPY_DMAPTR, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_ISDN_X_DMAPTR:
@@ -367,9 +373,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->isdn_x_dmaptr;
 
-		debug("[ dec_ioasic: %s ISDN_X_DMAPTR, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s ISDN_X_DMAPTR, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_ISDN_X_NEXTPTR:
@@ -378,9 +385,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->isdn_x_nextptr;
 
-		debug("[ dec_ioasic: %s ISDN_X_NEXTPTR, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s ISDN_X_NEXTPTR, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_ISDN_R_DMAPTR:
@@ -389,9 +397,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->isdn_r_dmaptr;
 
-		debug("[ dec_ioasic: %s ISDN_R_DMAPTR, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s ISDN_R_DMAPTR, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_ISDN_R_NEXTPTR:
@@ -400,9 +409,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->isdn_r_nextptr;
 
-		debug("[ dec_ioasic: %s ISDN_R_NEXTPTR, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s ISDN_R_NEXTPTR, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_CSR:
@@ -411,9 +421,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->csr;
 
-		debug("[ dec_ioasic: %s CSR, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s CSR, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		if (writeflag == MEM_WRITE)
 			scc_dma(d);
 		break;
@@ -436,9 +447,10 @@ DEVICE_ACCESS(dec_ioasic)
 			//	odata |= KN03_INTR_PROD_JUMPER;
 		}
 
-		debug("[ dec_ioasic: %s INTR, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s INTR, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 
 		break;
 
@@ -450,9 +462,10 @@ DEVICE_ACCESS(dec_ioasic)
 			odata = d->imsk;
 		}
 
-		debug("[ dec_ioasic: %s IMSK, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s IMSK, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_ISDN_X_DATA:
@@ -461,9 +474,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->isdn_x_data;
 
-		debug("[ dec_ioasic: %s ISDN_X_DATA, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s ISDN_X_DATA, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_ISDN_R_DATA:
@@ -472,9 +486,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->isdn_r_data;
 
-		debug("[ dec_ioasic: %s ISDN_R_DATA, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s ISDN_R_DATA, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_LANCE_DECODE:
@@ -483,9 +498,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->lance_decode;
 
-		debug("[ dec_ioasic: %s LANCE_DECODE, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s LANCE_DECODE, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_SCSI_DECODE:
@@ -494,9 +510,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->scsi_decode;
 
-		debug("[ dec_ioasic: %s SCSI_DECODE, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s SCSI_DECODE, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_SCC0_DECODE:
@@ -505,9 +522,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->scc0_decode;
 
-		debug("[ dec_ioasic: %s SCC0_DECODE, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s SCC0_DECODE, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_SCC1_DECODE:
@@ -516,9 +534,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->scc1_decode;
 
-		debug("[ dec_ioasic: %s SCC1_DECODE, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s SCC1_DECODE, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_FLOPPY_DECODE:
@@ -527,9 +546,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->floppy_decode;
 
-		debug("[ dec_ioasic: %s FLOPPY_DECODE, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s FLOPPY_DECODE, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_SCSI_SCR:
@@ -538,9 +558,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->scsi_scr;
 
-		debug("[ dec_ioasic: %s SCSI_SCR, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s SCSI_SCR, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_SCSI_SDR0:
@@ -549,9 +570,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->scsi_sdr0;
 
-		debug("[ dec_ioasic: %s SCSI_SDR0, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s SCSI_SDR0, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 	case IOASIC_SCSI_SDR1:
@@ -560,9 +582,10 @@ DEVICE_ACCESS(dec_ioasic)
 		else
 			odata = d->scsi_sdr1;
 
-		debug("[ dec_ioasic: %s SCSI_SDR1, data=0x%08x ]\n",
-			writeflag == MEM_WRITE ? "write to" : "read from",
-			writeflag == MEM_WRITE ? idata : odata);
+		debugmsg(d->subsys, "dec_ioasic", VERBOSITY_DEBUG,
+		    "%s SCSI_SDR1, data=0x%08x\n",
+		    writeflag == MEM_WRITE ? "write to" : "read from",
+		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		break;
 
 
@@ -665,6 +688,7 @@ struct dec_ioasic_data *dev_dec_ioasic_init(struct cpu *cpu,
 	memset(d, 0, sizeof(struct dec_ioasic_data));
 
 	d->rackmount_flag = rackmount_flag;
+	d->subsys = debugmsg_register_subsystem("dec_ioasic");
 	d->irq = irqp;
 	d->cpu = cpu;
 

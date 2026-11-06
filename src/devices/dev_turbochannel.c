@@ -42,6 +42,8 @@
 #define	CARD_NAME_BUFLEN		9
 #define	CARD_FIRMWARE_BUFLEN		5
 
+static int tc_subsys = -1;
+
 struct turbochannel_data {
 	int		slot_nr;
 	uint64_t	baseaddr;
@@ -83,9 +85,11 @@ DEVICE_ACCESS(turbochannel_rom)
 	size_t i;
 
 	if (writeflag == MEM_WRITE) {
-		debug("[ turbochannel: write to option ROM in slot %i,"
-		    " offset 0x%x, ignored ]\n", d->slot_nr,
-		    (int) relative_addr);
+		if (tc_subsys < 0)
+			tc_subsys = debugmsg_register_subsystem("turbochannel");
+		debugmsg(tc_subsys, "turbochannel", VERBOSITY_WARNING,
+		    "write to option ROM in slot %i, offset 0x%x, ignored\n",
+		    d->slot_nr, (int) relative_addr);
 		return 1;
 	}
 
@@ -188,8 +192,11 @@ static uint64_t turbochannel_load_rom(struct memory *mem, int slot_nr,
 	memory_device_register(mem, name, baseaddr + rom_offset,
 	    maplen, dev_turbochannel_rom_access, rd, DM_DEFAULT, NULL);
 
-	debug("turbochannel: slot %i option ROM: %s (%li bytes)\n",
-	    slot_nr, filename, filelen);
+	if (tc_subsys < 0)
+		tc_subsys = debugmsg_register_subsystem("turbochannel");
+	debugmsg(tc_subsys, "turbochannel", VERBOSITY_INFO,
+	    "slot %i option ROM: %s (%li bytes)\n",
+	    slot_nr, filename, (long)filelen);
 
 	return maplen;
 }
@@ -205,62 +212,71 @@ DEVICE_ACCESS(turbochannel)
 
 	relative_addr += d->rom_skip;
 
-	if (writeflag == MEM_READ) {
-		debug("[ turbochannel: read from slot %i addr 0x%08lx (",
-		    d->slot_nr, (long)relative_addr);
+	if (tc_subsys < 0)
+		tc_subsys = debugmsg_register_subsystem("turbochannel");
 
+	if (writeflag == MEM_READ) {
+		const char *field = NULL;
 		relative_addr &= 0x7fff;
 
 		switch (relative_addr) {
 		case 0x3e0:
-			odata = 0x00000001; debug("ROM width");
+			odata = 0x00000001; field = "ROM width";
 			break;
 		case 0x3e4:
-			odata = 0x00000004; debug("ROM stride");
+			odata = 0x00000004; field = "ROM stride";
 			break;
 		case 0x3e8:
 			/*  8KB * romsize  */
-			odata = 0x00000001; debug("ROM size");
+			odata = 0x00000001; field = "ROM size";
 			break;
 		case 0x3ec:
 			/*  4MB * slotsize  */
-			odata = 0x00000001; debug("slot size");
+			odata = 0x00000001; field = "slot size";
 			break;
 		case 0x3f0:
-			odata = 0x55555555; debug("ROM signature byte 0");
+			odata = 0x55555555; field = "ROM signature byte 0";
 			break;
 		case 0x3f4:
-			odata = 0x00000000; debug("ROM signature byte 1");
+			odata = 0x00000000; field = "ROM signature byte 1";
 			break;
 		case 0x3f8:
-			odata = 0xaaaaaaaa; debug("ROM signature byte 2");
+			odata = 0xaaaaaaaa; field = "ROM signature byte 2";
 			break;
 		case 0x3fc:
-			odata = 0xffffffff; debug("ROM signature byte 3");
+			odata = 0xffffffff; field = "ROM signature byte 3";
 			break;
 		case 0x470:
 			/*  0=nothing, 1=parity  */
-			odata = 0x00000000; debug("flags"); break;
+			odata = 0x00000000; field = "flags"; break;
 		default:
-			if (relative_addr >= 0x400 && relative_addr < 0x420)
+			if (relative_addr >= 0x400 && relative_addr < 0x420) {
 				odata = d->card_firmware_version[
 				    (relative_addr-0x400)/4];
-			else if (relative_addr >= 0x420 &&
-			    relative_addr < 0x440)
+				field = "firmware version";
+			} else if (relative_addr >= 0x420 &&
+			    relative_addr < 0x440) {
 				odata = d->card_vendor_name[
 				    (relative_addr-0x420)/4];
-			else if (relative_addr >= 0x440 &&
-			    relative_addr < 0x460)
+				field = "vendor name";
+			} else if (relative_addr >= 0x440 &&
+			    relative_addr < 0x460) {
 				odata = d->card_module_name[
 				    (relative_addr-0x440)/4];
-			else if (relative_addr >= 0x460 &&
-			    relative_addr < 0x470)
+				field = "module name";
+			} else if (relative_addr >= 0x460 &&
+			    relative_addr < 0x470) {
 				odata = d->card_firmware_type[
 				    (relative_addr-0x460)/4];
-			else {
-				debug("?");
+				field = "firmware type";
+			} else {
+				field = "?";
 			}
 		}
+
+		debugmsg(tc_subsys, "turbochannel", VERBOSITY_DEBUG,
+		    "read from slot %i addr 0x%08lx (%s: 0x%08x)\n",
+		    d->slot_nr, (long)relative_addr, field ? field : "", (uint32_t)odata);
 
 		/*
 		 *  If this slot is empty, return an error so that a DBE
@@ -282,11 +298,10 @@ DEVICE_ACCESS(turbochannel)
 			    relative_addr < 0x3e0 || relative_addr >= 0x500)
 				return 0;
 		}
-
-		debug(") ]\n");
 	} else {
-		debug("[ turbochannel: write to  0x%08lx: 0x%08x ]\n",
-		    (long)relative_addr, (int)idata);
+		debugmsg(tc_subsys, "turbochannel", VERBOSITY_DEBUG,
+		    "write to slot %i addr 0x%08lx: 0x%08x\n",
+		    d->slot_nr, (long)relative_addr, (int)idata);
 	}
 
 	if (writeflag == MEM_READ)
@@ -344,6 +359,9 @@ void dev_turbochannel_init(struct machine *machine, struct memory *mem,
 
 	CHECK_ALLOCATION(d = (struct turbochannel_data *) malloc(sizeof(struct turbochannel_data)));
 	memset(d, 0, sizeof(struct turbochannel_data));
+
+	if (tc_subsys < 0)
+		tc_subsys = debugmsg_register_subsystem("turbochannel");
 
 	d->slot_nr  = slot_nr;
 	d->baseaddr = baseaddr;

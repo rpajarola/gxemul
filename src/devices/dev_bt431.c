@@ -44,6 +44,8 @@
 struct bt431_data {
 	uint32_t	bt431_reg[DEV_BT431_NREGS];
 
+	int		subsys;
+
 	unsigned char	cur_addr_hi;
 	unsigned char	cur_addr_lo;
 
@@ -78,30 +80,31 @@ DEVICE_ACCESS(bt431)
 	switch (relative_addr) {
 	case 0x00:		/*  Low byte of address:  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ bt431: write to Low Address Byte, "
-			    "0x%02x ]\n", (int)idata);
+			debugmsg(d->subsys, "bt431", VERBOSITY_DEBUG,
+			    "write to Low Address Byte, 0x%02x\n", (int)idata);
 			d->cur_addr_lo = idata;
 		} else {
 			odata = d->cur_addr_lo;
-			debug("[ bt431: read from Low Address Byte: "
-			    "0x%0x ]\n", (int)odata);
+			debugmsg(d->subsys, "bt431", VERBOSITY_DEBUG,
+			    "read from Low Address Byte: 0x%02x\n", (int)odata);
 		}
 		break;
 	case 0x04:		/*  High byte of address:  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ bt431: write to High Address Byte, "
-			    "0x%02x ]\n", (int)idata);
+			debugmsg(d->subsys, "bt431", VERBOSITY_DEBUG,
+			    "write to High Address Byte, 0x%02x\n", (int)idata);
 			d->cur_addr_hi = idata;
 		} else {
 			odata = d->cur_addr_hi;
-			debug("[ bt431: read from High Address Byte: "
-			    "0x%0x ]\n", (int)odata);
+			debugmsg(d->subsys, "bt431", VERBOSITY_DEBUG,
+			    "read from High Address Byte: 0x%02x\n", (int)odata);
 		}
 		break;
 	case 0x08:		/*  Register access:  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ bt431: write to BT431 register 0x%04x, "
-			    "value 0x%02x ]\n", btaddr, (int)idata);
+			debugmsg(d->subsys, "bt431", VERBOSITY_DEBUG,
+			    "write to BT431 register 0x%04x, value 0x%02x\n",
+			    btaddr, (int)idata);
 			d->bt431_reg[btaddr] = idata;
 
 #if 0
@@ -111,8 +114,9 @@ DEVICE_ACCESS(bt431)
 #endif
 		} else {
 			odata = d->bt431_reg[btaddr];
-			debug("[ bt431: read from BT431 register 0x%04x, "
-			    "value 0x%02x ]\n", btaddr, (int)odata);
+			debugmsg(d->subsys, "bt431", VERBOSITY_DEBUG,
+			    "read from BT431 register 0x%04x, value 0x%02x\n",
+			    btaddr, (int)odata);
 		}
 
 		/*  Go to next register:  */
@@ -122,12 +126,13 @@ DEVICE_ACCESS(bt431)
 		break;
 	default:
 		if (writeflag == MEM_WRITE) {
-			debug("[ bt431: unimplemented write to address "
-			    "0x%x, data=0x%02x ]\n", (int)relative_addr,
-			    (int)idata);
+			debugmsg(d->subsys, "bt431", VERBOSITY_WARNING,
+			    "unimplemented write to address 0x%x, data=0x%02x\n",
+			    (int)relative_addr, (int)idata);
 		} else {
-			debug("[ bt431: unimplemented read from address "
-			    "0x%x ]\n", (int)relative_addr);
+			debugmsg(d->subsys, "bt431", VERBOSITY_WARNING,
+			    "unimplemented read from address 0x%x\n",
+			    (int)relative_addr);
 		}
 	}
 
@@ -202,6 +207,7 @@ void dev_bt431_init(struct memory *mem, uint64_t baseaddr,
 	memset(d, 0, sizeof(struct bt431_data));
 
 	d->vfb_data     = vfb_data;
+	d->subsys       = debugmsg_register_subsystem("bt431");
 	d->planes       = planes;
 	d->cursor_x     = -1;
 	d->cursor_y     = -1;

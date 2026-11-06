@@ -43,6 +43,8 @@
 
 
 struct bt455_data {
+	int		subsys;
+
 	unsigned char	addr_cmap;
 	unsigned char	addr_cmap_data;
 	unsigned char	addr_clr;
@@ -68,18 +70,20 @@ DEVICE_ACCESS(bt455)
 	switch (relative_addr) {
 	case 0x00:		/*  addr_cmap  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ bt455: write to addr_cmap, 0x%02x ]\n", idata);
+			debugmsg(d->subsys, "bt455", VERBOSITY_DEBUG,
+			    "write to addr_cmap, 0x%02x\n", (int)idata);
 			d->addr_cmap = idata;
 			d->cur_rgb_offset = (d->addr_cmap & 0xf) * 3;
 		} else {
 			odata = d->addr_cmap;
-			debug("[ bt455: read from addr_cmap: 0x%0x ]\n", odata);
+			debugmsg(d->subsys, "bt455", VERBOSITY_DEBUG,
+			    "read from addr_cmap: 0x%02x\n", (int)odata);
 		}
 		break;
 	case 0x04:		/*  addr_cmap_data  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ bt455: write to addr_cmap_data, 0x%02x ]\n",
-			    (int)idata);
+			debugmsg(d->subsys, "bt455", VERBOSITY_DEBUG,
+			    "write to addr_cmap_data, 0x%02x\n", (int)idata);
 			d->addr_cmap_data = idata;
 
 			modified = 0;
@@ -118,39 +122,41 @@ DEVICE_ACCESS(bt455)
 			d->cur_rgb_offset ++;
 		} else {
 			odata = d->addr_cmap_data;
-			debug("[ bt455: read from addr_cmap_data: 0x%0x ]\n",
-			    (int)odata);
+			debugmsg(d->subsys, "bt455", VERBOSITY_DEBUG,
+			    "read from addr_cmap_data: 0x%02x\n", (int)odata);
 		}
 		break;
 	case 0x08:		/*  addr_clr  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ bt455: write to addr_clr, value 0x%02x ]\n",
-			    (int)idata);
+			debugmsg(d->subsys, "bt455", VERBOSITY_DEBUG,
+			    "write to addr_clr, value 0x%02x\n", (int)idata);
 			d->addr_clr = idata;
 		} else {
 			odata = d->addr_clr;
-			debug("[ bt455: read from addr_clr: value 0x%02x ]\n",
-			    (int)odata);
+			debugmsg(d->subsys, "bt455", VERBOSITY_DEBUG,
+			    "read from addr_clr: value 0x%02x\n", (int)odata);
 		}
 		break;
 	case 0x0c:		/*  addr_ovly  */
 		if (writeflag == MEM_WRITE) {
-			debug("[ bt455: write to addr_ovly, value 0x%02x ]\n",
-			    (int)idata);
+			debugmsg(d->subsys, "bt455", VERBOSITY_DEBUG,
+			    "write to addr_ovly, value 0x%02x\n", (int)idata);
 			d->addr_ovly = idata;
 		} else {
 			odata = d->addr_ovly;
-			debug("[ bt455: read from addr_ovly: value 0x%02x ]\n",
-			    (int)odata);
+			debugmsg(d->subsys, "bt455", VERBOSITY_DEBUG,
+			    "read from addr_ovly: value 0x%02x\n", (int)odata);
 		}
 		break;
 	default:
 		if (writeflag == MEM_WRITE) {
-			debug("[ bt455: unimplemented write to address 0x%x,"
-			    " data=0x%02x ]\n", (int)relative_addr, (int)idata);
+			debugmsg(d->subsys, "bt455", VERBOSITY_WARNING,
+			    "unimplemented write to address 0x%x, data=0x%02x\n",
+			    (int)relative_addr, (int)idata);
 		} else {
-			debug("[ bt455: unimplemented read from address "
-			    "0x%x ]\n", (int)relative_addr);
+			debugmsg(d->subsys, "bt455", VERBOSITY_WARNING,
+			    "unimplemented read from address 0x%x\n",
+			    (int)relative_addr);
 		}
 	}
 
@@ -173,6 +179,7 @@ void dev_bt455_init(struct memory *mem, uint64_t baseaddr,
 	memset(d, 0, sizeof(struct bt455_data));
 
 	d->vfb_data     = vfb_data;
+	d->subsys       = debugmsg_register_subsystem("bt455");
 	d->rgb_palette  = vfb_data->rgb_palette;
 
 	memory_device_register(mem, "bt455", baseaddr, DEV_BT455_LENGTH,
