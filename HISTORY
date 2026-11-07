@@ -5628,3 +5628,19 @@ Changelog for GXemul:
 		and . are Insert and Delete. The right Alt key (often AltGr)
 		types characters, and other keyboards get the keys without
 		their modifiers, as before. (Antoni Sawicki)
+
+==============  RELEASE 1.0.16  ==============
+
+20261106	DEC 3000/400: OpenVMS AXP V1.0 installs from CD-ROM with
+		stand-alone BACKUP, boots to multi-user DCL, and runs
+		DECwindows Motif 1.2 on the PMAGB-BA (SFB) framebuffer.
+		SCSI: 53C94 DMA selection with TCDS DMA, Transfer Pad
+		in DATA_OUT and DATA_IN phases, Mode Select 10.
+		EV4: AST delivery check, dyntrans physical memory access
+		separation preventing virtual translation table pollution.
+		Machine configuration: robust JSON parsing with typo
+		suggestions and syntax diagnostics.
+		Documentation: doc/machine_dec3000.html installation guide.
+
+==============  RELEASE 1.0.17  ==============
+
