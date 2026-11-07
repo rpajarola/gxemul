@@ -47,24 +47,20 @@ SUCH DAMAGE.
 
 <p>The <a href="https://en.wikipedia.org/wiki/DECstation">DECstation</a>
 emulation mode is the oldest full machine mode in
-GXemul, and probably still the most complete one.
-The specific model being emulated best is the
-<a href="https://en.wikipedia.org/wiki/DECstation#DECstation_5000_Model_200_Series">5000/200</a>.
-When emulating that model, the following guest operating systems can
-be installed and run:
+GXemul, and the most complete one.
+The models emulated best are the
+<a href="https://en.wikipedia.org/wiki/DECstation#DECstation_5000_Model_200_Series">5000/200</a> (3MAX)
+and the <a href="#PROM">5000/1xx</a> (3MIN, e.g. 5000/133 and 5000/125).
+The following guest operating systems have been verified to install and run:
 
 <p>
 <ul>
-	<li><a href="#netbsdpmaxinstall">NetBSD/pmax</a>
-	<li><a href="#openbsdpmaxinstall">OpenBSD/pmax</a>
-	<li><a href="#ultrixinstall">Ultrix/RISC</a>
-	<li><a href="#sprite">Sprite</a>
-	<li><a href="#declinux">Debian GNU/Linux</a>
+	<li><a href="#netbsdpmaxinstall">NetBSD/pmax</a> (10.1, 9.x, 8.x, 1.6.2; on the 5000/200 and 5000/133)
+	<li><a href="#ultrixinstall">Ultrix/RISC 4.5</a> (with UWS DECwindows Motif, PMAG-BA and HX framebuffers)
+	<li><a href="#declinux">Debian GNU/Linux 3.1</a> (Linux 2.4 kernel, on the 5000/200 and 5000/133)
+	<li><a href="#openbsdpmaxinstall">OpenBSD/pmax</a> (2.8 to 5.4)
+	<li><a href="#sprite">Sprite for DECstation</a>
 </ul>
-
-<p>In addition to the working operating systems above, you may also
-want to read half-finished notes on how to run
-<a href="#declinuxredhat">RedHat Linux/DECstation</a> and <a href="#mach">Mach/PMAX</a>.
 
 <p><a name="setup"></a><b>Setting up a 5000/200:</b> The guides below
 run the 5000/200's own firmware, as on a real machine, from a

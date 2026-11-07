@@ -1,20 +1,82 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
 <html>
 <head>
-  <title>GXemul</title>
-  <meta name="robots" content="noarchive,nofollow,noindex">
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>GXemul Documentation</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style type="text/css">
+    :root {
+      --bg: #fdfdfc;
+      --fg: #1c1b18;
+      --muted: #66635a;
+      --border: #e3dec3;
+      --card-bg: #f7f5ed;
+      --link: #0066cc;
+      --link-hover: #004499;
+      --code-bg: #efece0;
+      --badge-bg: #e6e2d1;
+      --badge-fg: #444036;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #141412;
+        --fg: #eae6db;
+        --muted: #9e9a8f;
+        --border: #312f29;
+        --card-bg: #1e1d1a;
+        --link: #58a6ff;
+        --link-hover: #80bfff;
+        --code-bg: #262420;
+        --badge-bg: #2d2b26;
+        --badge-fg: #d2cebf;
+      }
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+      color: var(--fg);
+      background: var(--bg);
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 32px 20px 60px;
+    }
+    a { color: var(--link); text-decoration: none; }
+    a:hover { text-decoration: underline; color: var(--link-hover); }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { background: var(--code-bg); padding: 2px 5px; border-radius: 4px; font-size: 0.9em; }
+    pre { background: var(--code-bg); padding: 12px 16px; border-radius: 6px; overflow-x: auto; line-height: 1.45; font-size: 0.9em; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 18px 22px; margin: 18px 0; }
+    .badge { display: inline-block; background: var(--badge-bg); color: var(--badge-fg); font-size: 0.8em; font-weight: 600; padding: 2px 8px; border-radius: 12px; margin-right: 6px; }
+    h1, h2, h3, h4 { color: var(--fg); font-weight: 600; line-height: 1.25; }
+    h1 { font-size: 2.2em; margin-bottom: 0.2em; }
+    .subtitle { font-size: 1.15em; color: var(--muted); margin-bottom: 24px; }
+    h2 { font-size: 1.4em; margin-top: 2em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+    h3 { font-size: 1.15em; margin-top: 1.2em; }
+    .quicklinks { margin: 14px 0 28px; padding: 12px 16px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.95em; }
+    .quicklinks a { margin-right: 16px; font-weight: 500; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 16px 0; }
+    .grid .card { margin: 0; }
+    ul { padding-left: 22px; }
+    li { margin-bottom: 6px; }
+    footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 0.9em; color: var(--muted); }
+  </style>
 </head>
-<body style="font-family : sans-serif;">
+<body>
 
-<!-- 10 lines header.  -->
+<h1>GXemul Documentation</h1>
+<div class="subtitle">Full-system computer architecture emulator for vintage RISC workstations and servers.</div>
 
-<h1>GXemul</h1>
-<p>
+<div class="quicklinks">
+  <a href="intro.html">Introduction &amp; User Guide</a>
+  <a href="machine_decstation.html">DECstation Guide</a>
+  <a href="machine_dec3000.html">DEC 3000 Alpha Guide</a>
+  <a href="configfiles.html">Configuration Files</a>
+  <a href="networking.html">Networking</a>
+  <a href="https://github.com/rpajarola/gxemul">GitHub Repository</a>
+</div>
 
 <!--
-
-Copyright (C) 2003-2021  Anders Gavare.  All rights reserved.
+Copyright (C) 2003-2026  Anders Gavare and contributors.  All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -38,127 +100,128 @@ HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
 LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
 OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 SUCH DAMAGE.
-
 -->
 
-<h3>Contents:</h3>
+<p>GXemul models complete, authentic computer systems closely enough to run <b>unmodified guest operating systems</b>
+as if they were running on real physical hardware. It executes authentic PROM firmware, drives accelerated 2D graphics
+framebuffers, supports SCSI storage, and handles full networking.</p>
 
-<p>
+
+<h2>Tested Machines &amp; Operating System Guides</h2>
+
+<p>Detailed step-by-step installation guides and machine configurations for tested hardware platforms:</p>
+
+<div class="grid">
+  <!-- DECstation -->
+  <div class="card">
+    <h3><a href="machine_decstation.html">DECstation 5000/200 &amp; 5000/133</a></h3>
+    <p><b>Architecture:</b> 32-bit / 64-bit MIPS (R3000 / R4400), TURBOchannel bus, IOASIC DMA, NCR 53C94 SCSI, AMD LANCE Ethernet.</p>
+    <ul>
+      <li><span class="badge">NetBSD</span> <a href="machine_decstation.html#netbsdpmaxinstall">NetBSD/pmax 10.1 &amp; 9.x</a> (5000/200 and 5000/133)</li>
+      <li><span class="badge">Ultrix</span> <a href="machine_decstation.html#ultrixinstall">Ultrix/RISC 4.5</a> with UWS DECwindows Motif</li>
+      <li><span class="badge">Linux</span> <a href="machine_decstation.html#declinux">Debian GNU/Linux 3.1</a> on 5000/200 &amp; 5000/133</li>
+      <li><span class="badge">OpenBSD</span> <a href="machine_decstation.html#openbsdpmaxinstall">OpenBSD/pmax 2.8 &amp; 5.4</a></li>
+      <li><span class="badge">Sprite</span> <a href="machine_decstation.html#sprite">Sprite Network OS</a></li>
+      <li><span class="badge">Firmware</span> <a href="machine_decstation.html#setup">Real KN02/KN03 PROMs &amp; Option ROMs</a></li>
+      <li><span class="badge">Graphics</span> <a href="machine_decstation.html#HX">HX (PMAGB-BA) 1280&times;1024 Framebuffer</a></li>
+    </ul>
+    <p>&rarr; <b><a href="machine_decstation.html">Open DECstation Guide</a></b></p>
+  </div>
+
+  <!-- DEC 3000 Alpha -->
+  <div class="card">
+    <h3><a href="machine_dec3000.html">DEC 3000 Model 400 (Alpha AXP)</a></h3>
+    <p><b>Architecture:</b> 64-bit DECchip 21064 (EV4), TURBOchannel bus, IOCTL with DMA, dual 53C94 SCSI ASIC with TCDS DMA, LANCE Ethernet.</p>
+    <ul>
+      <li><span class="badge">OpenVMS</span> <a href="machine_dec3000.html#openvmsinstall">OpenVMS AXP 1.0</a> (stand-alone BACKUP, boots to DCL)</li>
+      <li><span class="badge">DECwindows</span> <a href="machine_dec3000.html#decwindows">DECwindows Motif 1.2 Desktop</a> on SFB framebuffer</li>
+      <li><span class="badge">DEC OSF/1</span> <a href="machine_dec3000.html#decosf1">DEC OSF/1 AXP V1.2</a> (multi-user, networking, X11)</li>
+      <li><span class="badge">Firmware</span> Genuine SRM Console V3.3 &amp; EV4 PALcode</li>
+      <li><span class="badge">Graphics</span> PMAGB-BA (SFB) 1280&times;1024 accelerated display</li>
+    </ul>
+    <p>&rarr; <b><a href="machine_dec3000.html">Open DEC 3000 AXP Guide</a></b></p>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Other Verified Platforms</h3>
+  <p>Guides for other verified workstations and development boards:</p>
+  <ul>
+    <li><b>Motorola 88K:</b> <a href="machine_luna88k.html">Omron LUNA-88K</a> (OpenBSD/luna88k), <a href="machine_mvme88k.html">Motorola MVME187</a> (OpenBSD/mvme88k)</li>
+    <li><b>MIPS:</b> <a href="machine_sgi_o2.html">SGI O2 (IP32)</a> (NetBSD/sgimips, OpenBSD/sgi, real PROM), <a href="machine_evbmips.html">MIPS Malta &amp; Algorithmics P5064</a>, <a href="machine_cobalt.html">Cobalt Cube</a></li>
+    <li><b>ARM:</b> <a href="machine_cats.html">Chalice CATS</a> (NetBSD/cats, OpenBSD/cats), <a href="machine_netwinder.html">Rebel NetWinder</a>, <a href="machine_evbarm.html">Intel IQ80321</a></li>
+    <li><b>SuperH:</b> <a href="machine_landisk.html">I-O DATA Landisk USL-5P</a> (NetBSD/landisk, OpenBSD/landisk), <a href="machine_dreamcast.html">Sega Dreamcast</a></li>
+    <li><b>PowerPC:</b> <a href="machine_prep.html">IBM PReP (6050/6070)</a>, <a href="machine_pmppc.html">Artesyn PM/PPC</a>, <a href="machine_macppc.html">Apple MacPPC</a></li>
+  </ul>
+</div>
+
+
+<h2>Using GXemul</h2>
+
+<p>Core user guides covering emulator operation, machine management, networking, and media:</p>
+
 <ul>
-  <li><a href="intro.html">Introduction</a>
-  <ul>
-    <li><a href="intro.html#overview">Overview</a>
-    <li><a href="intro.html#build">How to compile/build the emulator</a>
-    <li><a href="intro.html#run">How to run the emulator</a>
-    <li><a href="intro.html#emulmodes">Which CPUs and machines does GXemul emulate?</a>
-    <li><a href="intro.html#free">Is GXemul Free software?</a>
-  </ul>
+  <li><a href="intro.html"><b>Introduction &amp; User Guide:</b></a>
+      Installation options (apt repository, Homebrew tap, Windows standalone zip, source builds), running the emulator,
+      video recording to MP4 (<code>--record</code>), terminal vs telnet serial consoles (<code>-x</code>), and debugger keys.</li>
 
-  <p>
-  
-  <li><a href="RELEASE.html">Release notes</a>
+  <li><a href="configfiles.html"><b>Configuration Files &amp; Machines Window:</b></a>
+      How to define systems using <code>machine.json</code>, using the graphical Machines Window (<code>gxemul</code>),
+      machine export/cloning, ROM search paths, and hardware options.</li>
 
-  <p>
+  <li><a href="networking.html"><b>Networking:</b></a>
+      Simulated gateway NAT (transparent outbound TCP/UDP with IP fragment reassembly), L2TPv3 Ethernet tunnels
+      between emulators and host networks, and host TAP devices.</li>
 
-  <li><a href="experiments.html">Experimenting with GXemul</a>
-  <ul>
-    <li><a href="experiments.html#hello">Hello world</a>
-    <li><a href="experiments.html#testmachines">Test machines</a>
-    <li><a href="experiments.html#expdevices">Experimental devices</a>
-  </ul>
+  <li><a href="misc.html"><b>Storage, Media &amp; Display Management:</b></a>
+      Configuring hard disks, using copy-on-write disk overlays (throwaway writes), live CD-ROM and SIMH tape swapping,
+      and remote display with VNC (<code>--vnc</code>).</li>
 
-  <p>
-
-  <li><a href="debugging.html">Debugging code using GXemul</a>
-  <ul>
-	<li><a href="debugging.html#intro">Introduction to debugging code using GXemul</a>
-	<li><a href="debugging.html#launching">Launching the emulator</a>
-	<li><a href="debugging.html#unassemble">Unassembling machine code</a>
-	<li><a href="debugging.html#reg">Dumping CPU registers</a>
-	<li><a href="debugging.html#dump">Dumping memory contents</a>
-	<li><a href="debugging.html#step">Continuing execution or Single-stepping</a>
-	<li><a href="debugging.html#breakpoints">Breakpoints</a>
-	<li><a href="debugging.html#trace">Function call tracing</a>
-  </ul>
-
-  <p>
-
-  <li><a href="control.html">The control socket</a>
-  <ul>
-	<li><a href="control.html#intro">Introduction</a>
-	<li><a href="control.html#cli">The command line client</a>
-	<li><a href="control.html#commands">Commands</a>
-  </ul>
-
-  <p>
-
-  <li><a href="configfiles.html">Configuration files</a>
-  <ul>
-    <li><a href="configfiles.html#intro">Introduction</a>
-    <li><a href="configfiles.html#window">The machines window</a>
-    <li><a href="configfiles.html#files">Where machines and settings are kept</a>
-    <li><a href="configfiles.html#config">The machine.json format</a>
-    <li><a href="configfiles.html#minimal">A minimal example</a>
-  </ul>
-
-  <p>
-
-  <li><a href="networking.html">Networking</a>
-  <ul>
-    <li><a href="networking.html#intro">Introduction</a>
-    <li><a href="networking.html#tap">Virtual Ethernet switch using a tap device</a>
-    <li><a href="networking.html#multihost">Network across multiple hosts</a>
-    <li><a href="networking.html#direct_example_1">UDP "Direct-access" example: udp_snoop</a>
-  </ul>
-
-  <p>
-
-  <li><a href="misc.html">Miscellaneous</a>
-  <ul>
-    <li><a href="misc.html#accuracy">Emulation accuracy</a>
-    <li><a href="misc.html#devel">Writing operating system code, or
-	developing firmware, using GXemul</a>
-    <li><a href="misc.html#compilercontruct">Using GXemul in compiler contruction courses</a>
-    <li><a href="misc.html#disk">How to start the emulator with a disk image</a>
-    <li><a href="misc.html#tape_images">How to start the emulator with tape images</a>
-    <li><a href="misc.html#disk_overlays">How to use disk image overlays</a>
-    <li><a href="misc.html#filexfer">Transfering files to/from the guest OS</a>
-    <li><a href="misc.html#largeimages">How to extract large gzipped disk images</a>
-    <li><a href="misc.html#promdump">Using a PROM dump from a real machine</a>
-  </ul>
-
-  <p>
-
-  <li><a href="translation.html">Dynamic Translation Internals</a>
-
-  <p>
-
-  <li><a href="technical.html">Technical details</a>
-  <ul>
-    <li><a href="technical.html#net">Networking</a>
-    <li><a href="technical.html#devices">Emulation of hardware devices</a>
-  </ul>
-
-  <p>
-  
-  <li><a href="TODO.html">TODO list</a>
-
+  <li><a href="control.html"><b>The Control Socket &amp; AI MCP Server:</b></a>
+      Scripting and inspecting running machines via the Unix domain or TCP control socket (<code>--control</code> and <code>--ctl</code>),
+      and integrating with AI coding assistants via the Model Context Protocol (<code>--mcp</code>).</li>
 </ul>
 
 
+<h2>Debugging &amp; Development Tools</h2>
+
+<ul>
+  <li><a href="debugging.html"><b>Debugging Code Using GXemul:</b></a>
+      Interactive single-step debugger, setting breakpoints, stepping through instructions, unassembling machine code,
+      dumping CPU registers, inspecting memory, and function call tracing.</li>
+
+  <li><a href="experiments.html"><b>Bare-Metal Experiments:</b></a>
+      Writing standalone "Hello World" programs from scratch and experimenting with test CPU models.</li>
+</ul>
 
 
-<p><br>
-<a name="feedback"></a>
-<h3>Feedback:</h3>
+<h2>Internals &amp; Architecture Reference</h2>
 
-<p>If you have found a bug in GXemul, if you have comments or suggestions,
-or if you have questions and you can't find the answers you
-seek in the documentation, then consider asking in the <tt>#GXemul</tt> IRC channel on
-on <a href="http://freenode.net/">FreeNode</a>, or mail me
-(gavare@gmail.com).
+<p>For emulator developers, compiler authors, and those interested in implementation details:</p>
 
-</p>
+<ul>
+  <li><a href="translation.html"><b>Dynamic Translation Internals:</b></a>
+      How GXemul's portable intermediate-representation dyntrans engine translates and executes guest instructions.</li>
+
+  <li><a href="technical.html"><b>Technical Hardware Details:</b></a>
+      Device emulation architecture, memory subsystem, interrupt routing, and virtual bus implementation.</li>
+
+  <li><a href="RELEASE.html"><b>Release Notes</b></a> and <a href="https://github.com/rpajarola/gxemul/blob/master/HISTORY"><b>Changelog (HISTORY)</b></a></li>
+
+  <li><a href="TODO.html"><b>TODO &amp; Planned Features</b></a></li>
+</ul>
+
+
+<footer>
+  <p><b>GXemul</b> is free software released under the 3-clause BSD license.</p>
+  <p>
+    <a href="https://github.com/rpajarola/gxemul">GitHub Project</a> &middot;
+    <a href="https://github.com/rpajarola/gxemul/releases">Releases</a> &middot;
+    <a href="https://rpajarola.github.io/apt/">Apt Repository</a> &middot;
+    <a href="https://github.com/rpajarola/homebrew-tap">Homebrew Tap</a> &middot;
+    <a href="https://github.com/rpajarola/gxemul/issues">Issue Tracker</a>
+  </p>
+</footer>
 
 </body>
 </html>
