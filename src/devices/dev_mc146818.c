@@ -722,6 +722,21 @@ DEVICE_ACCESS(mc146818)
 					break;
 				}
 			}
+			if (cpu->machine->machine_type == MACHINE_JENSEN) {
+				static int jensen_sec_polls = 0;
+				static int jensen_sec_val = 0;
+				if (d->reg[MC_REGB * 4] & MC_REGB_SET)
+					break;
+				mc146818_update_time(d);
+				if (++jensen_sec_polls > 5) {
+					jensen_sec_val = (jensen_sec_val + 1) % 60;
+					jensen_sec_polls = 0;
+				}
+				int sec = ((d->use_bcd ? from_bcd(d->reg[relative_addr]) : d->reg[relative_addr]) + jensen_sec_val) % 60;
+				d->reg[relative_addr] = d->use_bcd ? to_bcd(sec) : sec;
+				d->reg[MC_REGC * 4] |= MC_REGC_UF;
+				break;
+			}
 			// fall through
 		case 4 * MC_MIN:
 		case 4 * MC_HOUR:

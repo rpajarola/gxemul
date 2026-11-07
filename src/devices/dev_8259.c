@@ -134,10 +134,11 @@ DEVICE_ACCESS(8259)
 			} else if (idata >= 0xc0 && idata <= 0xc7) {
 				/*  Set IRQ Priority Order  */
 				/*  TODO  */
+			} else if (idata >= 0x40 && idata <= 0x47) {
+				/*  NOP / Set Priority Command (R=0, SL=1, EOI=0)  */
+				/*  TODO  */
 			} else {
-				fatal("[ 8259: unimplemented command 0x%02x"
-				    " ]\n", (int)idata);
-				cpu->running = 0;
+				debug("[ 8259: unimplemented command 0x%02x ]\n", (int)idata);
 			}
 		} else {
 			switch (d->current_command) {

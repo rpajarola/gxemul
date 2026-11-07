@@ -187,9 +187,9 @@ static void aha1742_deassert_irq(struct aha1742_data *d)
 static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 {
 	uint8_t ecb_buf[0x40];
-	uint8_t opcode, req_sense_len, scsi_cmd_len;
+	uint8_t opcode, scsi_cmd_len;
 	uint16_t opt1, opt2;
-	uint32_t data_addr, data_len, status_addr, sense_ptr;
+	uint32_t data_addr, data_len, status_addr;
 	int target, lun, res;
 	struct scsi_transfer *xferp;
 	uint8_t status_block[16];
@@ -213,9 +213,6 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 	    (ecb_buf[15] << 24);
 	status_addr = ecb_buf[16] | (ecb_buf[17] << 8) | (ecb_buf[18] << 16) |
 	    (ecb_buf[19] << 24);
-	sense_ptr = ecb_buf[28] | (ecb_buf[29] << 8) | (ecb_buf[30] << 16) |
-	    (ecb_buf[31] << 24);
-	req_sense_len = ecb_buf[32];
 	scsi_cmd_len = ecb_buf[33];
 
 	lun = opt2 & ECB_LUN;
@@ -249,8 +246,8 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 	}
 
 	xferp = scsi_transfer_alloc();
-	xferp->cmd_len = scsi_cmd_len;
-	xferp->cmd = ecb_buf + 36;
+	scsi_transfer_allocbuf(&xferp->cmd_len, &xferp->cmd, scsi_cmd_len, 0);
+	memcpy(xferp->cmd, ecb_buf + 36, scsi_cmd_len);
 
 	res = diskimage_scsicommand(cpu, target, DISKIMAGE_SCSI, xferp);
 
@@ -356,6 +353,7 @@ DEVICE_ACCESS(aha1742)
 	if (writeflag == MEM_WRITE)
 		idata = memory_readmax64(cpu, data, len);
 
+
 	switch (relative_addr) {
 	case AHA_HID0:
 	case AHA_HID1:
@@ -442,16 +440,19 @@ DEVICE_ACCESS(aha1742)
 	case AHA_ATTN:
 		if (writeflag == MEM_WRITE) {
 			d->attn = idata;
-			debug("[ aha1742: write ATTN = 0x%02x (op 0x%02x targ %d) ]\n",
-			    d->attn, d->attn & ATTN_OPCODE, d->attn & ATTN_TARGET);
+			debug("[ aha1742: write ATTN = 0x%02x (op 0x%02x targ %d) mboxout=0x%x ]\n",
+			    d->attn, d->attn & ATTN_OPCODE, d->attn & ATTN_TARGET, d->mboxout);
 			if ((d->attn & ATTN_OPCODE) == OP_START_ECB) {
 				aha1742_execute_ecb(cpu, d);
 			} else if ((d->attn & ATTN_OPCODE) == OP_IMMED) {
 				/* Immediate command (target reset) */
+				debug("[ aha1742: OP_IMMED target=%d ]\n", d->attn & ATTN_TARGET);
 				d->g2intst = (d->attn & ATTN_TARGET) | AHB_IMMED_OK;
 				d->g2stat |= G2STAT_INT_PEND;
 				d->g2stat |= G2STAT_MBOX_EMPTY;
 				aha1742_assert_irq(d);
+			} else {
+				debug("[ aha1742: unknown ATTN opcode 0x%02x ]\n", d->attn & ATTN_OPCODE);
 			}
 		} else {
 			odata = d->attn;
@@ -463,13 +464,15 @@ DEVICE_ACCESS(aha1742)
 			d->g2cntrl = idata;
 			if (idata & G2CNTRL_CLEAR_EISA_INT) {
 				d->g2stat &= ~G2STAT_INT_PEND;
-				d->g2intst = 0;
 				aha1742_deassert_irq(d);
 			}
 			if (idata & G2CNTRL_HARD_RESET) {
 				aha1742_deassert_irq(d);
 				d->g2stat = G2STAT_MBOX_EMPTY;
 				d->g2intst = 0;
+				d->mboxin = 0;
+				d->mboxout = 0;
+				d->attn = 0;
 			}
 		} else {
 			odata = d->g2cntrl;
