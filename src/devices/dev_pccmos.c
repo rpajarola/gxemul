@@ -71,16 +71,19 @@ DEVICE_ACCESS(pccmos)
 
 	if ((relative_addr & 1) == 0) {
 		if (writeflag == MEM_WRITE) {
+			unsigned char reg;
 			d->select = idata;
-			if (idata <= 0x0d) {
+			reg = idata & 0x7f;
+			if (reg <= 0x0d) {
 				r = cpu->memory_rw(cpu, cpu->mem,
-				    PCCMOS_MC146818_FAKE_ADDR, &b, 1,
+				    PCCMOS_MC146818_FAKE_ADDR, &reg, 1,
 				    MEM_WRITE, PHYSICAL);
 			}
 		} else
 			odata = d->select;
 	} else {
-		if (d->select <= 0x0d) {
+		int reg = d->select & 0x7f;
+		if (reg <= 0x0d) {
 			if (writeflag == MEM_WRITE) {
 				r = cpu->memory_rw(cpu, cpu->mem,
 				    PCCMOS_MC146818_FAKE_ADDR + 1, &b, 1,
@@ -93,9 +96,9 @@ DEVICE_ACCESS(pccmos)
 			}
 		} else {
 			if (writeflag == MEM_WRITE)
-				d->ram[d->select] = idata;
+				d->ram[reg] = idata;
 			else
-				odata = d->ram[d->select];
+				odata = d->ram[reg];
 		}
 	}
 
