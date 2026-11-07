@@ -745,6 +745,9 @@ struct jensen_data *dev_jensen_init(struct machine *machine,
 	bus_isa_init(machine, jensen_irq_path, bus_isa_flags,
 	    JENSEN_ISA_PORTBASE, JENSEN_ISA_MEMBASE);
 
+	/*  Adaptec AHA-1742A SCSI host adapter in EISA slot 1:  */
+	dev_aha1742_init(machine, mem, JENSEN_ISA_PORTBASE + 0x1c80, jensen_irq_path);
+
 	return d;
 }
 

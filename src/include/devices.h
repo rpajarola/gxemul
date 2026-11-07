@@ -122,6 +122,11 @@ void dev_dec3000_set_rom(struct dec3000_data *d, int sys,
 	const unsigned char *image, size_t len);
 uint64_t dev_dec3000_srom(struct dec3000_data *d, struct cpu *cpu);
 
+/*  dev_aha1742.c:  */
+struct aha1742_data;
+struct aha1742_data *dev_aha1742_init(struct machine *machine,
+	struct memory *mem, uint64_t baseaddr, const char *interrupt_base_path);
+
 /*  dev_jensen.c:  */
 struct jensen_data;
 struct jensen_data *dev_jensen_init(struct machine *machine,
