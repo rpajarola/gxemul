@@ -184,6 +184,11 @@ void file_load(struct machine *machine, struct memory *mem,
 	    dec3000_load_rom(machine, filename, entrypointp))
 		goto ret;
 
+	/*  Jensen firmware (a ROM image, or a firmware update file)?  */
+	if (machine->machine_type == MACHINE_JENSEN &&
+	    jensen_load_rom(machine, filename, entrypointp))
+		goto ret;
+
 	/*  Is it an ELF?  */
 	if (buf[0] == 0x7f && buf[1]=='E' && buf[2]=='L' && buf[3]=='F') {
 		file_load_elf(machine, mem, filename,

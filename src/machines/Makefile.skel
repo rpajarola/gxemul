@@ -5,6 +5,7 @@
 CFLAGS=$(CWARNINGS) $(COPTIM) $(DISPLAYINCLUDE) $(DINCLUDE) $(DEPFLAGS)
 
 OBJS=	machine.o machine_algor.o machine_alpha.o machine_dec3000.o \
+	machine_jensen.o \
 	machine_androidarm.o machine_arc.o \
 	machine_cats.o machine_cobalt.o machine_cyclonevh.o \
 	machine_dreamcast.o machine_evbmips.o \

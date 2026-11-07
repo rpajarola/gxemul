@@ -65,5 +65,6 @@ struct bus_isa_data *bus_isa_init(struct machine *machine,
 #define	BUS_ISA_NO_SECOND_PIC		128
 #define	BUS_ISA_LPTBASE_3BC		256
 #define	BUS_ISA_EXTERNAL_PIC		512
+#define	BUS_ISA_JENSEN_IRQS		1024
 
 #endif	/*  BUS_ISA_H  */

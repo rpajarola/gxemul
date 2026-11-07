@@ -198,6 +198,7 @@ struct machine {
 		struct machine_pmax	*pmax;
 		struct of_data		*of_data;
 		struct dec3000_data	*dec3000;
+		struct jensen_data	*jensen;
 	} md;
 
 	/*  Bus-specific interrupt data:  */
@@ -240,10 +241,14 @@ struct machine {
 #define	MACHINE_TESTALPHA	4001
 #define	MACHINE_TESTALPHAPAL	4003
 #define	MACHINE_DEC3000		4004
+#define	MACHINE_JENSEN		4005
 
 /*  DEC 3000 models:  */
 #define	MACHINE_DEC3000_400	400
 #define	MACHINE_ALPHA		4002
+
+/*  Jensen models:  */
+#define	MACHINE_JENSEN_300	300
 
 /*  ARM:  */
 #define	MACHINE_BAREARM		5000
@@ -418,6 +423,9 @@ struct machine_entry *machine_entry_new(const char *name, int oldstyle_type);
 void machine_entry_add_alias(struct machine_entry *me, const char *name);
 /*  machine_dec3000.c:  */
 int dec3000_load_rom(struct machine *machine, const char *filename,
+	uint64_t *entrypointp);
+/*  machine_jensen.c:  */
+int jensen_load_rom(struct machine *machine, const char *filename,
 	uint64_t *entrypointp);
 
 void machine_entry_add_subtype(struct machine_entry *me, const char *name,

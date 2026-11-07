@@ -243,19 +243,35 @@ struct bus_isa_data *bus_isa_init(struct machine *machine,
 	    (long long)(isa_portbase + 0x40));
 	device_add(machine, tmpstr);
 
-	snprintf(tmpstr, sizeof(tmpstr), "pccmos irq=%s.isa.%i addr=0x%llx",
-	    interrupt_base_path, 8, (long long)(isa_portbase + 0x70));
-	device_add(machine, tmpstr);
+	if (bus_isa_flags & BUS_ISA_JENSEN_IRQS) {
+		snprintf(tmpstr, sizeof(tmpstr), "pccmos irq=%s.rtc addr=0x%llx",
+		    interrupt_base_path, (long long)(isa_portbase + 0x70));
+		device_add(machine, tmpstr);
 
-	snprintf(tmpstr, sizeof(tmpstr), "ns16550 irq=%s.isa.%i addr=0x%llx "
-	    "name2=tty0 in_use=%i", interrupt_base_path, 4,
-	    (long long)(isa_portbase + 0x3f8), 1 - kbd_in_use);
-	machine->main_console_handle = (size_t)device_add(machine, tmpstr);
+		snprintf(tmpstr, sizeof(tmpstr), "ns16550 irq=%s.serial.0 addr=0x%llx "
+		    "name2=tty0 in_use=%i", interrupt_base_path,
+		    (long long)(isa_portbase + 0x3f8), 1 - kbd_in_use);
+		machine->main_console_handle = (size_t)device_add(machine, tmpstr);
 
-	snprintf(tmpstr, sizeof(tmpstr), "ns16550 irq=%s.isa.%i addr=0x%llx "
-	    "name2=tty1 in_use=0", interrupt_base_path, 3,
-	    (long long)(isa_portbase + 0x2f8));
-	device_add(machine, tmpstr);
+		snprintf(tmpstr, sizeof(tmpstr), "ns16550 irq=%s.serial.1 addr=0x%llx "
+		    "name2=tty1 in_use=0", interrupt_base_path,
+		    (long long)(isa_portbase + 0x2f8));
+		device_add(machine, tmpstr);
+	} else {
+		snprintf(tmpstr, sizeof(tmpstr), "pccmos irq=%s.isa.%i addr=0x%llx",
+		    interrupt_base_path, 8, (long long)(isa_portbase + 0x70));
+		device_add(machine, tmpstr);
+
+		snprintf(tmpstr, sizeof(tmpstr), "ns16550 irq=%s.isa.%i addr=0x%llx "
+		    "name2=tty0 in_use=%i", interrupt_base_path, 4,
+		    (long long)(isa_portbase + 0x3f8), 1 - kbd_in_use);
+		machine->main_console_handle = (size_t)device_add(machine, tmpstr);
+
+		snprintf(tmpstr, sizeof(tmpstr), "ns16550 irq=%s.isa.%i addr=0x%llx "
+		    "name2=tty1 in_use=0", interrupt_base_path, 3,
+		    (long long)(isa_portbase + 0x2f8));
+		device_add(machine, tmpstr);
+	}
 
 	if (bus_isa_flags & BUS_ISA_LPTBASE_3BC) {
 		bus_isa_flags &= ~BUS_ISA_LPTBASE_3BC;
@@ -303,7 +319,10 @@ struct bus_isa_data *bus_isa_init(struct machine *machine,
 		bus_isa_flags &= ~(BUS_ISA_VGA | BUS_ISA_VGA_FORCE);
 	}
 
-	snprintf(tmpstr, sizeof(tmpstr), "%s.isa.1", interrupt_base_path);
+	if (bus_isa_flags & BUS_ISA_JENSEN_IRQS)
+		snprintf(tmpstr, sizeof(tmpstr), "%s.kbd", interrupt_base_path);
+	else
+		snprintf(tmpstr, sizeof(tmpstr), "%s.isa.1", interrupt_base_path);
 	snprintf(tmpstr2, sizeof(tmpstr2), "%s.isa.12", interrupt_base_path);
 	tmp_handle = dev_pckbc_init(machine, machine->memory,
 	    isa_portbase + 0x60, PCKBC_8042, tmpstr, tmpstr2,
@@ -312,7 +331,8 @@ struct bus_isa_data *bus_isa_init(struct machine *machine,
 	if (kbd_in_use)
 		machine->main_console_handle = tmp_handle;
 
-	bus_isa_flags &= ~(BUS_ISA_PCKBC_NONPCSTYLE | BUS_ISA_PCKBC_FORCE_USE);
+	bus_isa_flags &= ~(BUS_ISA_PCKBC_NONPCSTYLE | BUS_ISA_PCKBC_FORCE_USE |
+	    BUS_ISA_JENSEN_IRQS);
 
 	if (bus_isa_flags != 0)
 		fatal("WARNING! bus_isa(): unimplemented bus_isa_flags 0x%x\n",
