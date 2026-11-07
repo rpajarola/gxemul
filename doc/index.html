@@ -16,6 +16,10 @@
       --code-bg: #efece0;
       --badge-bg: #e6e2d1;
       --badge-fg: #444036;
+      --tested-ok-bg: #33cc33;
+      --tested-partial-bg: #fff10a;
+      --tested-bad-bg: #e64539;
+      --untested-bg: #a6a6a6;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -29,6 +33,10 @@
         --code-bg: #262420;
         --badge-bg: #2d2b26;
         --badge-fg: #d2cebf;
+        --tested-ok-bg: #33cc33;
+        --tested-partial-bg: #fff10a;
+        --tested-bad-bg: #e64539;
+        --untested-bg: #a6a6a6;
       }
     }
     body {
@@ -47,6 +55,10 @@
     pre { background: var(--code-bg); padding: 12px 16px; border-radius: 6px; overflow-x: auto; line-height: 1.45; font-size: 0.9em; }
     .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 18px 22px; margin: 18px 0; }
     .badge { display: inline-block; background: var(--badge-bg); color: var(--badge-fg); font-size: 0.8em; font-weight: 600; padding: 2px 8px; border-radius: 12px; margin-right: 6px; }
+    .tested-ok { display: inline-block; background: var(--tested-ok-bg); color: var(--badge-fg); font-size: 0.8em; font-weight: 600; padding: 2px 8px; border-radius: 12px; margin-right: 6px; }
+    .tested-partial { display: inline-block; background: var(--tested-partial-bg); color: var(--badge-fg); font-size: 0.8em; font-weight: 600; padding: 2px 8px; border-radius: 12px; margin-right: 6px; }
+    .tested-bad { display: inline-block; background: var(--tested-bad-bg); color: var(--badge-fg); font-size: 0.8em; font-weight: 600; padding: 2px 8px; border-radius: 12px; margin-right: 6px; }
+    .untested { display: inline-block; background: var(--untested-bg); color: var(--badge-fg); font-size: 0.8em; font-weight: 600; padding: 2px 8px; border-radius: 12px; margin-right: 6px; }
     h1, h2, h3, h4 { color: var(--fg); font-weight: 600; line-height: 1.25; }
     h1 { font-size: 2.2em; margin-bottom: 0.2em; }
     .subtitle { font-size: 1.15em; color: var(--muted); margin-bottom: 24px; }
@@ -75,36 +87,8 @@
   <a href="https://github.com/rpajarola/gxemul">GitHub Repository</a>
 </div>
 
-<!--
-Copyright (C) 2003-2026  Anders Gavare and contributors.  All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright
-   notice, this list of conditions and the following disclaimer in the
-   documentation and/or other materials provided with the distribution.
-3. The name of the author may not be used to endorse or promote products
-   derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
-OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
-SUCH DAMAGE.
--->
-
-<p>GXemul models complete, authentic computer systems closely enough to run <b>unmodified guest operating systems</b>
-as if they were running on real physical hardware. It executes authentic PROM firmware, drives accelerated 2D graphics
-framebuffers, supports SCSI storage, and handles full networking.</p>
+<p>GXemul models complete computer systems closely enough to run <b>unmodified guest operating systems</b>
+as if they were running on real physical hardware. It executes original firmware, and faithfully emulates storage, accelerated 2D graphics, and networking.</p>
 
 
 <h2>Tested Machines &amp; Operating System Guides</h2>
@@ -114,38 +98,44 @@ framebuffers, supports SCSI storage, and handles full networking.</p>
 <div class="grid">
   <!-- DECstation -->
   <div class="card">
-    <h3><a href="machine_decstation.html">DECstation 5000/200 &amp; 5000/133</a></h3>
-    <p><b>Architecture:</b> 32-bit / 64-bit MIPS (R3000 / R4400), TURBOchannel bus, IOASIC DMA, NCR 53C94 SCSI, AMD LANCE Ethernet.</p>
+    <h3><span class="tested-ok">Works</span><a href="machine_decstation.html">DECstation 5000/200 &amp; 5000/133</a></h3>
+    <p><b>Architecture:</b> 32-bit / 64-bit MIPS (R3000 / R4400), TURBOchannel bus, NCR 53C94 SCSI, AMD LANCE Ethernet, PMAG-BA and PMAGB-BA 2D accelerated graphics.</p>
     <ul>
-      <li><span class="badge">NetBSD</span> <a href="machine_decstation.html#netbsdpmaxinstall">NetBSD/pmax 10.1 &amp; 9.x</a> (5000/200 and 5000/133)</li>
-      <li><span class="badge">Ultrix</span> <a href="machine_decstation.html#ultrixinstall">Ultrix/RISC 4.5</a> with UWS DECwindows Motif</li>
-      <li><span class="badge">Linux</span> <a href="machine_decstation.html#declinux">Debian GNU/Linux 3.1</a> on 5000/200 &amp; 5000/133</li>
-      <li><span class="badge">OpenBSD</span> <a href="machine_decstation.html#openbsdpmaxinstall">OpenBSD/pmax 2.8 &amp; 5.4</a></li>
-      <li><span class="badge">Sprite</span> <a href="machine_decstation.html#sprite">Sprite Network OS</a></li>
-      <li><span class="badge">Firmware</span> <a href="machine_decstation.html#setup">Real KN02/KN03 PROMs &amp; Option ROMs</a></li>
-      <li><span class="badge">Graphics</span> <a href="machine_decstation.html#HX">HX (PMAGB-BA) 1280&times;1024 Framebuffer</a></li>
+      <li><span class="tested-ok">Works</span> <a href="machine_decstation.html#ultrix_45">Ultrix/RISC 4.5</a></li>
+      <li><span class="tested-ok">Works</span> <a href="machine_decstation.html#ultrix_31d">Ultrix/RISC 3.1</a></li>
+      <li><span class="tested-ok">Works</span> <a href="machine_decstation.html#osf1_10">OSF/1 MIPS 1.0</a></li>
+      <li><span class="tested-ok">Works</span> <a href="machine_decstation.html#osf1_11">OSF/1 MIPS 1.1</a></li>
+      <li><span class="tested-ok">Works</span> <a href="machine_decstation.html#osf1_20">OSF/1 MIPS 2.0</a></li>
+      <li><span class="tested-ok">Works</span> <a href="machine_decstation.html#sprite">Sprite Network OS</a></li>
+      <li><span class="tested-ok">Works</span> <a href="machine_decstation.html#plan9">Plan 9</a></li>
+      <li><span class="tested-ok">Works</span> <a href="machine_decstation.html#44bsd">4.4BSD</a></li>
+      <li><span class="tested-ok">Works</span> <a href="machine_decstation.html#netbsd">NetBSD/pmax 10.1 &amp; 9.x</a> (5000/200 and 5000/133)</li>
+      <li><span class="tested-ok">Works</span> <a href="machine_decstation.html#openbsd">OpenBSD/pmax 2.8 &amp; 5.4</a></li>
+      <li><span class="tested-ok">Works</span> <a href="machine_decstation.html#linux">Debian GNU/Linux 3.1</a> on 5000/200 &amp; 5000/133</li>
     </ul>
     <p>&rarr; <b><a href="machine_decstation.html">Open DECstation Guide</a></b></p>
   </div>
 
   <!-- DEC 3000 Alpha -->
   <div class="card">
-    <h3><a href="machine_dec3000.html">DEC 3000 Model 400 (Alpha AXP)</a></h3>
-    <p><b>Architecture:</b> 64-bit DECchip 21064 (EV4), TURBOchannel bus, IOCTL with DMA, dual 53C94 SCSI ASIC with TCDS DMA, LANCE Ethernet.</p>
+    <h3><span class="tested-ok">Works</span><a href="machine_dec3000.html">DEC 3000 Model 400 (Alpha AXP)</a></h3>
+    <p><b>Architecture:</b> 64-bit DECchip 21064 (EV4), TURBOchannel bus, dual NCR53C94 SCSI, AMD LANCE Ethernet, PMAGB-BA 2D accelerated graphics.</p>
     <ul>
-      <li><span class="badge">OpenVMS</span> <a href="machine_dec3000.html#openvmsinstall">OpenVMS AXP 1.0</a> (stand-alone BACKUP, boots to DCL)</li>
-      <li><span class="badge">DECwindows</span> <a href="machine_dec3000.html#decwindows">DECwindows Motif 1.2 Desktop</a> on SFB framebuffer</li>
-      <li><span class="badge">DEC OSF/1</span> <a href="machine_dec3000.html#decosf1">DEC OSF/1 AXP V1.2</a> (multi-user, networking, X11)</li>
-      <li><span class="badge">Firmware</span> Genuine SRM Console V3.3 &amp; EV4 PALcode</li>
-      <li><span class="badge">Graphics</span> PMAGB-BA (SFB) 1280&times;1024 accelerated display</li>
+      <li><span class="tested-ok">Works</span> <a href="machine_dec3000.html#vms_10">VMS AXP 1.0</a></li>
+      <li><span class="tested-bad">Install fails</span> <a href="machine_dec3000.html#vms_15">VMS AXP 1.5</a></li>
+      <li><span class="tested-ok">Works</span> <a href="machine_dec3000.html#osf1_12">DEC OSF/1 AXP V1.2</a></li>
+      <li><span class="tested-partial">Bad Graphics</span> <a href="machine_dec3000.html#osf1_20">DEC OSF/1 AXP V2.0</a></li>
+      <li><span class="tested-partial">Bad Graphics</span> <a href="machine_dec3000.html#digitalunix_32g">Digital Unix V3.2G</a></li>
+      <li><span class="tested-bad">Does not boot</span> <a href="machine_dec3000.html#digitalunix_40">Digital Unix V4.0</a></li>
+      <li><span class="untested">Untested</span> <a href="machine_dec3000.html#tru64_51">Tru64 V5.1</a></li>
     </ul>
     <p>&rarr; <b><a href="machine_dec3000.html">Open DEC 3000 AXP Guide</a></b></p>
   </div>
 </div>
 
 <div class="card">
-  <h3>Other Verified Platforms</h3>
-  <p>Guides for other verified workstations and development boards:</p>
+  <h3>Other Platforms</h3>
+  <p>Guides for other workstations and development boards (old and not tested recently):</p>
   <ul>
     <li><b>Motorola 88K:</b> <a href="machine_luna88k.html">Omron LUNA-88K</a> (OpenBSD/luna88k), <a href="machine_mvme88k.html">Motorola MVME187</a> (OpenBSD/mvme88k)</li>
     <li><b>MIPS:</b> <a href="machine_sgi_o2.html">SGI O2 (IP32)</a> (NetBSD/sgimips, OpenBSD/sgi, real PROM), <a href="machine_evbmips.html">MIPS Malta &amp; Algorithmics P5064</a>, <a href="machine_cobalt.html">Cobalt Cube</a></li>
@@ -158,7 +148,7 @@ framebuffers, supports SCSI storage, and handles full networking.</p>
 
 <h2>Using GXemul</h2>
 
-<p>Core user guides covering emulator operation, machine management, networking, and media:</p>
+<p>User guides covering emulator operation, machine management, networking, and media:</p>
 
 <ul>
   <li><a href="intro.html"><b>Introduction &amp; User Guide:</b></a>
@@ -174,12 +164,8 @@ framebuffers, supports SCSI storage, and handles full networking.</p>
       between emulators and host networks, and host TAP devices.</li>
 
   <li><a href="misc.html"><b>Storage, Media &amp; Display Management:</b></a>
-      Configuring hard disks, using copy-on-write disk overlays (throwaway writes), live CD-ROM and SIMH tape swapping,
+      Configuring hard disks, using copy-on-write disk overlays (throwaway writes), CD-ROM and SIMH tape swapping,
       and remote display with VNC (<code>--vnc</code>).</li>
-
-  <li><a href="control.html"><b>The Control Socket &amp; AI MCP Server:</b></a>
-      Scripting and inspecting running machines via the Unix domain or TCP control socket (<code>--control</code> and <code>--ctl</code>),
-      and integrating with AI coding assistants via the Model Context Protocol (<code>--mcp</code>).</li>
 </ul>
 
 
@@ -192,6 +178,10 @@ framebuffers, supports SCSI storage, and handles full networking.</p>
 
   <li><a href="experiments.html"><b>Bare-Metal Experiments:</b></a>
       Writing standalone "Hello World" programs from scratch and experimenting with test CPU models.</li>
+
+  <li><a href="control.html"><b>Control Socket &amp; AI MCP Server:</b></a>
+      Scripting and inspecting running machines via the Unix domain or TCP control socket (<code>--control</code> and <code>--ctl</code>),
+      and integrating with AI coding assistants via the Model Context Protocol (<code>--mcp</code>).</li>
 </ul>
 
 
