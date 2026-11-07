@@ -380,10 +380,15 @@ DEVICE_TICK(scc)
 
 	for (i=0; i<N_SCC_PORTS; i++) {
 		d->scc_register_r[i * N_SCC_REGS + SCC_RR0] |= SCC_RR0_TX_EMPTY;
-		/*  No receive errors; All Sent (bit 0), as characters
-		    are sent at once (OSF/1 waits for it when it closes a
-		    tty).  */
-		d->scc_register_r[i * N_SCC_REGS + SCC_RR1] = SCC_RR1_ALL_SENT;
+		/*
+		 *  No receive errors, everything has been sent, and the
+		 *  residue code bits read 011 as they do in asynchronous
+		 *  mode, which makes 0x07, like an idle Z8530. (OSF/1 waits
+		 *  for All Sent when closing a tty; Linux 2.4 waits for
+		 *  bit 2 when the terminal settings change.)
+		 */
+		d->scc_register_r[i * N_SCC_REGS + SCC_RR1] = SCC_RR1_ALL_SENT
+		    | SCC_RR1_RESIDUE1 | SCC_RR1_RESIDUE2;
 
 		d->scc_register_r[i * N_SCC_REGS + SCC_RR0] &=
 		    ~SCC_RR0_RX_AVAIL;

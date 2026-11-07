@@ -78,6 +78,7 @@ struct mc_data {
 	struct interrupt irq;
 	struct timer	*timer;
 	volatile int	pending_timer_interrupts;
+	volatile int	pf_tick;	/*  a period has passed  */
 
 	int		previous_second;
 	int		n_seconds_elapsed;
@@ -133,6 +134,7 @@ static void timer_tick(struct timer *timer, void *extra)
 {
 	struct mc_data *d = (struct mc_data *) extra;
 	d->pending_timer_interrupts ++;
+	d->pf_tick = 1;
 }
 
 
@@ -278,6 +280,17 @@ DEVICE_TICK(mc146818)
 			if (d->reg[MC_REGB * 4] & MC_REGB_UIE)
 				INTERRUPT_ASSERT(d->irq);
 		}
+	}
+
+	/*
+	 *  The periodic flag is set once per period whether or not PIE is
+	 *  set; PIE only makes it interrupt.  (Linux on the DECstation
+	 *  polls PF with PIE off, to measure the speed of its other timer.)
+	 */
+	if (d->pf_tick) {
+		d->pf_tick = 0;
+		if (d->interrupt_hz > 0)
+			d->reg[MC_REGC * 4] |= MC_REGC_PF;
 	}
 
 	if ((d->reg[MC_REGB * 4] & MC_REGB_PIE) && pti > 0) {
@@ -867,6 +880,13 @@ void dev_mc146818_init(struct machine *machine, struct memory *mem,
 
 		/*  Battery valid, for DECstations  */
 		d->reg[0xf8] = 1;
+
+		/*  The battery kept the clock running, in binary 24-hour
+		    mode, as the firmware set it up; the KN02's ROM checks
+		    this at power-on, and otherwise prints ?RTC and forgets
+		    its settings (such as the keyboard's language):  */
+		d->reg[MC_REGA * 4] = MC_BASE_32_KHz;
+		d->reg[MC_REGB * 4] = MC_REGB_24HR | MC_REGB_BINARY;
 	}
 
 	/*

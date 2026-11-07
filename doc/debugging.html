@@ -448,6 +448,15 @@ second, which keep recording in real time while the emulator runs, and
 while the debugger is in use. A framebuffer window's <b>Machine</b> menu
 can also save a screenshot and start and stop a recording.
 
+<p>To record a machine from the start, give <tt>--record</tt> and a file
+name, e.g. <tt>gxemul --record boot.mp4 machine.json</tt>. Recording
+starts when the framebuffer window is set up. With
+<tt>--record-nonblack</tt> instead, it starts when the screen first shows
+a pixel that isn't black, which skips a blank screen while the machine
+starts. The recording ends when the emulator quits (or with
+<tt>video stop</tt>), and gxemul waits for <tt>ffmpeg</tt> to finish the
+file.
+
 <p><br>
 <a name="media"></a><h4>Changing CD-ROMs and tapes</h4>
 

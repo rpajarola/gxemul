@@ -242,7 +242,8 @@ struct vfb_data {
 	unsigned char	rgb_palette[256 * 3];
 
 	char		*name;
-	char		title[100];
+	char		*machine_name;	/*  NULL if the machine has none  */
+	char		title[200];
 
 	void (*redraw_func)(struct vfb_data *, int, int);
 

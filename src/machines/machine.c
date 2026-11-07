@@ -122,6 +122,49 @@ struct machine *machine_new(char *name, struct emul *emul, int id)
 
 
 /*
+ *  machine_title_name():
+ *
+ *  A name for the machine's windows: its name, or else the name of its
+ *  configuration file (its folder's, for a machine.json), or NULL for a
+ *  machine set up on the command line.  The caller frees it.
+ */
+char *machine_title_name(struct machine *machine)
+{
+	const char *path = machine->config_path, *base, *p;
+	size_t len;
+	char *name;
+
+	if (machine->name != NULL && machine->name[0])
+		return strdup(machine->name);
+	if (path == NULL || !path[0])
+		return NULL;
+
+	/*  The last part of the path, and the one before it:  */
+	base = path;
+	for (p = path; *p; p++)
+		if ((*p == '/' || *p == '\\') && p[1])
+			base = p + 1;
+	len = strcspn(base, "/\\");
+	if (len == strlen("machine.json") &&
+	    strncmp(base, "machine.json", len) == 0 && base > path) {
+		const char *end = base - 1, *start = end;
+		while (start > path && start[-1] != '/' && start[-1] != '\\')
+			start--;
+		if (end > start) {
+			base = start;
+			len = end - start;
+		}
+	} else if (len > 5 && strncmp(base + len - 5, ".json", 5) == 0)
+		len -= 5;
+
+	CHECK_ALLOCATION(name = (char *) malloc(len + 1));
+	memcpy(name, base, len);
+	name[len] = '\0';
+	return name;
+}
+
+
+/*
  *  machine_destroy():
  *
  *  Destroys a machine object.

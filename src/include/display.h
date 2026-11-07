@@ -208,6 +208,8 @@ int display_screendump(struct machine *, int n, const char *file,
 int display_video_start(struct machine *, const char *file);
 void display_video_stop(void);
 bool display_video_recording(void);
+void display_video_record(const char *file, bool nonblack);
+void display_video_finish(void);
 uint32_t display_ticks(void);
 
 

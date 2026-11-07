@@ -66,6 +66,32 @@ be installed and run:
 want to read half-finished notes on how to run
 <a href="#declinuxredhat">RedHat Linux/DECstation</a> and <a href="#mach">Mach/PMAX</a>.
 
+<p><a name="setup"></a><b>Setting up a 5000/200:</b> The guides below
+run the 5000/200's own firmware, as on a real machine, from a
+<a href="configfiles.html">machine.json</a> in a folder of its own. This
+needs ROM images, dumped from a real 5000/200 (see
+<a href="#PROM200">below</a>), which gxemul looks for in the machine's
+folder and in the <a href="configfiles.html#files">ROM folders</a>:
+
+<p><table border="0" cellspacing="0" cellpadding="2">
+<tr><td><tt>"rom"</tt>&nbsp;&nbsp;</td><td>the system ROM, KN02-AA V5.3s (e.g. <tt>kn02_aa_5.3s.bin</tt>)</td></tr>
+<tr><td>slot 0</td><td>the PMAG-BA framebuffer's option ROM (<tt>pmag_ba_5.3a.bin</tt>), with the display on</td></tr>
+<tr><td>slot 5</td><td>the PMAZ-AA SCSI controller's option ROM (<tt>pmaz_aa_5.3d.bin</tt>)</td></tr>
+<tr><td>slot 6</td><td>the PMAD-AA Ethernet interface's option ROM (<tt>pmad_aa_5.3a.bin</tt>)</td></tr>
+</table>
+
+<p>With <tt>"nvram"</tt>, the firmware's settings are kept in a file.
+At the ROM's <tt>&gt;&gt;</tt> prompt, <tt>boot 5/rz4/vmunix</tt> boots
+<tt>vmunix</tt> from the disk or CD-ROM with SCSI ID 4 on the SCSI
+controller in slot 5; <tt>setenv boot "..."</tt> sets what <tt>boot</tt>
+alone boots; <tt>printenv</tt> shows the settings, and <tt>cnfg</tt> the
+hardware. Instead of the window, <tt>gxemul --vnc tcp:5900
+machine.json</tt> shows the screen to a VNC client.
+
+<p>Without ROM images, GXemul can also start a kernel itself (PROM
+emulation, as in <tt>gxemul -X -e 3max -d disk.img netbsd</tt>), which is
+handy for quick tests, but the guides below use the real firmware.
+
 <p>The default processor in the emulated DECstation 5000/200 is a
 32-bit MIPS R3000, but many of the guest operating systems are also capable of
 running with a 64-bit MIPS R4400, by adding <tt><b>-C R4400</b></tt> to the
@@ -99,242 +125,235 @@ onto a disk image in GXemul.
 
 <p><a href="20050317-example.png"><img src="20050317-example_small.png"></a>
 
-<p>To install NetBSD/pmax onto a harddisk image in the emulator,
-follow these instructions:
+<p>NetBSD/pmax installs on the 5000/200 from its CD, with the machine's
+<a href="#setup">real ROMs</a>. This was tested with NetBSD 10.1; for
+NetBSD 11.0, see <a href="#netbsd11">below</a>.
 
 <p><ol>
-  <li>Create an empty harddisk image, which will be the root disk
-	that NetBSD installs itself onto:<pre>
-	<b>dd if=/dev/zero of=nbsd_pmax.img bs=1024 count=1 seek=7800000</b>
+  <li>Download the CD image,
+	<a href="https://cdn.netbsd.org/pub/NetBSD/iso/10.1/NetBSD-10.1-pmax.iso">NetBSD-10.1-pmax.iso</a>,
+	and make a folder for the machine, with the
+	<a href="#setup">ROM images</a>, an empty disk image, and this
+	<tt>machine.json</tt>:<pre>
+{
+  "gxemul": 1,
+  "name": "NetBSD/pmax 10.1",
+  "machine": { "type": "decstation", "model": "3max", "memory_mb": 128 },
+  "boot": { "prom_emulation": false, "rom": "kn02_aa_5.3s.bin", "nvram": "nvram.bin" },
+  "drives": [ { "file": "disk.img", "kind": "disk", "id": 0 },
+              { "file": "NetBSD-10.1-pmax.iso", "kind": "cdrom", "id": 4, "readonly": true } ],
+  "display": { "enabled": true },
+  "slots": { "0": "pmag_ba_5.3a.bin", "5": "pmaz_aa_5.3d.bin", "6": "pmad_aa_5.3a.bin" }
+}
+</pre>
+	<pre>
+	$ <b>truncate -s 2000M disk.img</b>
+	$ <b>gxemul machine.json</b>
+</pre>
 
+  <li>The ROM asks for the keyboard's language (4 is English;
+	<tt>setenv console 1</tt> stops it from asking again). Boot the
+	CD:<pre>
+	&gt;&gt;<b>boot 5/rz4/netbsd</b>
 </pre>
-  <li>Download a NetBSD CD-ROM iso image:<pre>
-	<a href="ftp://ftp.netbsd.org/pub/NetBSD/iso/7.1.2/NetBSD-7.1.2-pmax.iso">ftp://ftp.netbsd.org/pub/NetBSD/iso/7.1.2/NetBSD-7.1.2-pmax.iso</a>
 
+  <li>Install with sysinst: install NetBSD to the hard disk
+	(<tt>sd0</tt>), with the default partition sizes, the full
+	installation, from the CD-ROM, and set root's password. Then
+	reboot, and boot the disk from the ROM:<pre>
+	&gt;&gt;<b>setenv boot "5/rz0/netbsd -a"</b>
+	&gt;&gt;<b>boot</b>
 </pre>
-  <li>Start the emulator like this:<pre>
-	<b>gxemul -X -e 3max -d nbsd_pmax.img -d b:NetBSD-7.1.2-pmax.iso</b>
-</pre>
+	(Without <tt>-a</tt>, NetBSD boots single-user.
+	<tt>setenv haltaction b</tt> makes the ROM boot it at
+	power-on.)
 </ol>
 
-<p>NetBSD 8.x and 9.x can also be installed, but <a href="https://mail-index.netbsd.org/port-mips/2019/06/28/msg000877.html">there is no X server</a>,
-so 7.1.2 is preferred if you want to use X.
+<p>Log in as <tt>root</tt>, and type <tt>startx</tt> to start X. Without
+the display (<tt>"enabled": false</tt>, and no ROM in slot 0), the
+console is the serial line, in the terminal GXemul runs in.
 
-<p>If you do not want to use the graphical framebuffer during the 
-install, you can skip the <b><tt>-X</tt></b> command line option.
-Remember to enter <tt>xterm</tt> instead of <tt>vt100</tt> when asked 
-about your terminal type, if you do this.
-Or you can add <b><tt>-Y 2</tt></b> to the command line options, if 
-you feel that the default framebuffer window is too large.
+<p><a name="netbsd11"></a>NetBSD 11.0's CD does not boot, in GXemul or on
+a real DECstation: its installation kernel is so big that loading it
+overwrites the boot loader (NetBSD's
+<a href="https://gnats.netbsd.org/45147">PR port-pmax/45147</a>). The
+installed system's kernel is smaller, and boots. So install 11.0 with
+the 10.1 installer, from the 11.0 CD:
 
-<p>When the installation has finished, the following command should start
-NetBSD from the harddisk image:<pre>
-	<b>gxemul -X -e 3max -d nbsd_pmax.img</b>
+<p><ol>
+  <li>Add both CDs to the <tt>machine.json</tt> above, the 11.0 CD as
+	<tt>rz4</tt> (sysinst takes the sets from the first CD-ROM
+	drive) and the 10.1 CD as <tt>rz5</tt>:<pre>
+  "drives": [ { "file": "disk.img", "kind": "disk", "id": 0 },
+              { "file": "NetBSD-11.0-pmax.iso", "kind": "cdrom", "id": 4, "readonly": true },
+              { "file": "NetBSD-10.1-pmax.iso", "kind": "cdrom", "id": 5, "readonly": true } ],
 </pre>
-
-<p>and log in as <tt>root</tt>. Type <tt>startx</tt> to start X windows.
-
-<p>Remove <b><tt>-X</tt></b> if you only want a serial console.
-
-<p>If you selected to install xdm, you may not be able to login as 
-root unless you also set a root password.
-
-
-
-
-
+  <li>Boot the 10.1 installer from the second CD, and install as
+	above:<pre>
+	&gt;&gt;<b>boot 5/rz5/netbsd</b>
+</pre>
+	(sysinst calls the result NetBSD 10.1, but the sets, the kernel,
+	and the boot loader on the disk are 11.0's.)
+  <li>Boot the disk the same way as 10.1:<pre>
+	&gt;&gt;<b>boot 5/rz0/netbsd -a</b>
+</pre>
+	The first boot waits a minute for entropy.
+</ol>
 
 <p><br>
 <a name="openbsdpmaxinstall"><h3>OpenBSD/pmax:</h3></a>
 
-<p>Installing <a href="http://www.openbsd.org/pmax.html">OpenBSD/pmax</a> is
-a bit harder than installing NetBSD/pmax. You should first read the <a
-href="#netbsdpmaxinstall">section above</a> on how to install NetBSD/pmax,
-before continuing here. If you have never installed OpenBSD on any
-architecture, then you need a great deal of patience to do this. If, on
-the other hand you are used to installing older versions of OpenBSD, then
-this should be no problem for you.
+<p>OpenBSD/pmax died at release 2.8 of OpenBSD, so this will not give you
+an up-to-date OpenBSD system. It installs on the 5000/200 with the
+machine's <a href="#setup">real ROMs</a>, from the release's
+<i>simpleroot</i> (a small root file system with the installer, on a disk
+of its own) and a CD image of the release's files. This was tested with
+the files from
+<a href="https://ftp.eu.openbsd.org/pub/OpenBSD/2.8/pmax/">OpenBSD/2.8/pmax</a>.
 
-<p><a href="20040710-openbsd-pmax.png"><img src="20040710-openbsd-pmax_small.png"></a>
- <a href="openbsd-pmax-20040710.png"><img src="openbsd-pmax-20040710_small.png"></a>
-
-<p>OpenBSD/pmax died at release 2.8 of OpenBSD, so you should be
-aware of the fact that this will not give you an up-to-date OpenBSD
-system.
-
-<p>Following these instructions <i>might</i> work. If not, then use
-common sense and imagination to modify them as you see fit.
-
-<p>
-<ol>
-  <li>Create an empty harddisk image, which will be the root disk
-	that OpenBSD installs itself onto:<pre>
-	<b>dd if=/dev/zero of=obsd_pmax.img bs=1 count=512 seek=900000000</b>
-
+<p><ol>
+  <li>Download that directory (approx. 99 MB), unpack the simpleroot,
+	and make a CD image of the directory (with <tt>mkisofs</tt>, or
+	<tt>xorriso -as mkisofs</tt>):<pre>
+	$ <b>gunzip -c pmax/simpleroot28.fs.gz &gt; simpleroot28.fs</b>
+	$ <b>mkisofs -r -o openbsd-2.8-pmax.iso pmax</b>
+	$ <b>truncate -s 1000M disk.img</b>
 </pre>
-  <li>Download the entire pmax directory from the ftp server: (approx. 99 MB)<pre>
-	<b>wget -r <a href="https://ftp.nluug.nl/OpenBSD/2.8/pmax/">https://ftp.nluug.nl/OpenBSD/2.8/pmax/</a></b>
-
+	Install on the serial console, which is faster than the
+	framebuffer, with this <tt>machine.json</tt> (and the
+	<a href="#setup">ROM images</a>) in the same folder:<pre>
+{
+  "gxemul": 1,
+  "name": "OpenBSD/pmax 2.8",
+  "machine": { "type": "decstation", "model": "3max", "memory_mb": 64 },
+  "boot": { "prom_emulation": false, "rom": "kn02_aa_5.3s.bin", "nvram": "nvram.bin" },
+  "drives": [ { "file": "disk.img", "kind": "disk", "id": 0 },
+              { "file": "simpleroot28.fs", "kind": "disk", "id": 1 },
+              { "file": "openbsd-2.8-pmax.iso", "kind": "cdrom", "id": 2, "readonly": true } ],
+  "display": { "enabled": false },
+  "slots": { "5": "pmaz_aa_5.3d.bin", "6": "pmad_aa_5.3a.bin" }
+}
 </pre>
 
-  <li>Execute the following commands:
-<p><table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<b>mv ftp.nluug.nl/OpenBSD/2.8/pmax/simpleroot28.fs.gz .
-gunzip simpleroot28.fs.gz
-chmod +w simpleroot28.fs</b>		&lt;--- make sure
-</pre></td></tr></table>
-  <li>You now need to make an ISO image of the entire directory you downloaded.
-	(I recommend using <tt>mkisofs</tt> for that purpose. If you don't
-	already have <tt>mkisofs</tt> installed on your system, you need
-	to install it in order to do this.)<pre>
-	<b>mkisofs -o openbsd_pmax_2.8.iso ftp.nluug.nl/OpenBSD/2.8/pmax</b>
-	<b>rm -rf ftp.nluug.nl</b>      <i>(this directory is not needed anymore)</i>
-
+  <li>Boot the simpleroot's kernel, with the simpleroot (<tt>rz1</tt>)
+	as the root device, and start the installer from its shell:<pre>
+	&gt;&gt;<b>boot 5/rz1a/bsd</b>
+	...
+	root device? <b>rz1</b>
+	Enter pathname of shell or RETURN for sh: <i>(press Return)</i>
+	# <b>fsck /dev/rrz1a</b>
+	# <b>mount /dev/rz1a /</b>
+	# <b>mkdir -p /kern /mnt2</b>
+	# <b>mount -t kernfs /kern /kern</b>
+	# <b>cd /; ./install</b>
 </pre>
-  <li>Start the emulator with all three (!) disk images:<pre>
-	<b>gxemul -e 3max -d obsd_pmax.img -d b:simpleroot28.fs -j bsd -d c:openbsd_pmax_2.8.iso</b>
 
+  <li>Answer the installer's questions: don't install onto the
+	simpleroot's disk, the root disk is <tt>rz0</tt>, and create a
+	label in the disklabel editor, e.g. a root partition and swap:<pre>
+	&gt; <b>a a</b>                  <i>(offset 0, a size, 4.2BSD, mount point /)</i>
+	&gt; <b>a b</b>                  <i>(the rest, swap)</i>
+	&gt; <b>w</b>
+	&gt; <b>q</b>
 </pre>
-	(If you add <tt>-X</tt>, you will run with the graphical
-	framebuffer. This is <i>REALLY</i> slow because the console has to
-	scroll a lot during the install. I don't recommend it.)
-  <p>
-  <li>Go on with the installation as you would do if you were installing on a real machine.
-	If you are not used to the OpenBSD installer, then this will most likely
-	be a very uncomfortable experience. Some important things to keep in mind are:
-	<ul>
-	  <li>rz0 is the rootdisk you wish to install onto.
-	  <li>rz1 is the simpleroot image.
-	  <li>rz2 is the CDROM containing the "install sets".
-	  <li>When asked for the "<b>root device?</b>", enter <b>rz1</b>.
-	  <li>At "<b>Enter pathname of shell or RETURN for sh:</b>", press enter.
-	  <li>At the # prompt, do the following:<pre>
-	<b>fsck /dev/rz1a</b>        (and mark the filesystem as clean)
-	<b>mount /dev/rz1a /</b>
-	<b>mkdir /kern</b>
-	<b>mkdir /mnt2</b>
-	<b>mount -t kernfs kern kern</b>
-	<b>./install</b>
+	No more file systems, no network, and install from the CD-ROM:
+	<tt>c</tt>, <tt>rz2</tt>, partition <tt>c</tt>, <tt>cd9660</tt>,
+	and the directory <tt>.</tt>; then extract each set (two
+	Returns each).
 
+  <li>The installer neither sets root's password (it is empty) nor
+	installs the X11 sets. Do that from the same shell, and halt:<pre>
+	# <b>mount /dev/rz0a /mnt</b>
+	# <b>chroot /mnt passwd root</b>
+	# <b>mount -t cd9660 /dev/rz2c /mnt2</b>
+	# <b>cd /mnt; for s in xbase xfont xserv xshare; do tar -xzpf /mnt2/${s}28.tgz; done</b>
+	# <b>ln -s Xcfbpmax /mnt/usr/X11R6/bin/X</b>
+	# <b>ln -s /dev/fb0 /mnt/dev/mouse</b>
+	# <b>echo /usr/X11R6/lib &gt;&gt; /mnt/etc/ld.so.conf</b>
+	# <b>cd /; umount /mnt2; umount /mnt; halt</b>
 </pre>
-		and proceed with the install. Good luck. :-)
-	  <li>Answer "<b>y</b>" when asked if you wish to configure the network.
-		(See the section about installing NetBSD/pmax for suitable
-		network settings.)
-	  <li>Install from "<b>c</b>" (cdrom), choose "<b>rz2</b>" as the cdrom device, and "<b>/</b>" as
-		the directory containing the install sets.
-	</ul>
-  <p>
-  <li>For some unknown reason, the install script does not set the root
-	password! The first time you boot up OpenBSD after the install, you
-	need to go into single user mode and run <b>passwd root</b> to set
-	the root password, or you will not be able to log in at all!<pre>
-	<b>gxemul -e 3max -d obsd_pmax.img -d 2c:openbsd_pmax_2.8.iso -j bsd -o '-s'</b>
+
+  <li>Turn the display on (<tt>"enabled": true</tt>, and the PMAG-BA's
+	ROM in slot 0, as in the <a href="#ultrixinstall">Ultrix</a>
+	example), and boot the new system:<pre>
+	&gt;&gt;<b>setenv boot "5/rz0a/bsd -aN"</b>
+	&gt;&gt;<b>boot</b>
 </pre>
-While you are at it, you might want to extract the X11 install sets
-as well, as the installer seems to ignore them too. (Perhaps due to a bug
-in the installer, perhaps because of the way I used mkisofs.)
-<p>
-Execute the following commands in the emulator:
-<p><table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
-<b>fsck /dev/rz0a
-mount /
-passwd root
-
-cd /; mount -t cd9660 /dev/rz2c /mnt; sh
-for a in /mnt/[xX]*; do tar zxvf $a; done
-ln -s /usr/X11R6/bin/Xcfbpmax /usr/X11R6/bin/X
-ln -s /dev/fb0 /dev/mouse
-echo /usr/X11R6/lib &gt;&gt; /etc/ld.so.conf
-ldconfig
-
-sync
-halt</b>
-</pre></td></tr></table>
+	(<tt>-a</tt> boots multi-user, and <tt>N</tt> takes the root device
+	from where the kernel was loaded, instead of asking.)
 </ol>
 
-<p>
-NOTE: It is also possible to install via ftp instead of using a CDROM image. 
-This is not much less awkward, you still need the simpleroot filesystem 
-image, and you still have to manually add the X11 install sets and set the 
-root password, and so on.
-
-<p>
-Once you have completed the installation procedure, the following command
-will let you boot from the new rootdisk image:
-<pre>
-	<b>gxemul -e 3max -X -o '-aN' -d obsd_pmax.img -j bsd</b>
-</pre>
-
-<p>
-(Normally, you would be asked about which root device to use (<tt>rz0</tt>),
-but using <b><tt>-o '-aN'</tt></b> supresses that.)
-
-<p>
-When asked for which terminal type to use, when logging in as root,
-enter <b><tt>rcons</tt></b> if you are using the graphical framebuffer,
-<b><tt>vt100</tt></b> for text-mode.
-<br>Use <b><tt>startx</tt></b> to start X windows.
-
-
-
-
-
-
-
+<p>When asked for the terminal type when logging in as root, enter
+<tt>rcons</tt> on the framebuffer (<tt>vt100</tt> on the serial
+console). Use <tt>startx</tt> to start X.
 
 <p><br>
 <a name="ultrixinstall"><h3>Ultrix/RISC:</h3></a>
 
-<p>Ultrix/RISC 4.x can run in GXemul on the emulated DECstation 5000/200
-machine model. Ultrix was the native OS for these machines.
+<p>Ultrix/RISC 4.x was DEC's own operating system for these machines, and
+installs on the 5000/200 from its CD, with the machine's
+<a href="#setup">real ROMs</a>. (This was tested with Ultrix and UWS 4.5.)
 
 <p>
 <a href="20040504-ultrix45-boot1.png"><img src="20040504-ultrix45-boot1_small.png"></a>
  <a href="ultrix4.5-20040706.png"><img src="ultrix4.5-20040706_small.png"></a>
 
-<p>
-The following instructions should let you install Ultrix onto a disk image:
-
 <ol>
-  <li>Create an empty harddisk image, which will be the root disk
-        that Ultrix installs itself onto:<pre>
-        <b>dd if=/dev/zero of=rootdisk.img bs=1024 count=1 seek=800000</b>
-
+  <li>Make a folder for the machine, with the <a href="#setup">ROM
+	images</a>, an empty disk image of an RZ26's size, and this
+	<tt>machine.json</tt>:<pre>
+{
+  "gxemul": 1,
+  "name": "Ultrix 4.5",
+  "machine": { "type": "decstation", "model": "3max", "memory_mb": 64 },
+  "boot": { "prom_emulation": false, "rom": "kn02_aa_5.3s.bin", "nvram": "nvram.bin" },
+  "drives": [ { "file": "disk.img", "kind": "disk", "id": 0, "product": "RZ26     (C) DEC" },
+              { "file": "ultrix-4.5.iso", "kind": "cdrom", "id": 4, "readonly": true } ],
+  "display": { "enabled": true },
+  "slots": { "0": "pmag_ba_5.3a.bin", "5": "pmaz_aa_5.3d.bin", "6": "pmad_aa_5.3a.bin" }
+}
 </pre>
-  <li>Place your Ultrix installation media in your CDROM drive.
-	(On FreeBSD and similar systems, it is called <tt>/dev/cd0c</tt>.
-	Replace that with the name of your CDROM drive, or the name of a
-	.iso image file.) Then, start the emulator like this:<pre>
-        <b>gxemul -X -e 3max -d rootdisk.img -d bc:/dev/cd0c -j vmunix</b>
-
+	<pre>
+	$ <b>truncate -s 1050M disk.img</b>
+	$ <b>gxemul machine.json</b>
 </pre>
-  <li>Once the first stage of the installation is done (restoring the root
-	filesystem), you need to restart the emulator, booting from the 
-	new rootdisk, to continue the installation process.
-	This is done by removing the bootflag ('<tt>b</tt>') from the second
-	diskimage argument:<pre>
-        <b>gxemul -X -e 3max -d rootdisk.img -d c:/dev/cd0c -j vmunix</b>
+	Keep the display on during the installation: the installation
+	configures a kernel for the hardware it finds, and without the
+	framebuffer, Ultrix's console stays on the serial line afterwards.
 
+  <li>The ROM asks for the keyboard's language (4 is English). Then boot
+	the CD:<pre>
+	&gt;&gt;<b>boot 5/rz4/vmunix</b>
 </pre>
+	(<tt>5</tt> is the TURBOchannel slot of the SCSI controller, and
+	<tt>rz4</tt> the drive with SCSI ID 4.)
+
+  <li>Choose the BASIC installation, and the RZ26 (<tt>rz0</tt>) as the
+	system disk. The installation restores the root file system, and
+	halts. Boot the system disk, as it says:<pre>
+	&gt;&gt;<b>setenv boot "5/rz0/vmunix -a"</b>
+	&gt;&gt;<b>boot</b>
+</pre>
+
+  <li>Answer the questions: the system's name, the date (as
+	<tt>yymmddhhmm</tt>), the time zone, root's password, the
+	display (Color), and the user interface (DECwindows for OSF/Motif).
+	The installation then loads the software, builds a kernel, and
+	reboots to the DECwindows login box.
 </ol>
 
-<p>
-When the installation is completed, the following command should start  
-Ultrix from the harddisk image:<pre>
-        <b>gxemul -X -e 3max -j vmunix -d rootdisk.img</b>
+<p>Two settings of the ROM make the machine start like an installed
+workstation (they are kept in <tt>nvram.bin</tt>):<pre>
+	&gt;&gt;<b>setenv console 1</b>
+	&gt;&gt;<b>setenv haltaction b</b>
 </pre>
+<tt>console 1</tt> stops the ROM from asking for the keyboard's
+language at every reset, and with <tt>haltaction b</tt>, it boots the
+<tt>boot</tt> setting at power-on instead of stopping at its prompt.
+<tt>boot 5/rz0/vmunix</tt> (without <tt>-a</tt>) boots single-user.
 
-<p>If you have a very fast host machine, you might experience a weird
-timer related bug, which makes it impossible to logon to the system when
-using the graphical logon. It is
-triggered when the emulation goes faster than any real DECstation machine
-was capable of running.
-The first thing to try is to re-attempt the login a couple of times.
-The second thing I usually try is to break into the GXemul debugger prompt,
-turn on <tt>trace</tt> and <tt>continue</tt> running, login, and then
-break into the debugger again and turn off <tt>trace</tt> and
-finally <tt>continue</tt>.
+<p>Before logging in at the login box, see <a href="#ultrixdxsession">the
+graphical login logs out right away</a> below.
 
 <p>If you want TCP/IP IPv4 networking, try executing the following inside
 ULTRIX as root:
@@ -345,34 +364,18 @@ route add default 10.0.0.254 1
 
 <p>This will allow you to e.g. telnet to numeric IPv4 addresses.
 
-<p>You can experiment with adding <b><tt>-Z2</tt></b> (for emulating a 
-dual-headed workstation) or even <b><tt>-Z3</tt></b> (tripple-headed), and 
-also the <b><tt>-Y2</tt></b> option for scaling down the framebuffer 
-windows by a factor 2x2. Each graphics card gets a window of its own.
-The following example starts Ultrix on an emulated tripple-headed
-workstation, using no scaledown:<pre>
-        <b>gxemul -N -e 3max -jgenvmunix -d rootdisk.img -X -Z3</b>
-</pre>
-
-<p>Older versions of GXemul used X11, and could show each window on a
-different X11 display (with the <b><tt>-z</tt></b> option, which is now
-ignored). The photo below shows a single Ultrix session running
-tripple-headed that way, in GXemul on an Alpha 21164PC, with displays on a
-Sun Ultra1 (to the left), on the Alpha itself (in the middle), and on an
-HP700/RX X-terminal (8-bit color depth, running off the Alpha) to the
-right.
+<p>The kernel that the installation built only knows about the hardware
+that was there; with other hardware (e.g. more graphics cards), boot the
+generic kernel, <tt>genvmunix</tt>, instead of <tt>vmunix</tt>. Older
+versions of GXemul used X11, and could show each window on a
+different X11 display. The photo below shows a single Ultrix session
+running triple-headed that way, in GXemul on an Alpha 21164PC, with
+displays on a Sun Ultra1 (to the left), on the Alpha itself (in the
+middle), and on an HP700/RX X-terminal (8-bit color depth, running off
+the Alpha) to the right.
 
 <p>
 <a href="20041209-ultrix-tripplehead.jpg"><img src="20041209-ultrix-tripplehead_small.jpg"></a>
-
-<p>There is no way yet to set the scaledown factor on a per-window basis, so 
-the scaledown factor affects all windows.
-
-<p>(If you didn't use <tt><b>-Z<i>n</i></b></tt> during the installation, and 
-compiled your own <tt>/vmunix</tt>, then it will not contain support for 
-multiple graphics cards. To overcome this problem, use the generic kernel,
-<tt><b>-j genvmunix</b></tt>, whenever you are running the emulator with a 
-different setup than the one you used when Ultrix was installed.)
 
 <p><a name="ultrixdxsession"></a><b>The graphical login logs out right
 away:</b> With Ultrix 4.5 (and possibly other versions), logging in at the
@@ -389,19 +392,23 @@ end of its session, and logs out. (<tt>init</tt> then logs
 
 <p>The workaround is to keep a shell between <tt>login</tt> and
 <tt>dxsession</tt>, so that the login box becomes the shell's child
-instead. Boot single-user (without <tt>-a</tt>), and replace the
-<tt>/usr/bin/dxsession</tt> link with a small script:<pre>
+instead, and to start <tt>dxsession</tt> a little later, once the login box
+is gone. (Without the delay, the session still ended right away in about
+half of the logins.) Boot single-user (<tt>boot 5/rz0/vmunix</tt>, without
+<tt>-a</tt>), and replace the <tt>/usr/bin/dxsession</tt> link with a
+small script:<pre>
 	<b>fsck -p</b>
 	<b>mount -a</b>
 	<b>mv /usr/bin/dxsession /usr/bin/dxsession.orig</b>
 	<b>echo '#!/bin/sh' &gt; /usr/bin/dxsession</b>
+	<b>echo 'sleep 2' &gt;&gt; /usr/bin/dxsession</b>
 	<b>echo '/usr/bin/X11/dxsession "$@"' &gt;&gt; /usr/bin/dxsession</b>
 	<b>chmod 755 /usr/bin/dxsession</b>
 	<b>sync</b>
 </pre>
-and reboot to multi-user. (The script must not <tt>exec</tt> the real
-<tt>dxsession</tt>, since that would replace the shell. To undo it, move
-<tt>dxsession.orig</tt> back.)
+and boot multi-user (<tt>exit</tt> continues to multi-user). (The script
+must not <tt>exec</tt> the real <tt>dxsession</tt>, since that would
+replace the shell. To undo it, move <tt>dxsession.orig</tt> back.)
 
 <p><a name="ultrix31net"></a><b>No <tt>ln0</tt> interface on Ultrix
 3.1:</b> Ultrix 3.1 finds the Ethernet as <tt>ln0</tt> while booting
@@ -437,21 +444,43 @@ https://web.stanford.edu/~ouster/cgi-bin/spriteRetrospective.php</a>.
 <a href="20040711-sprite-1.png"><img src="20040711-sprite-1_small.png"></a>
  <a href="sprite-20040711.png"><img src="sprite-20040711_small.png"></a>
 
-<p>
-The following instructions should let you run Sprite in the emulator:
+<p>Sprite runs from that disk image on the 5000/200, with the machine's
+<a href="#setup">real ROMs</a>:
 
 <p>
 <ol>
-  <li>Download the Sprite harddisk image:<pre>
+  <li>Download the Sprite harddisk image (it is also on the Sprite CD,
+	as <tt>ds5000.bt</tt>):<pre>
 <a href="https://github.com/OSPreservProject/sprite/raw/master/ds5000.bt">https://github.com/OSPreservProject/sprite/raw/master/ds5000.bt</a>
 
 (83973120 bytes, MD5 = ec84eeeb20fe77b758370d5e312e4a5e)
 </pre>
 
-  <li>Start the emulator with the following command line:<pre>
-	<b>gxemul -X -e 3max -M128 -d ds5000.bt -j vmsprite -o ''</b>
-
+  <li>Make a folder for the machine, with the disk image, the
+	<a href="#setup">ROM images</a>, and this <tt>machine.json</tt>.
+	Sprite keeps its Ethernet address on the disk, so give the
+	machine a fixed one (<tt>"mac"</tt>), which the Ethernet
+	interface's ROM then reports:<pre>
+{
+  "gxemul": 1,
+  "name": "Sprite",
+  "machine": { "type": "decstation", "model": "3max", "memory_mb": 128 },
+  "boot": { "prom_emulation": false, "rom": "kn02_aa_5.3s.bin", "nvram": "nvram.bin" },
+  "drives": [ { "file": "ds5000.bt", "kind": "disk", "id": 0 } ],
+  "display": { "enabled": true },
+  "slots": { "0": "pmag_ba_5.3a.bin", "5": "pmaz_aa_5.3d.bin", "6": "pmad_aa_5.3a.bin" },
+  "network": { "mac": "08:00:2b:e0:e0:25" }
+}
 </pre>
+
+  <li>Start it with <tt>gxemul machine.json</tt>. The ROM asks for
+	the keyboard's language (4 is English; <tt>setenv console 1</tt>
+	stops it from asking again). Then boot Sprite:<pre>
+	&gt;&gt;<b>setenv boot "5/rz0/vmsprite"</b>
+	&gt;&gt;<b>boot</b>
+</pre>
+	(<tt>setenv haltaction b</tt> makes the ROM boot it at
+	power-on.)
 </ol>
 
 <p>The first time you boot up with the disk image, you will be asked a number 
@@ -459,11 +488,12 @@ of questions regarding network settings. If you feel like entering correct
 values, then you should use the following:
 
 <p><pre>
-    Your machine's Ethernet address:    10:20:30:00:00:10
+    Your machine's Ethernet address:    8:0:2b:e0:e0:25     (the "mac" above)
     Your machine's IP:                  10.0.0.1
     Subnet mask:                        0xff000000
     Gateway's Ethernet address:         60:50:40:30:20:10
     Gateway's IP:                       10.0.0.254
+    Nameserver's IP:                    10.0.0.254
 </pre>
 
 <p>
@@ -537,65 +567,51 @@ machine uses.)
 <p><br>
 <a name="declinux"><h3>Debian GNU/Linux for DECstation:</h3></a>
 
-<p>It is possible to run Debian GNU/Linux for DECstation in the emulator,
-on an emulated 5000/200 ("3max"). However, just choosing any 
-Linux/DECstation kernel at random for the installation will not work.
+<p>Debian GNU/Linux 3.1 ("sarge") installs on a 5000/1xx (3MIN) from its
+netinst CD, with the machine's real ROMs. It doesn't work on the 5000/200:
+its Linux 2.4 kernel has no keyboard driver for the 5000/200's DZ serial
+chip ("<tt>lk201: support for DZ11 not yet ready</tt>"), and its DZ driver
+copies up to 4 KB of output into a buffer of a few hundred bytes, which overwrites
+other kernel data and crashes the installer.
 
-<p><ul>
-  <li>Linux 2.4/DECstation DZ serial console output doesn't work too well in
-	GXemul. Linux oopses randomly, which may be due to bugs in GXemul,
-	but may also be due to bugs in the serial controller code in Linux.
-	(The speed at which serial interrupts are generated can be
-	lowered with the <tt>-U</tt> command line option, but it only
-	reduces the risk, it doesn't take away the oopses completely.)
-  <li>The Linux 2.6/DECstation DZ serial console driver doesn't work at 
-	all in the emulator, and I'm not really sure it would work on a
-	real 5000/200 either. Hopefully this will be fixed in Linux in
-	the future.
-  <li>To get around the serial console problem, the obvious solution is to
-	use a graphical framebuffer instead. Old Debian install kernels
-	supported the graphical framebuffer on the 3max, but not the
-	keyboard. (This has been fixed now, it seems.)
-  <li>For quite some time, the MIPS linux cvs tree has had support for the
-	framebuffer and keyboard, but it did not include Debian's
-	patches for networking, which made it unusable for network
-	installs. (Possibly fixed now.)
-  <li>The kernel has to be for 5000/200. This rules out using
-	the default kernel on netinst ISO images provided by Debian.
-	These ISO images boot directly into a kernel which is meant
-	for a different DECstation model.
-  <li>The kernel has to have an initrd which more or less matches the
-	version of Debian that will be installed.
-</ul>
+<p>The 5000/1xx's ROM is <tt>kn02_ba_5.7j.bin</tt> (KN02-BA V5.7j); its
+SCSI controller and Ethernet are built in, and the PMAG-BA framebuffer
+(<tt>pmag_ba_5.3a.bin</tt>) goes in slot 0. The ROM's self-test reports
+a few failures (cache, cursor and clock tests that GXemul doesn't pass
+yet) and then waits at the <tt>&gt;&gt;</tt> prompt instead of booting
+by itself.
 
-<p>Luckily, a precompiled install kernel has been made available by David 
-Muse, for Debian for R3000 DECstations, which has support for framebuffer, 
-keyboard, and networking, which works pretty well. Thanks David. :-)
-
-<p>The following steps should let you install Debian GNU/Linux for 
-DECstation onto a harddisk image in the emulator:
-
-<p>
-<ol>
-  <li>Create an empty harddisk image, which will be the root disk
-	that Debian installs itself onto:<pre>
-	<b>dd if=/dev/zero of=debian_pmax.img bs=1024 count=1 seek=6000000</b>
-
+<p><ol>
+  <li>Download the CD image,
+	<a href="https://cdimage.debian.org/cdimage/archive/3.1_r6a/mipsel/iso-cd/debian-31r6a-mipsel-netinst.iso">debian-31r6a-mipsel-netinst.iso</a>,
+	and make a folder for the machine, with the ROM images, an empty
+	disk image, and this <tt>machine.json</tt>:<pre>
+{
+  "gxemul": 1,
+  "name": "Debian 3.1",
+  "machine": { "type": "decstation", "model": "3min", "memory_mb": 128 },
+  "boot": { "prom_emulation": false, "rom": "kn02_ba_5.7j.bin", "nvram": "nvram.bin" },
+  "drives": [ { "file": "disk.img", "kind": "disk", "id": 0 },
+              { "file": "debian-31r6a-mipsel-netinst.iso", "kind": "cdrom", "id": 4, "readonly": true } ],
+  "display": { "enabled": true },
+  "slots": { "0": "pmag_ba_5.3a.bin" }
+}
 </pre>
-  <li>Download David Muse' install kernel, and a Debian Netinstall CD-ROM:<pre>
-	<a href="http://www.firstworks.com/mips-linux-2.4.31/vmlinux-2.4.31">http://www.firstworks.com/mips-linux-2.4.31/vmlinux-2.4.31</a>
-	<a href="http://cdimage.debian.org/cdimage/archive/3.1_r6a/mipsel/iso-cd/">http://cdimage.debian.org/cdimage/archive/3.1_r6a/mipsel/iso-cd</a>/<a href="http://cdimage.debian.org/cdimage/archive/3.1_r6a/mipsel/iso-cd/debian-31r6a-mipsel-netinst.iso">debian-31r6a-mipsel-netinst.iso</a>
-
-	MD5 (vmlinux-2.4.31) = c88dc0a26b91e3646698179c18e8169b
-	MD5 (debian-31r6a-mipsel-netinst.iso) = db1bf2f8e5b24f820f37034ec1d20bdc
-</pre>
-  <p>
-  <li>Start the installation like this:<pre>
-	<b>gxemul -X -e3max -d debian_pmax.img -d debian-31r6a-mipsel-netinst.iso vmlinux-2.4.31</b>
+	<pre>
+	$ <b>truncate -s 2000M disk.img</b>
+	$ <b>gxemul machine.json</b>
 </pre>
 
-	<p>If everything goes well, you will see Linux' boot messages, and then
-	arrive at the language chooser.
+  <li>Boot the installer from the CD. On the 5000/1xx, the built-in SCSI
+	controller is slot 3, and the CD's boot loader (delo) takes a
+	partition number and a label:<pre>
+	&gt;&gt;<b>boot 3/rz4 1/linux-kn02</b>
+</pre>
+	Linux takes a minute to start, and the installer a few more. If
+	you add parameters, give them all, since they replace delo's:
+	<tt>boot 3/rz4 1/linux-kn02 initrd=/boot/initrd.gz
+	ramdisk_size=8192 console=ttyS2</tt> installs on the serial
+	console (without the display, and without slot 0).
 
 <p>
 <a href="debian-1.png"><img src="debian-1-small.png"></a>
@@ -603,79 +619,44 @@ DECstation onto a harddisk image in the emulator:
 <a href="debian-3.png"><img src="debian-3-small.png"></a>
 <a href="debian-4.png"><img src="debian-4-small.png"></a>
 
-	<p>There will be a warning about the keyboard
-	layout. Don't mind this. Continue, and then select <b>Detect
-	and mount CD-ROM</b> in the next menu.
+  <li>Install: the keyboard layout step fails (there is no layout for
+	the LK201); continue with <b>Detect and mount CD-ROM</b>. The
+	network is configured with DHCP. Choose <b>Erase entire disk</b>,
+	with all files in one partition. Installing the base system from
+	the CD takes about an hour. delo goes on <tt>/dev/sda</tt>.
 
-<p>
-<a href="debian-5.png"><img src="debian-5-small.png"></a>
-<a href="debian-6.png"><img src="debian-6-small.png"></a>
-<a href="debian-7.png"><img src="debian-7-small.png"></a>
-<a href="debian-8.png"><img src="debian-8-small.png"></a>
-
-	<p>
-	There will also be a warning about lack of loadable modules. Don't
-	mind this either, continue anyway by choosing <b>Yes</b>.
-	<p>
-	When you reach the network configuration part of the install, choose
-	<b>Configure network manually</b> and enter the following values:<pre>
-	IP address:                 <b>10.0.0.1</b>
-	Netmask:                    <b>255.0.0.0</b>
-	Gateway:                    <b>10.0.0.254</b>
-	Name server addresses:      <b>10.0.0.254</b>
-
+  <li>The installer reboots to the ROM. Boot the disk:<pre>
+	&gt;&gt;<b>boot 3/rz0</b>
 </pre>
-	<p>Choose <b>Erase entire disk</b> in the partitioner.
-
-	<p>Wait for the base system to be installed. This takes almost forever,
-	so you can go fetch several <a href="http://en.wikipedia.org/wiki/Jolt_Cola">Jolts</a>
-	or cups of coffee in the meanwhile.
-
-<p>
-<a href="debian-9.png"><img src="debian-9-small.png"></a>
-<a href="debian-10.png"><img src="debian-10-small.png"></a>
-<a href="debian-11.png"><img src="debian-11-small.png"></a>
-<a href="debian-12.png"><img src="debian-12-small.png"></a>
-
-	<p>Congratulations! The first phase of the installation is now completed.
-	Reboot using the following command line:<pre>
-	<b>gxemul -X -e3max -o 'root=/dev/sda1' -d debian_pmax.img vmlinux-2.4.31</b>
-
+	The second part of the installation asks for the keymap (choose
+	<b>Keep kernel keymap</b>), the time zone, root's password, and a
+	user. The CD isn't accepted as an apt source, and "stable" on the
+	archive isn't sarge any more: cancel the apt configuration, choose
+	<b>Finish configuring the base system</b>, and then point apt at
+	the archive:<pre>
+	# <b>echo deb http://archive.debian.org/debian sarge main &gt; /etc/apt/sources.list</b>
+	# <b>apt-get update</b>
 </pre>
-	<p>The post-install step takes quite some time as well. A perfect opportunity
-	for more coffee.
-
-	<p>When asked about whether the hardware clock is set to GMT or
-	not, answer Yes.
-
-	<p>When asked about "Apt configuration", choose <b>http</b> as the method
-	to use for accessing the Debian archive.
-
-<p>
-<a href="debian-13.png"><img src="debian-13-small.png"></a>
-<a href="debian-14.png"><img src="debian-14-small.png"></a>
-<a href="debian-15.png"><img src="debian-15-small.png"></a>
-
-	<p>Downloading the packages takes almost forever. Be patient.
-
-	<p>Congratulations (again)! You are now fully done with the installation.
-
 </ol>
 
-<p><br>Debian GNU/Linux for DECstation is now installed and ready to be used.
-Use this command to boot from the installed disk image:<pre>
-	<b>gxemul -X -e3max -o 'root=/dev/sda1' -d debian_pmax.img vmlinux-2.4.31</b>
-
+<p>If the system was installed on the serial console, its delo label
+boots with <tt>console=ttyS2</tt>, and the logins on the virtual
+consoles are switched off. For the framebuffer and keyboard, add a label
+without it to <tt>/etc/delo.conf</tt>, and remove the <tt>#</tt> in
+front of the <tt>1:2345:respawn:/sbin/getty 38400 tty1</tt> line in
+<tt>/etc/inittab</tt>:<pre>
+label=fb
+  image=/vmlinux
+  append="root=/dev/sda1"
+</pre>
+<pre>
+	&gt;&gt;<b>setenv boot "3/rz0 1/fb"</b>
+	&gt;&gt;<b>boot</b>
 </pre>
 
 
 
 
-
-
-
-
-<p><br>
 <a name="declinuxredhat"></a>
 <h3>Redhat Linux for DECstation:</h3>
 

@@ -996,6 +996,9 @@ void emul_run(struct emul *emul)
 
 	control_shutdown();
 
+	/*  Let ffmpeg finish a recording:  */
+	display_video_finish();
+
 	/*  Deinitialize all CPUs in all machines:  */
 	for (int j = 0; j <emul->n_machines; j++)
 		cpu_run_deinit(emul->machines[j]);

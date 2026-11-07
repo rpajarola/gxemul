@@ -536,6 +536,12 @@ static int video_width, video_height;
 static struct timeval video_start;
 static unsigned long video_frames;
 
+/*  A recording to start once the machine's framebuffer window is there
+    (--record), or once it shows something (--record-nonblack):  */
+static char *video_record_file = NULL;
+static bool video_record_nonblack;
+static uint32_t video_record_checked;
+
 
 /*  Returns a new file name in the current directory, from the date and time.  */
 static char *capture_name(const char *extension)
@@ -955,6 +961,76 @@ bool display_video_recording(void)
 
 
 /*
+ *  display_video_record():
+ *
+ *  Records the first machine's framebuffer window into file from when it
+ *  is set up, or if nonblack is set, from when it first shows a pixel
+ *  that isn't black.
+ */
+void display_video_record(const char *file, bool nonblack)
+{
+	free(video_record_file);
+	CHECK_ALLOCATION(video_record_file = strdup(file));
+	video_record_nonblack = nonblack;
+}
+
+
+/*
+ *  display_video_finish():
+ *
+ *  When the emulation ends: stops a recording, and waits for ffmpeg to
+ *  finish the file.
+ */
+void display_video_finish(void)
+{
+	if (video_pipe != NULL)
+		display_video_stop();
+	else if (video_record_file != NULL) {
+		printf("%s wasn't recorded: %s\n", video_record_file,
+		    video_record_nonblack ? "the screen stayed black" :
+		    "there was no framebuffer window");
+		free(video_record_file);
+		video_record_file = NULL;
+	}
+}
+
+
+/*  Starts the recording that display_video_record() asked for, when it is
+    time to:  */
+static void video_record_poll(struct emul *emul)
+{
+	if (video_record_file == NULL || emul->n_machines < 1)
+		return;
+
+	struct machine *m = emul->machines[0];
+	if (m->display_md.n_fb_windows < 1 ||
+	    m->display_md.fb_windows[0]->xsize <= 0)
+		return;
+
+	if (video_record_nonblack) {
+		/*  Looked at the screen ten times a second:  */
+		uint32_t now = display_ticks();
+		if (now - video_record_checked < 1000 / VIDEO_FPS)
+			return;
+		video_record_checked = now;
+
+		struct fb_window *fbwin = m->display_md.fb_windows[0];
+		size_t i, n = (size_t) fbwin->xsize * fbwin->ysize;
+		for (i = 0; i < n; i++)
+			if ((fbwin->screen[i] & 0xffffff) != 0)
+				break;
+		if (i == n)
+			return;
+	}
+
+	char *file = video_record_file;
+	video_record_file = NULL;
+	display_video_start(m, file);
+	free(file);
+}
+
+
+/*
  *  display_ticks():
  *
  *  Returns a millisecond counter, for timing things in the display.
@@ -981,6 +1057,7 @@ void display_check_event(struct emul *emul)
 	vnc_poll(emul);
 
 	/*  If a framebuffer is being recorded, send any frames that are due:  */
+	video_record_poll(emul);
 	video_tick();
 
 	/*  Is a file chooser done?  */

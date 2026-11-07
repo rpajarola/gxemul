@@ -6,7 +6,9 @@
 #
 #  It was written to dump the ROM of the built-in SCSI controller (slot 5,
 #  PMAZ-AA) of a DECstation 5000/200, which is soldered to the system
-#  module, but it works for any slot.
+#  module, but it works for any slot, and on the 5000/1xx, /2x, /240 and
+#  /260 too:  which machine it is comes from the CPU module that cnfg
+#  lists (KN02-AA, KN03-AA, ...), or from --machine.
 #
 #  Connect a serial cable to the console port (the one marked 3, or the
 #  printer/console port, 9600 8N1), power the machine on and wait for the
@@ -22,10 +24,18 @@
 #  with a terminal server), print the commands to type, capture the
 #  output with the terminal program's logging, and convert the log:
 #
-#	python3 dump_tc_rom.py --print-commands --slot 5
+#	python3 dump_tc_rom.py --print-commands --machine kn02 --slot 5
 #	python3 dump_tc_rom.py --from-log console.log --slot 5 -o slot5.bin
 #
-#  Send back the .bin AND the .log files.
+#  Send back the .bin, .words AND .log files.
+#
+#  If no option ROM header is found (some boards, e.g. the PXG family
+#  PMAG-DA/EA/FA, may not have one where it is expected), the script
+#  still dumps something:  it reads the header area at each of the usual
+#  offsets, prints what it saw, and dumps the offset that looks most like
+#  ROM (or --offset, if given).  The .words file has the whole 32-bit
+#  words (big-endian), in case the ROM is wider than a byte, and the .log
+#  has everything that was read, so the dump can be sorted out later.
 #
 #  How the ROM is read:  an option ROM is byte-wide, and each of its bytes
 #  is in its own 32-bit word of the slot's address space.  The ROM header
@@ -45,11 +55,19 @@ import select
 import sys
 import time
 
-#  The physical base addresses of the TURBOchannel slots of a
-#  DECstation 5000/200 (KN02), as KSEG1 (uncached) addresses:
-SLOT_BASE = {
-	0: 0xbe000000, 1: 0xbe400000, 2: 0xbe800000,
-	5: 0xbf400000, 6: 0xbf800000,
+#  The physical base addresses of the TURBOchannel slots, as KSEG1
+#  (uncached) addresses, of each kind of machine, and the CPU modules
+#  (as cnfg lists them) that are that kind:
+MACHINES = {
+	"kn02": ("5000/200", ["KN02-AA"], {
+	    0: 0xbe000000, 1: 0xbe400000, 2: 0xbe800000,
+	    5: 0xbf400000, 6: 0xbf800000}),
+	"kn03": ("5000/240 or /260", ["KN03", "KN05"], {
+	    0: 0xbe000000, 1: 0xbe800000, 2: 0xbf000000}),
+	"kmin": ("5000/1xx", ["KN02-BA", "KN04"], {
+	    0: 0xb0000000, 1: 0xb4000000, 2: 0xb8000000}),
+	"maxine": ("5000/2x", ["KN02-CA"], {
+	    0: 0xb0000000, 1: 0xb4000000}),
 }
 
 #  Where in a slot to look for an option ROM:
@@ -59,7 +77,23 @@ ROM_OFFSETS = [0x3c0000, 0x0c0000, 0x000000, 0x1c0000, 0x380000,
 
 PATTERN = [0x55, 0x00, 0xaa, 0xff]
 CHUNK = 0x400		#  ROM bytes per e command (4 KB of address space)
-LINE_RE = re.compile(r'([0-9a-fA-F]{8}):\s*0x([0-9a-fA-F]{8})')
+#  A line of e -x output.  It has to start the line, or the echo of the
+#  e -x command itself would look like one:
+LINE_RE = re.compile(r'^\s*(?:0x)?([0-9a-fA-F]{8}):\s*0x([0-9a-fA-F]{8})',
+    re.MULTILINE)
+CNFG_RE = re.compile(r'^\s*(\d+):\s+(\S+)', re.MULTILINE)
+
+
+def machine_from_cnfg(text):
+	"""Returns the kind of machine that cnfg's output says this is
+	(or None), and {slot: module} for what it lists."""
+	slots = {int(m.group(1)): m.group(2)
+	    for m in CNFG_RE.finditer(text)}
+	for name, (_, modules, _) in MACHINES.items():
+		for mod in slots.values():
+			if any(mod.startswith(m) for m in modules):
+				return name, slots
+	return None, slots
 
 
 def parse_words(text):
@@ -141,6 +175,7 @@ class Console:
 			time.sleep(0.03)
 		os.write(self.fd, b"\r")
 		text, found = self.read_until_prompt(timeout)
+		self.last = text
 		if not found:
 			raise RuntimeError("no >> prompt after %r; got:\n%s"
 			    % (cmd, text[-500:]))
@@ -182,6 +217,43 @@ def find_header(read, base):
 		if [w & 0xff for w in got] == PATTERN:
 			return off
 	return None
+
+
+def survey(read, base, last_text):
+	"""Reads the header area (0x3e0..0x46c) at each of the usual
+	offsets, prints what is there, and returns the offset that looks
+	most like ROM (the most different low bytes), or None if nothing
+	could be read at all."""
+	print("no option ROM header (55 00 aa ff at 0x3f0) found; what the"
+	    " usual offsets have at 0x3f0..0x3fc:")
+	best, best_score = None, -1
+	for off in ROM_OFFSETS:
+		a = base + off
+		words = read(a + 0x3e0, a + 0x46c)
+		got = [words.get(a + 0x3e0 + 4 * i) for i in range(36)]
+		have = [w for w in got if w is not None]
+		if not have:
+			text = last_text() or ""
+			print("    0x%06x: %s" % (off, "bus error"
+			    if "DBE" in text else "nothing read"))
+			continue
+		score = len(set(w & 0xff for w in have)) \
+		    + len(set(have)) // 4
+		print("    0x%06x: %s   (%d different low bytes in"
+		    " 0x3e0..0x46c)" % (off, " ".join("--------"
+		    if w is None else "%08x" % w for w in got[4:8]),
+		    len(set(w & 0xff for w in have))))
+		if score > best_score:
+			best, best_score = off, score
+	if best is None:
+		text = last_text()
+		print("nothing could be read; the last thing the console said"
+		    " was:\n%s" % (text[-500:] if text else "(nothing)"))
+		if text and "DBE" in text:
+			print("(a bus error means that nothing answers at that"
+			    " address:  is it the right slot, and the right"
+			    " machine?)")
+	return best
 
 
 def describe_header(words, rom):
@@ -226,8 +298,13 @@ def main():
 	ap.add_argument("--port", help="serial port, e.g. /dev/ttyUSB0")
 	ap.add_argument("--baud", type=int, default=9600)
 	ap.add_argument("--command", help=argparse.SUPPRESS)
-	ap.add_argument("--slot", type=int, default=5,
-	    choices=sorted(SLOT_BASE))
+	ap.add_argument("--machine", choices=sorted(MACHINES),
+	    help="the kind of machine (default: from what cnfg says;"
+	    " kn02 = 5000/200, kn03 = 5000/240 and /260, kmin = 5000/1xx,"
+	    " maxine = 5000/2x)")
+	ap.add_argument("--slot", type=int,
+	    help="the slot (default: 5 on a 5000/200; on the others, the"
+	    " one option that cnfg lists)")
 	ap.add_argument("--offset", type=lambda x: int(x, 0),
 	    help="offset of the ROM in the slot (default: search)")
 	ap.add_argument("--size", type=lambda x: int(x, 0),
@@ -241,9 +318,31 @@ def main():
 	ap.add_argument("-v", "--verbose", action="store_true",
 	    help="show the console output")
 	args = ap.parse_args()
-	base = SLOT_BASE[args.slot]
+
+	def slot_base(machine, listed={}):
+		name, _, bases = MACHINES[machine]
+		options = sorted(n for n in listed if n in bases)
+		if args.slot is None:
+			if machine == "kn02":
+				args.slot = 5
+			elif len(options) == 1:
+				args.slot = options[0]
+			else:
+				ap.error("--slot is needed (cnfg lists %s)"
+				    % (", ".join("%d: %s" % (n, listed[n])
+				    for n in options) or "no options"))
+		if args.slot not in bases:
+			ap.error("a %s has no slot %d (it has %s)" % (name,
+			    args.slot, ", ".join(str(n) for n in
+			    sorted(bases))))
+		return bases[args.slot]
 
 	if args.print_commands:
+		machine = args.machine or "kn02"
+		base = slot_base(machine)
+		print("These are for a %s (--machine %s):  check that the CPU"
+		    " module that\ncnfg lists is %s.\n" % (MACHINES[machine][0],
+		    machine, " or ".join(MACHINES[machine][1])))
 		off = args.offset if args.offset is not None else 0x3c0000
 		size = args.size or 65536
 		rom = base + off
@@ -265,7 +364,9 @@ This is the right place if the low bytes of the four words are
 """ % (args.slot, args.slot, rom + 0x3f0, rom + 0x3fc))
 		print("If not, try these until one shows 55, 00, aa, ff (and"
 		    " then pass\n--offset with the offset after the slot's"
-		    " 0x%08x):\n" % base)
+		    " 0x%08x).  If none does, dump the one\nthat looks"
+		    " most like data (not all 0 or all ff) anyway, and send"
+		    " the log:\n" % base)
 		for o in ROM_OFFSETS:
 			if o != off:
 				a = base + o + 0x3f0
@@ -283,9 +384,9 @@ Stop capturing, set more back to what printenv said (normally 24):
 
 and convert the capture with:
 
-    python3 dump_tc_rom.py --from-log LOG --slot %d%s -o slot%d.bin
+    python3 dump_tc_rom.py --from-log LOG --machine %s --slot %d%s -o slot%d.bin
 """ % (size // 1024, size * 22 // 960 // 60 + 1, rom,
-	    rom + 4 * size - 4, args.slot,
+	    rom + 4 * size - 4, machine, args.slot,
 	    "" if off == 0x3c0000 else " --offset 0x%x" % off, args.slot))
 		return 0
 
@@ -294,12 +395,17 @@ and convert the capture with:
 
 	if args.from_log:
 		with open(args.from_log, "r", encoding="latin1") as f:
-			words = parse_words(f.read())
+			cnfg = f.read()
+		words = parse_words(cnfg)
+		logname = args.from_log
 		con = None
 		log = None
 
 		def read(start, end):
 			return words
+
+		def last_text():
+			return None
 	else:
 		if (args.port is None) == (args.command is None):
 			ap.error("--port (or --from-log, or --print-commands)"
@@ -321,8 +427,17 @@ and convert the capture with:
 			if all(a in words
 			    for a in range(start, end + 4, 4)):
 				return words
-			words.update(examine(con, log, start, end))
+			try:
+				words.update(examine(con, log, start, end))
+			except RuntimeError as e:
+				#  E.g. a bus error that the monitor does
+				#  not come back from with a prompt:
+				print("WARNING: %s" % e)
+				con.wake()
 			return words
+
+		def last_text():
+			return getattr(con, "last", None)
 
 	more = None
 	try:
@@ -332,9 +447,31 @@ and convert the capture with:
 			m = re.search(r'more=(\d+)', text)
 			more = m.group(1) if m else "24"
 			print("printenv: more=%s" % more)
-			text = con.command("cnfg")
-			log.write(text)
-			print(text.strip())
+			cnfg = con.command("cnfg")
+			log.write(cnfg)
+			print(cnfg.strip())
+
+		detected, listed = machine_from_cnfg(cnfg)
+		machine = args.machine or detected
+		if machine is None:
+			if con is not None:
+				print("can't tell from cnfg which machine this"
+				    " is; pass --machine")
+				return 1
+			#  A log without cnfg in it:
+			machine = "kn02"
+		elif args.machine and detected and args.machine != detected:
+			print("WARNING: cnfg says that this is a %s, not a %s"
+			    % (MACHINES[detected][0], MACHINES[machine][0]))
+		base = slot_base(machine, listed)
+		print("a %s; slot %d is at 0x%08x" % (MACHINES[machine][0],
+		    args.slot, base))
+		if listed and args.slot not in listed:
+			print("WARNING: cnfg lists nothing in slot %d (it lists"
+			    " %s)" % (args.slot, ", ".join("%d: %s" % i
+			    for i in sorted(listed.items()))))
+
+		if con is not None:
 			con.command("setenv more 0")
 
 		if args.offset is not None:
@@ -342,18 +479,29 @@ and convert the capture with:
 		else:
 			off = find_header(read, base)
 			if off is None:
-				print("no option ROM header found in slot %d at"
-				    " any of the usual offsets" % args.slot)
-				return 1
+				off = survey(read, base, last_text)
+				if off is None:
+					return 1
 		rom = base + off
 		read(rom + 0x3e0, rom + 0x46c)
-		hdr = describe_header(words, rom)
-		print("ROM at slot %d offset 0x%x (0x%08x): %s %s %s %s,"
-		    " width %d, stride %d, size field %d"
-		    % (args.slot, off, rom, hdr["module"], hdr["vendor"],
-		    hdr["version"], hdr["type"], hdr["width"],
-		    hdr["stride"], hdr["size"]))
-		size = args.size or default_size(hdr)
+		got = [words.get(rom + 0x3f0 + 4 * i) for i in range(4)]
+		if None not in got and [w & 0xff for w in got] == PATTERN:
+			hdr = describe_header(words, rom)
+			print("ROM at slot %d offset 0x%x (0x%08x): %s %s %s"
+			    " %s, width %d, stride %d, size field %d"
+			    % (args.slot, off, rom, hdr["module"],
+			    hdr["vendor"], hdr["version"], hdr["type"],
+			    hdr["width"], hdr["stride"], hdr["size"]))
+			size = args.size or default_size(hdr)
+			hdr_found = True
+		else:
+			hdr_found = False
+			#  No header to go by, so the size field would be
+			#  garbage:
+			size = args.size or 65536
+			print("no option ROM header at slot %d offset 0x%x"
+			    " (0x%08x); dumping %d KB there anyway"
+			    % (args.slot, off, rom, size // 1024))
 
 		if con is not None:
 			t0 = time.time()
@@ -387,12 +535,25 @@ and convert the capture with:
 		print("WARNING: %d of %d bytes are missing (the first is at"
 		    " 0x%08x); they are written as 0" % (len(missing), size,
 		    missing[0]))
-	for w in warnings:
+	for w in warnings[:4]:
 		print("NOTE: a word that is not one byte wide: %s" % w)
+	if len(warnings) > 4:
+		print("NOTE: and more like that; the whole words are in"
+		    " %s.words" % args.output)
 	with open(args.output, "wb") as f:
 		f.write(image)
-	print("wrote %s (%d bytes); use it with \"slots\": { \"%d\": \"%s\" }"
-	    % (args.output, size, args.slot, os.path.basename(args.output)))
+	#  The whole words, in case the ROM is not one byte wide:
+	with open(args.output + ".words", "wb") as f:
+		for i in range(size):
+			f.write(words.get(rom + 4 * i, 0).to_bytes(4, "big"))
+	if hdr_found:
+		print("wrote %s (%d bytes); use it with \"slots\": { \"%d\":"
+		    " \"%s\" }" % (args.output, size, args.slot,
+		    os.path.basename(args.output)))
+	else:
+		print("wrote %s, %s.words; there was no ROM header, so send"
+		    " them and %s to be sorted out" % (args.output,
+		    args.output, logname))
 	return 0 if not missing else 2
 
 
