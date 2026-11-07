@@ -29,3 +29,9 @@
 /dist/
 __pycache__/
 media/
+
+# Disk images, installation media, and experiment scratch files
+*.img
+*.iso
+openvms_axp_1_0/
+experiments/vms/

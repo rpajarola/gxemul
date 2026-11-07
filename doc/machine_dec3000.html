@@ -1,0 +1,405 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+  <title>GXemul: DEC 3000 AXP emulation</title>
+  <meta name="robots" content="noarchive,nofollow,noindex">
+</head>
+<body style="font-family : sans-serif;">
+
+<!-- 10 lines header.  -->
+
+<h1>GXemul: DEC 3000 AXP emulation</h1>
+<p>
+
+<a href="./">Back to the index.</a>
+
+<!--
+
+Copyright (C) 2006-2026  Anders Gavare and contributors.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+-->
+
+<p>The <a href="https://en.wikipedia.org/wiki/DEC_3000_AXP">DEC 3000 AXP</a>
+was Digital Equipment Corporation's first family of desktop workstations and
+servers based on the 64-bit Alpha AXP architecture and the TURBOchannel bus.
+Introduced in November 1992 alongside the original DECchip 21064 (EV4) microprocessor,
+these systems represented the dawn of 64-bit RISC computing at Digital.</p>
+
+<p>GXemul emulates the <b>DEC 3000 Model 400</b> (code-named <i>"Pelican"</i> / <i>"Sandpiper"</i>),
+featuring:
+<ul>
+	<li><b>DECchip 21064 (EV4)</b> 64-bit Alpha RISC microprocessor.
+	<li>Execution of real <b>SRM console firmware</b> (e.g. version 3.3) and genuine EV4 PALcode.
+	<li><b>TURBOchannel</b> expansion bus with option slot ROM emulation.
+	<li><b>PMAGB-BA</b> (SFB &mdash; Smart Frame Buffer) 2D accelerated graphics at 1280x1024 resolution in 8-bit color.
+	<li><b>NCR 53C94 (ASC)</b> SCSI controller attached to the DEC IOASIC DMA engine.
+	<li><b>Zilog Z8530 (SCC)</b> serial controller driving serial console or DEC LK201 keyboard and VS423 mouse.
+	<li><b>MC146818</b> real-time clock and NVRAM.
+</ul>
+
+<p>The following guest operating systems and desktop environments have been verified to install and run:
+<ul>
+	<li><a href="#openvmsinstall">OpenVMS AXP 1.0</a>
+	<li><a href="#decwindows">DECwindows Motif 1.2</a>
+	<li><small><a href="#decosf1"><font color="red">DEC OSF/1 AXP</font></a> (in active development)</small>
+</ul>
+
+
+
+
+<p><br>
+<a name="openvmsinstall"></a>
+<h3>OpenVMS AXP 1.0:</h3>
+
+<p><a href="https://en.wikipedia.org/wiki/OpenVMS">OpenVMS AXP</a> V1.0 was the initial
+commercial release of OpenVMS ported from VAX to the 64-bit Alpha architecture in November 1992.
+It runs natively on the emulated DEC 3000/400 hardware under the real SRM console firmware.</p>
+
+<p>To install OpenVMS AXP 1.0 onto a harddisk image in the emulator, follow these instructions:
+
+<p><ol>
+  <li><b>Create an empty hard disk image:</b><br>
+	The DEC RZ26 SCSI hard disk has a formatted capacity of 1,050,040,320 bytes (2,050,860 sectors of 512 bytes):
+	<pre>
+	<b>dd if=/dev/zero of=rz26.img bs=512 count=2050860</b>
+</pre>
+
+  <li><b>Obtain the required firmware and installation media:</b>
+	<ul>
+	  <li>SRM console firmware dump for the DEC 3000/400 (e.g. <tt>m400_v3_3.rom</tt>, 512 KB).
+	  <li>OpenVMS AXP V1.0 installation CD-ROM ISO image (<tt>openvms_axp_1_0.iso</tt>).
+	</ul>
+  <p>
+
+  <li><b>Create a machine configuration file (<tt>dec3000.json</tt>):</b><br>
+	Save the following configuration into <tt>dec3000.json</tt>:
+<pre>
+{
+ "gxemul": 1,
+ "name": "DEC 3000/400",
+ "machine": {
+  "type": "dec3000",
+  "model": "400",
+  "memory_mb": 64
+ },
+ "boot": {
+  "prom_emulation": false,
+  "rom": "media/rom/m400_v3_3.rom",
+  "nvram": "nvram.bin",
+  "skip_failing_tests": false
+ },
+ "drives": [
+  {
+   "file": "rz26.img",
+   "kind": "disk",
+   "id": 0,
+   "vendor": "DEC",
+   "product": "RZ26     (C) DEC",
+   "revision": "T386"
+  },
+  {
+   "file": "openvms_axp_1_0.iso",
+   "kind": "cdrom",
+   "id": 4,
+   "readonly": true,
+   "vendor": "DEC",
+   "product": "RRD42   (C) DEC",
+   "revision": "4.5d"
+  }
+ ],
+ "display": {
+  "enabled": false
+ }
+}
+</pre>
+	<i>Note: Adjust the file paths to point to your actual disk, CD-ROM, and ROM files.</i>
+  <p>
+
+  <li><b>Start the emulator:</b><br>
+	Launch GXemul with the configuration file:
+	<pre>
+	<b>gxemul dec3000.json</b>
+</pre>
+
+  <li><b>Boot the OpenVMS AXP 1.0 installation CD:</b><br>
+	Wait for the SRM console power-on diagnostics to finish. When prompted for language selection:
+<pre>
+    Select the number of the desired language
+    [English (1)]: <b>&lt;Return&gt;</b>
+</pre>
+	Once the SRM console prompt (<tt>&gt;&gt;&gt;</tt>) appears, issue the boot command targeting the CD-ROM drive on SCSI ID 4 (<tt>DKA400</tt>):
+<pre>
+	&gt;&gt;&gt; <b>boot dka400</b>
+</pre>
+	The SRM console loads the boot block, starts the secondary bootstrap, and switches into the OpenVMS AXP kernel:
+<pre>
+	INIT-S-OPEN...
+	Starting OpenVMS AXP Operating System...
+	%SYSINIT-I-TODRDA, system time from TODR valid...
+</pre>
+
+  <li><b>Walk through the OpenVMS installation procedure:</b>
+	<ul>
+	  <li><b>System Date and Time:</b> When prompted:
+<pre>
+	PLEASE ENTER DATE AND TIME (DD-MMM-YYYY HH:MM): <b>01-JAN-1994 12:00</b>
+</pre>
+	  <li><b>Target Disk:</b> Specify the destination disk drive (<tt>DKA0:</tt>):
+<pre>
+	Target disk drive: <b>DKA0:</b>
+</pre>
+	  <li><b>Volume Label:</b> Enter a volume label for the system disk (e.g. <tt>ALPHAVMS010</tt>):
+<pre>
+	Target disk volume label: <b>ALPHAVMS010</b>
+</pre>
+	  <li><b>Preserve or Initialize:</b> Type <b>INITIALIZE</b> to format the ODS-2 file system:
+<pre>
+	Do you want to preserve or initialize? <b>INITIALIZE</b>
+</pre>
+	  <li><b>Option Sets:</b> Choose which components to install (Base system, Programming Support, Utilities, Libraries). Entering <b>ALL</b> or accepting the default installs the full distribution:
+<pre>
+	Select components to install [ALL]: <b>ALL</b>
+</pre>
+	  <li><b>System Password:</b> When prompted for the <tt>SYSTEM</tt> account password, enter your desired password (e.g. <b>OPENVMS123</b>):
+<pre>
+	Enter password for SYSTEM: <b>OPENVMS123</b>
+	Re-enter password for verification: <b>OPENVMS123</b>
+</pre>
+	</ul>
+	The installer unpacks the savesets and configures the initial system database. Upon completion, it prints:
+<pre>
+	%AXPVMSINSTALL-I-NORMAL, The OpenVMS AXP operating system installation is complete.
+</pre>
+	The operating system shuts down cleanly and returns to the SRM console prompt (<tt>&gt;&gt;&gt;</tt>).
+  <p>
+
+  <li><b>Boot the installed system from the hard disk:</b><br>
+	At the SRM console prompt, boot from unit <tt>DKA0</tt>:
+<pre>
+	&gt;&gt;&gt; <b>boot dka0</b>
+</pre>
+	After the startup scripts finish, log in as <tt>SYSTEM</tt>:
+<pre>
+	Username: <b>SYSTEM</b>
+	Password: <b>OPENVMS123</b>
+	$ <b>SHOW SYSTEM</b>
+</pre>
+</ol>
+
+
+
+
+<p><br>
+<a name="decwindows"></a>
+<h3>DECwindows Motif 1.2:</h3>
+
+<p>
+<a href="openvms_motif_login.png"><img src="openvms_motif_login_small.png"></a>
+<a href="openvms_motif_desktop.png"><img src="openvms_motif_desktop_small.png"></a>
+<a href="openvms_motif_session.png"><img src="openvms_motif_session_small.png"></a>
+
+<p><a href="https://en.wikipedia.org/wiki/DECwindows">DECwindows Motif</a> is Digital's X11-based
+graphical workstation environment, providing the Motif Window Manager (<tt>DECW$MWM</tt>),
+DECwindows Session Manager (<tt>DECW$SESSION</tt>), DECterm terminal emulator (<tt>DECW$TERM</tt>),
+and full X11 client/server infrastructure.</p>
+
+<p>DECwindows Motif V1.2 (<tt>DWMOTIF_AXP012</tt>) is found on <b>CD #5</b> of the November 1994
+Alpha Consolidated Distribution (<tt>VMS_AXP_SPL_AXPBINNOV945.iso</tt>). While DECwindows Motif 1.2
+was officially qualified for OpenVMS AXP V1.5 and higher, Digital's engineers designed
+built-in bypass switches directly into the installation scripts, allowing it to install and run
+flawlessly on OpenVMS AXP V1.0.</p>
+
+<p>To install DECwindows Motif and run the graphical desktop, follow these steps:
+
+<p><ol>
+  <li><b>Attach the Consolidated Distribution CD-ROM:</b><br>
+	In your <tt>dec3000.json</tt> configuration, map SCSI ID 4 to the November 1994 Consolidated Distribution CD #5:
+<pre>
+  {
+   "file": "VMS_AXP_SPL_AXPBINNOV945.iso",
+   "kind": "cdrom",
+   "id": 4,
+   "readonly": true,
+   "vendor": "DEC",
+   "product": "RRD42   (C) DEC",
+   "revision": "4.5d"
+  }
+</pre>
+
+  <li><b>Bypass the VMS 1.5 Version Check:</b><br>
+	Boot OpenVMS into DCL (<tt>boot dka0</tt>) and log in as <tt>SYSTEM</tt>.
+	The DECwindows installer checks the operating system version in <tt>[KIT.SRC]KITINSTAL.COM</tt>:
+<pre>
+	$ IF F$TRNLNM("DECW$IGNORE_VERSION") .NES. "" THEN GOTO supported_version
+	$ min_version = "5.5-2"
+	$ if decw$alpha then min_version = "1.5"
+	$ vmi$callback check_vms_version decw$ 'min_version'
+</pre>
+	Define the override logical names in the system logical name table before launching the installer:
+<pre>
+	$ <b>DEFINE/SYSTEM/EXEC DECW$IGNORE_VERSION TRUE</b>
+	$ <b>DEFINE/SYSTEM/EXEC DECW$IGNORE_LMF TRUE</b>
+	$ <b>MOUNT/OVERRIDE=IDENTIFICATION DKA400:</b>
+</pre>
+
+  <li><b>Run VMSINSTAL:</b><br>
+	Invoke <tt>VMSINSTAL</tt> pointing to the kit directory on the mounted CD:
+<pre>
+	$ <b>@SYS$UPDATE:VMSINSTAL DWMOTIF_AXP012 DKA400:[DWMOTIF_AXP012.KIT]</b>
+</pre>
+	Answer the installer questions:
+	<ul>
+	  <li><i>Are you satisfied with the backup of your system disk?</i> <b>YES</b>
+	  <li><i>Do you want to install the entire kit?</i> <b>YES</b>
+	  <li><i>Are you satisfied with these options?</i> <b>YES</b>
+	  <li><i>Do you want to shut down the system?</i> <b>NO</b>
+	</ul>
+	The installation will decompress and unpack the savesets:
+	<ul>
+	  <li>Save Set A: Installation scripts (<tt>KITINSTAL.COM</tt>, tailoring databases)
+	  <li>Save Set B: Base files (<tt>DECW$KITBLD</tt>)
+	  <li>Save Set C: Common shared libraries and utilities
+	  <li>Save Set D: Server and DDX drivers (<tt>DECW$SERVER_DDX_GX.EXE</tt>)
+	  <li>Save Set E &amp; F: 75 DPI and 100 DPI video font collections
+	</ul>
+  <p>
+
+  <li><b>Tune Global Page Table Parameters (Resolving <tt>-SYSTEM-F-GPTFULL</tt>):</b><br>
+	OpenVMS AXP 1.0 ships with a default global page table size of only 41,300 pages.
+	Installing the 80+ DECwindows Motif shared libraries will exhaust the global page table,
+	causing image activation to fail with:
+<pre>
+	%INSTALL-E-FAIL, failed to CREATE entry for ...
+	-SYSTEM-F-GPTFULL, global page table is full
+</pre>
+	Increase the global page table limits using <tt>SYSGEN</tt>:
+<pre>
+	$ <b>MCR SYSGEN</b>
+	SYSGEN> <b>USE CURRENT</b>
+	SYSGEN> <b>SET GBLPAGES 150000</b>
+	SYSGEN> <b>SET GBLSECTIONS 2000</b>
+	SYSGEN> <b>SET GBLPAGFIL 4096</b>
+	SYSGEN> <b>WRITE CURRENT</b>
+	SYSGEN> <b>EXIT</b>
+</pre>
+	<i>Note: If automating setup on the host disk image directly, these parameters reside in <tt>[SYS0.SYSEXE]ALPHAVMSSYS.PAR</tt>. Updating the 32-bit little-endian fields for GBLSECTIONS, GBLPAGES, and GBLPAGFIL applies the settings permanently.</i>
+  <p>
+
+  <li><b>Collocate Shared Libraries into <tt>SYS$SYSROOT:[SYSLIB]</tt>:</b><br>
+	The OpenVMS 1.0 image activator does not consistently resolve multi-directory search lists
+	like <tt>SYS$SHARE</tt>. Ensure that all <tt>DECW$*.EXE</tt> shared images are available directly
+	in <tt>SYS$COMMON:[SYSLIB]</tt>, and establish explicit logical definitions in your startup:
+<pre>
+	$ <b>DEFINE/SYSTEM/EXEC SYS$SHARE SYS$SYSROOT:[SYSLIB]</b>
+	$ <b>DEFINE/SYSTEM/EXEC SYS$LIBRARY SYS$SYSROOT:[SYSLIB]</b>
+</pre>
+
+  <li><b>DECW$LOGICALS.COM Command Syntax Adjustment:</b><br>
+	In <tt>SYS$MANAGER:DECW$LOGICALS.COM</tt>, line 57 uses <tt>/PARENT=LNM$SYSTEM_DIRECTORY</tt>.
+	The OpenVMS AXP 1.0 DCL command interpreter requires <tt>/PARENT_TABLE=</tt> instead:
+<pre>
+	$ <b>CREATE/NAME_TABLE/PARENT_TABLE=LNM$SYSTEM_DIRECTORY/EXEC DECW$SERVER0_TABLE</b>
+</pre>
+
+  <li><b>Bypass License Management Facility (<tt>DW-MOTIF</tt> LMF PAK):</b><br>
+	When logging in graphically, <tt>DECW$LOGINOUT.EXE</tt> queries the License Management
+	Facility for an active <tt>DW-MOTIF</tt> license PAK via <tt>EXE$LOOKUP_LICENSE</tt> in
+	<tt>SYS$LOADABLE_IMAGES:SYSLICENSE.EXE</tt>. Without a registered license, OPCOM broadcasts:
+<pre>
+	%LMF-W-NOLICENSE, no license is active for this software product
+</pre>
+	and dismisses the graphical login box.<br><br>
+	Patching <tt>EXE$LOOKUP_LICENSE</tt> in <tt>SYSLICENSE.EXE</tt> to unconditionally return
+	success (<tt>SS$_NORMAL = 1</tt>) grants universal license validation:
+	<ul>
+	  <li>At offset <tt>+0x3b30</tt>: replace the OPCOM warning call with an unconditional branch:
+		<pre><b>0c 00 e0 c3</b>    (br zero, +0x34 &mdash; jump directly to success return)</pre>
+	  <li>At offset <tt>+0x3b64</tt>: force return status 1 in register <tt>v0</tt> (<tt>R0</tt>):
+		<pre><b>01 00 1f 20</b>    (lda v0, 1 &mdash; SS$_NORMAL)</pre>
+	</ul>
+	This patch can be applied directly to the hard disk image using a short Python snippet on the host:
+<table border="0"><tr><td><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td><pre>
+<b>with open("rz26.img", "r+b") as f:
+    f.seek(0x1fbef400 + 0x3b30)
+    f.write(bytes([0x0c, 0x00, 0xe0, 0xc3]))  # br zero, +0x34
+    f.seek(0x1fbef400 + 0x3b64)
+    f.write(bytes([0x01, 0x00, 0x1f, 0x20]))  # lda v0, 1</b>
+</pre></td></tr></table>
+  <p>
+
+  <li><b>Enable the PMAGB-BA TURBOchannel Framebuffer:</b><br>
+	Update <tt>dec3000.json</tt> to enable the graphical display card in TURBOchannel slot 0:
+<pre>
+ "display": {
+  "enabled": true,
+  "scale": 1,
+  "cards": 1
+ },
+ "slots": {
+  "0": "media/rom/pmagb-ba.bin"
+ }
+</pre>
+
+  <li><b>Start the DECwindows Motif Desktop:</b><br>
+	Boot OpenVMS:
+<pre>
+	&gt;&gt;&gt; <b>boot dka0</b>
+</pre>
+	Start the DECwindows infrastructure:
+<pre>
+	$ <b>@SYS$STARTUP:DECW$STARTUP</b>
+</pre>
+	The PMAGB-BA smart framebuffer window opens with the classic <b>DECwindows Motif Login</b> dialog.
+	Enter username <b>SYSTEM</b> and password <b>OPENVMS123</b>.
+	The slate blue desktop (<tt>#3F5469</tt>) appears, managed by the <b>Motif Window Manager</b> (<tt>DECW$MWM</tt>),
+	with the <b>DECwindows Session Manager</b> (<tt>DECW$SESSION</tt>) menu bar offering:
+	<ul>
+	  <li><i>Session</i> (Pause, End Session)
+	  <li><i>Applications</i> (DECwindows Terminal, File Manager, Mail, Clock)
+	  <li><i>Options</i> (Keyboard, Screen, Window, Security)
+	  <li><i>Help</i>
+	</ul>
+	Selecting <b>Applications &rarr; DECwindows Terminal</b> opens an interactive <b>DECterm</b> on the desktop!
+</ol>
+
+
+
+
+<p><br>
+<a name="decosf1"></a>
+<h3>DEC OSF/1 AXP:</h3>
+
+<p><a href="https://en.wikipedia.org/wiki/Tru64_UNIX">DEC OSF/1 AXP</a> (later known as
+Digital UNIX and Tru64 UNIX) was Digital's 64-bit Unix operating system for the Alpha architecture.
+Support for booting the DEC OSF/1 V1.2 installation kernel directly from disk and CD-ROM via the
+real SRM console callbacks is currently in active development.</p>
+
+<p>For implementation details and architecture milestones, refer to the development notes in
+<a href="dec3000-plan.md"><tt>doc/dec3000-plan.md</tt></a>.</p>
+
+</body>
+</html>
