@@ -5674,3 +5674,11 @@ Changelog for GXemul:
 20261107	Documentation: retire doc/RELEASE.html in favor of HISTORY,
 		modernize doc/TODO.html with a curated roadmap matching the
 		documentation style, and add top-level TODO.md.
+20261107	Framebuffer window titles display the VM name (machine type and
+		configuration name, e.g. "Ultrix 4.5 (DECstation 5000/200)")
+		instead of the graphics card name.
+20261107	Serial console paste pacing: pace serial console input in lk201,
+		dev_dc7085, and dev_dec_ioasic (one character per tick) so
+		that copy-pasting long strings into the serial console no
+		longer overflows the guest receive silo/buffer and drops
+		characters after 16 bytes.

@@ -97,9 +97,13 @@ void set_blackwhite_palette(struct vfb_data *d, int ncolors)
 
 static void set_title(struct vfb_data *d)
 {
-	snprintf(d->title, sizeof(d->title),"%s%sGXemul: %ix%ix%i %s framebuffer",
-	    d->machine_name ? d->machine_name : "", d->machine_name ? " - " : "",
-	    d->visible_xsize, d->visible_ysize, d->bit_depth, d->name);
+	if (d->machine_name != NULL && d->machine_name[0])
+		snprintf(d->title, sizeof(d->title), "%s - GXemul: %ix%ix%i",
+		    d->machine_name,
+		    d->visible_xsize, d->visible_ysize, d->bit_depth);
+	else
+		snprintf(d->title, sizeof(d->title), "GXemul: %ix%ix%i",
+		    d->visible_xsize, d->visible_ysize, d->bit_depth);
 	d->title[sizeof(d->title)-1] = '\0';
 }
 
@@ -665,6 +669,13 @@ struct vfb_data *dev_fb_init(struct machine *machine, struct memory *mem,
 
 	CHECK_ALLOCATION(d->name = strdup(name));
 	d->machine_name = machine_title_name(machine);
+	if (machine->display_md.n_fb_windows > 0 && d->machine_name != NULL) {
+		char screen_buf[128];
+		snprintf(screen_buf, sizeof(screen_buf), "%s [screen %i]",
+		    d->machine_name, machine->display_md.n_fb_windows + 1);
+		free(d->machine_name);
+		d->machine_name = strdup(screen_buf);
+	}
 	set_title(d);
 
 	d->redraw_func = d->vfb_scaledown > 1 ? redraw_scaledown : redraw;

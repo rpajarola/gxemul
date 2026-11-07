@@ -525,14 +525,13 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 		port = DCKBD_PORT;
 
 	/*  Keys are sent one at a time, as fast as the keyboard's serial
-	    line would send them; serial console input as fast as it fits:  */
-	if (d->use_fb && d->keyb_delay > 0)
-		d->keyb_delay --;
-	while (d->space_available_in_queue(d->add_data, port) &&
-	    (d->use_fb ? console_keyavail(d->console_handle) :
-	    console_charavail(d->console_handle)) &&
-	    (!d->use_fb || d->keyb_delay == 0)) {
-		if (d->use_fb) {
+	    line would send them; serial console input one character per tick:  */
+	if (d->use_fb) {
+		if (d->keyb_delay > 0)
+			d->keyb_delay --;
+		while (d->space_available_in_queue(d->add_data, port) &&
+		    console_keyavail(d->console_handle) &&
+		    d->keyb_delay == 0) {
 			int key = console_readkey(d->console_handle);
 			if (key == CONSOLE_KEY_HOLD) {
 				d->hold_next = 1;
@@ -553,14 +552,20 @@ void lk201_tick(struct machine *machine, struct lk201_data *d)
 			    (unsigned char) key);
 			if (d->keyb_buf_pos > 0)
 				d->keyb_esc_usec = lk201_usec();
-		} else {
+		}
+	} else {
+		/*  Serial console input: at most one byte per tick, so that pasted
+		    text arrives as from a real serial line without overflowing the
+		    guest's receive silo/buffer.  */
+		if (d->space_available_in_queue(d->add_data, port) &&
+		    console_charavail(d->console_handle)) {
 			unsigned char ch = console_readchar(d->console_handle);
 			d->add_to_rx_queue(d->add_data, ch, port);
 		}
 	}
 
 	/*  The serial console line's own input (with a framebuffer):  */
-	while (d->serial_handle >= 0 &&
+	if (d->serial_handle >= 0 &&
 	    d->space_available_in_queue(d->add_data, DCPRINTER_PORT) &&
 	    console_charavail(d->serial_handle))
 		d->add_to_rx_queue(d->add_data,

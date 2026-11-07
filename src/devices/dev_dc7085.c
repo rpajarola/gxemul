@@ -276,7 +276,8 @@ DEVICE_ACCESS(dc7085)
 		memory_writemax64(cpu, data, len, odata);
 
 do_return:
-	dev_dc7085_tick(cpu, extra);
+	if (writeflag == MEM_WRITE)
+		dev_dc7085_tick(cpu, extra);
 
 	return 1;
 }

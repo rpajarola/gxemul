@@ -222,12 +222,42 @@ static const struct {
 	  IOASIC_INTR_R2_HALF_PAGE, IOASIC_INTR_R2_DMA_OVRUN }
 };
 
-static void scc_dma(struct dec_ioasic_data *d)
+static void scc_dma_rx(struct dec_ioasic_data *d, int i, int max)
 {
 	struct cpu *cpu = d->cpu;
 	unsigned char word[4];
 	uint64_t addr;
-	int i, ch;
+	int ch;
+
+	if (!(d->csr & scc_dma_bits[i].r_enable) || d->scc_r_done[i])
+		return;
+
+	addr = dec_ioasic_dma_ptr_to_addr(d->scc_r_dmaptr[i]);
+	while (max-- != 0 && (ch = dev_scc_dma_rx(d->scc[i])) >= 0) {
+		memset(word, 0, sizeof(word));
+		word[1] = ch;
+		cpu->memory_rw(cpu, cpu->mem, addr, word,
+		    sizeof(word), MEM_WRITE,
+		    NO_EXCEPTIONS | PHYSICAL);
+		addr += sizeof(word);
+		if ((addr & (IOASIC_DMA_BLOCKSIZE - 1)) ==
+		    IOASIC_DMA_BLOCKSIZE / 2)
+			d->intr |= scc_dma_bits[i].r_half_page;
+		if ((addr & (IOASIC_DMA_BLOCKSIZE - 1)) == 0) {
+			d->intr |= scc_dma_bits[i].r_ovrun;
+			d->scc_r_done[i] = 1;
+			break;
+		}
+	}
+	d->scc_r_dmaptr[i] = IOASIC_DMA_ADDR(addr);
+}
+
+static void scc_dma(struct dec_ioasic_data *d, int rx_max)
+{
+	struct cpu *cpu = d->cpu;
+	unsigned char word[4];
+	uint64_t addr;
+	int i;
 
 	for (i = 0; i < 2; i++) {
 		if (d->scc[i] == NULL)
@@ -241,32 +271,14 @@ static void scc_dma(struct dec_ioasic_data *d)
 				    NO_EXCEPTIONS | PHYSICAL);
 				dev_scc_dma_tx(d->scc[i], word[1]);
 				addr += sizeof(word);
+				scc_dma_rx(d, i, -1);
 			} while (addr & (IOASIC_DMA_BLOCKSIZE - 1));
 			d->scc_t_dmaptr[i] = IOASIC_DMA_ADDR(addr);
 			d->scc_t_done[i] = 1;
 			d->intr |= scc_dma_bits[i].t_page_end;
 		}
 
-		if (d->csr & scc_dma_bits[i].r_enable && !d->scc_r_done[i]) {
-			addr = dec_ioasic_dma_ptr_to_addr(d->scc_r_dmaptr[i]);
-			while ((ch = dev_scc_dma_rx(d->scc[i])) >= 0) {
-				memset(word, 0, sizeof(word));
-				word[1] = ch;
-				cpu->memory_rw(cpu, cpu->mem, addr, word,
-				    sizeof(word), MEM_WRITE,
-				    NO_EXCEPTIONS | PHYSICAL);
-				addr += sizeof(word);
-				if ((addr & (IOASIC_DMA_BLOCKSIZE - 1)) ==
-				    IOASIC_DMA_BLOCKSIZE / 2)
-					d->intr |= scc_dma_bits[i].r_half_page;
-				if ((addr & (IOASIC_DMA_BLOCKSIZE - 1)) == 0) {
-					d->intr |= scc_dma_bits[i].r_ovrun;
-					d->scc_r_done[i] = 1;
-					break;
-				}
-			}
-			d->scc_r_dmaptr[i] = IOASIC_DMA_ADDR(addr);
-		}
+		scc_dma_rx(d, i, rx_max);
 	}
 
 	dec_ioasic_reassert(d);
@@ -278,7 +290,7 @@ DEVICE_TICK(dec_ioasic)
 	struct dec_ioasic_data *d = (struct dec_ioasic_data *) extra;
 
 	if (d->csr & (IOASIC_CSR_DMAEN_R1 | IOASIC_CSR_DMAEN_R2))
-		scc_dma(d);
+		scc_dma(d, 1);
 }
 
 
@@ -349,7 +361,7 @@ DEVICE_ACCESS(dec_ioasic)
 					d->scc_r_done[i] = 0;
 				else
 					d->scc_t_done[i] = 0;
-				scc_dma(d);
+				scc_dma(d, 0);
 			} else
 				odata = *ptr;
 		}
@@ -426,7 +438,7 @@ DEVICE_ACCESS(dec_ioasic)
 		    writeflag == MEM_WRITE ? "write to" : "read from",
 		    (uint32_t)(writeflag == MEM_WRITE ? idata : odata));
 		if (writeflag == MEM_WRITE)
-			scc_dma(d);
+			scc_dma(d, 0);
 		break;
 
 	case IOASIC_INTR:

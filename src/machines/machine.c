@@ -28,6 +28,7 @@
  *  Machine registry.
  */
 
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -122,13 +123,9 @@ struct machine *machine_new(char *name, struct emul *emul, int id)
 
 
 /*
- *  machine_title_name():
- *
- *  A name for the machine's windows: its name, or else the name of its
- *  configuration file (its folder's, for a machine.json), or NULL for a
- *  machine set up on the command line.  The caller frees it.
+ *  Helpers for machine_title_name():
  */
-char *machine_title_name(struct machine *machine)
+static char *get_config_name(struct machine *machine)
 {
 	const char *path = machine->config_path, *base, *p;
 	size_t len;
@@ -161,6 +158,161 @@ char *machine_title_name(struct machine *machine)
 	memcpy(name, base, len);
 	name[len] = '\0';
 	return name;
+}
+
+static const char *get_machine_type_name(struct machine *machine)
+{
+	struct machine_entry *me;
+
+	for (me = first_machine_entry; me != NULL; me = me->next) {
+		if (me->machine_type == machine->machine_type) {
+			int j;
+			for (j = 0; j < me->n_subtypes; j++) {
+				if (me->subtype[j]->machine_subtype ==
+				    machine->machine_subtype)
+					return me->subtype[j]->name;
+			}
+			return me->name;
+		}
+	}
+
+	return machine->machine_name;
+}
+
+static char *clean_machine_type_name(const char *raw_name)
+{
+	if (raw_name == NULL)
+		return NULL;
+
+	char *clean = strdup(raw_name);
+	char *paren = strchr(clean, '(');
+	if (paren != NULL && paren > clean) {
+		char *end = paren - 1;
+		while (end >= clean && (*end == ' ' || *end == '\t'))
+			*end-- = '\0';
+		*paren = '\0';
+	}
+	return clean;
+}
+
+static bool contains_case_insensitive(const char *haystack, const char *needle)
+{
+	if (haystack == NULL || needle == NULL)
+		return false;
+
+	size_t nlen = strlen(needle);
+	if (nlen == 0)
+		return true;
+
+	size_t hlen = strlen(haystack);
+	if (hlen < nlen)
+		return false;
+
+	for (size_t i = 0; i <= hlen - nlen; i++) {
+		if (strncasecmp(haystack + i, needle, nlen) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+static bool names_similar(const char *a, const char *b)
+{
+	if (a == NULL || b == NULL)
+		return false;
+
+	char clean_a[256], clean_b[256];
+	size_t ia = 0, ib = 0;
+
+	for (size_t i = 0; a[i] && ia < sizeof(clean_a) - 1; i++) {
+		if (isalnum((unsigned char)a[i]))
+			clean_a[ia++] = tolower((unsigned char)a[i]);
+	}
+	clean_a[ia] = '\0';
+
+	for (size_t i = 0; b[i] && ib < sizeof(clean_b) - 1; i++) {
+		if (isalnum((unsigned char)b[i]))
+			clean_b[ib++] = tolower((unsigned char)b[i]);
+	}
+	clean_b[ib] = '\0';
+
+	if (ia == 0 || ib == 0)
+		return false;
+
+	return (strstr(clean_a, clean_b) != NULL ||
+	        strstr(clean_b, clean_a) != NULL);
+}
+
+static bool name_has_machine_type(const char *name, const char *type)
+{
+	if (name == NULL || type == NULL)
+		return false;
+
+	if (names_similar(name, type))
+		return true;
+
+	char key[64];
+	size_t len = 0;
+	const char *p = type;
+
+	while (*p && !isspace((unsigned char)*p) && *p != '(' && *p != '/' && len < sizeof(key) - 1)
+		key[len++] = *p++;
+	key[len] = '\0';
+
+	if (len <= 4 && *p) {
+		while (*p && isspace((unsigned char)*p)) p++;
+		if (len < sizeof(key) - 1) key[len++] = ' ';
+		while (*p && !isspace((unsigned char)*p) && *p != '(' && *p != '/' && len < sizeof(key) - 1)
+			key[len++] = *p++;
+		key[len] = '\0';
+	}
+
+	if (len >= 3)
+		return contains_case_insensitive(name, key);
+
+	return false;
+}
+
+/*
+ *  machine_title_name():
+ *
+ *  A name for the machine's windows, combining the machine type and the
+ *  name from configuration (or config file / directory). If the config
+ *  name already includes the machine type, only the config name is used.
+ *  The caller frees it.
+ */
+char *machine_title_name(struct machine *machine)
+{
+	char *cfg_name = get_config_name(machine);
+	const char *raw_type = get_machine_type_name(machine);
+	char *clean_type = clean_machine_type_name(raw_type);
+	char *result = NULL;
+
+	if (cfg_name == NULL && clean_type == NULL)
+		return NULL;
+
+	if (cfg_name == NULL)
+		return clean_type;
+
+	if (clean_type == NULL)
+		return cfg_name;
+
+	if (name_has_machine_type(cfg_name, clean_type)) {
+		if (machine->name == NULL || !machine->name[0]) {
+			free(cfg_name);
+			return clean_type;
+		}
+		free(clean_type);
+		return cfg_name;
+	}
+
+	size_t len = strlen(cfg_name) + strlen(clean_type) + 4;
+	CHECK_ALLOCATION(result = (char *) malloc(len));
+	snprintf(result, len, "%s (%s)", cfg_name, clean_type);
+	free(cfg_name);
+	free(clean_type);
+
+	return result;
 }
 
 
