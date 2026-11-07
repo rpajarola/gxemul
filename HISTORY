@@ -5671,3 +5671,6 @@ Changelog for GXemul:
 		cut off on DECstation (MIPS) and DEC 3000 (Alpha) emulations.
 		Also set non-colored pixels in b/w mode to transparent rather
 		than black.
+20261107	Documentation: retire doc/RELEASE.html in favor of HISTORY,
+		modernize doc/TODO.html with a curated roadmap matching the
+		documentation style, and add top-level TODO.md.
