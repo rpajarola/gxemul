@@ -1,20 +1,24 @@
+          ---------------------------------
+             Gavare's eXperimental Emulator
+          ---------------------------------
 
-
-          --------------------------------------------------------
-             Gavare's eXperimental Emulator   --   GXemul 0.7.0
-          --------------------------------------------------------
-
-
-                   Copyright (C) 2003-2021  Anders Gavare
 
 
 Overview  --  What is GXemul?
 -----------------------------
 
-GXemul is a framework for full-system computer architecture emulation.
-Several processor architectures and machine types have been implemented.
-It is working well enough to allow unmodified "guest" operating systems to
-run inside the emulator, as if they were running on real hardware.
+This is a fork of Anders Gavare's eXperimental Emulator GXEmul. It
+builds on the amazing work of the original author, but with the
+advantage of today's availability of Operating System installation
+media and source code, real ROM dumps, documentation, fast host
+machines, and coding assistance through AI.
+
+GXemul was conceived as a framework for full-system computer
+architecture emulation. It can model complete computer systems
+closely enough to run unmodified guest operating systems as if they
+were running on real physical hardware. It executes original firmware,
+and faithfully emulates storage, accelerated 2D graphics, and
+networking.
 
 The emulator emulates (networks of) real machines. The machines may consist
 of ARM, MIPS, Motorola 88K, PowerPC, and SuperH processors, and various
@@ -22,14 +26,12 @@ surrounding hardware components such as framebuffers, busses, interrupt
 controllers, ethernet controllers, disk controllers, and serial port
 controllers.
 
-GXemul, including the dynamic translation system, is implemented in C, which
-means that the emulator will (at least in theory) run on practically any
-modern host architecture and unix-like operating system, for which a C99
-compiler is available.
+GXemul, including the dynamic translation system, is implemented
+in C and should run on practically any modern host including Linux,
+Windows, and Mac OS on Intel and Arm.
 
 The documentation lists the machines and specific guest operating systems
-that can be regarded as "working" in GXemul. The guest operating system
-that works best in GXemul is NetBSD/pmax on an emulated DECstation 5000/200.
+that can be regarded as "working" in GXemul.
 
 
 Possible uses of GXemul include:
@@ -57,17 +59,13 @@ Possible uses of GXemul include:
 GXemul's limitations
 --------------------
 
- o)  GXemul does not simulate micro-architectural things such as pipe-line
+ o)  GXemul does not simulate micro-architectural things such as pipeline
      stalls, instruction latency effects, out-of-order execution etc.
 
  o)  CPUs and other hardware devices have been implemented in an ad-hoc and
      as-needed manner, usually only enough to fool guest operating systems
-     such as NetBSD into believing that the hardware devices exist and
-     function well enough for the guest operating systems to use them.
-
-     (A consequence of this is that a machine mode may be implemented well
-     enough to run NetBSD for that machine mode, but other guest operating
-     systems may not run at all, or behave strangely.)
+     into believing that the hardware devices exist and function
+     well enough for the guest operating systems to use them.
 
 
 Quick start
@@ -90,7 +88,7 @@ To compile, type './configure' and then 'make'. This should work on most
 Unix-like systems. If it does not, then please mail me a bug report.
 
 If you are impatient, and want to try out running a guest operating system 
-inside GXemul, read this:  doc/machine_decstation.html#netbsdpmaxinstall
+inside GXemul, read this:  doc/machine_decstation.html
 
 If you want to use GXemul for experimenting with code of your own,
 then I suggest you compile a Hello World program according to the tips
@@ -103,6 +101,7 @@ more detailed information on how to use the emulator.
 Feedback
 --------
 
-If you have found GXemul useful in some way, or feel like sending me
-comments or feedback in general, then mail me at gavare@gmail.com.
+If you enjoy using GXemul, or feel like sending me comments or
+feedback in general, please mail me at rp@servium.ch.
 
+Many thanks to the original author Anders Gavare <gavare@gmail.com>.
