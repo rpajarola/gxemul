@@ -122,7 +122,7 @@ struct bt459_data {
  */
 static void bt459_update_X_cursor(struct cpu *cpu, struct bt459_data *d)
 {
-	int i, x,y, xmax=0, ymax=0;
+	int i, x,y, xmax=-1, ymax=-1;
 	int bw_only = 1;
 
 	/*  First, let's calculate the size of the cursor:  */
@@ -131,20 +131,25 @@ static void bt459_update_X_cursor(struct cpu *cpu, struct bt459_data *d)
 			int reg = BT459_REG_CRAM_BASE + y*16 + x/4;
 			unsigned char data = d->bt459_reg[reg];
 
-			if (data)
+			if (data && y > ymax)
 				ymax = y;
 
 			for (i=0; i<4; i++) {
 				int color = (data >> (6-2*i)) & 3;
-				if (color != 0)
+				if (color != 0 && x + i > xmax)
 					xmax = x + i;
 				if (color != 0 && color != 3)
 					bw_only = 0;
 			}
 		}
 
-	d->cursor_xsize = xmax + 1;
-	d->cursor_ysize = ymax + 1;
+	if (xmax < 0 || ymax < 0) {
+		d->cursor_xsize = 0;
+		d->cursor_ysize = 0;
+	} else {
+		d->cursor_xsize = xmax + 1;
+		d->cursor_ysize = ymax + 1;
+	}
 
 	/*
 	 *  The 'bw_only' hack is because it is nicer to have the b/w
@@ -156,10 +161,16 @@ static void bt459_update_X_cursor(struct cpu *cpu, struct bt459_data *d)
 	 *	BT459_REG_CCOLOR_2, 3 = reverse of color 1/2.
 	 */
 
-	if (d->vfb_data->fb_window != NULL) {
+	if (d->vfb_data->fb_window != NULL && d->cursor_xsize > 0 && d->cursor_ysize > 0) {
+		struct fb_window *win = d->vfb_data->fb_window;
+
+		for (y=0; y<CURSOR_MAXY; y++)
+			for (x=0; x<CURSOR_MAXX; x++)
+				win->cursor_pixels[y][x] =
+				    CURSOR_COLOR_TRANSPARENT;
+
 		for (y=0; y<=ymax; y++) {
 			for (x=0; x<=xmax; x+=4) {
-				struct fb_window *win = d->vfb_data->fb_window;
 				int reg = BT459_REG_CRAM_BASE + y*16 + x/4;
 				unsigned char data = d->bt459_reg[reg];
 
@@ -172,7 +183,8 @@ static void bt459_update_X_cursor(struct cpu *cpu, struct bt459_data *d)
 							pixelvalue =
 							    CURSOR_COLOR_INVERT;
 						else
-							pixelvalue = 0;
+							pixelvalue =
+							    CURSOR_COLOR_TRANSPARENT;
 					} else {
 						pixelvalue =
 						    CURSOR_COLOR_TRANSPARENT;
@@ -191,8 +203,9 @@ static void bt459_update_X_cursor(struct cpu *cpu, struct bt459_data *d)
 						}
 					}
 
-					win->cursor_pixels[y][x+i] =
-					    pixelvalue;
+					if (x + i < CURSOR_MAXX)
+						win->cursor_pixels[y][x+i] =
+						    pixelvalue;
 #ifdef WITH_CURSOR_DEBUG
 printf("%i", color);
 #endif

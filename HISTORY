@@ -5665,3 +5665,9 @@ Changelog for GXemul:
 		and the Z8530's RR1 reads 0x07, all sent and the asynchronous
 		mode's residue code, like an idle chip (Linux waited forever
 		for its bit 2 whenever the terminal settings changed).
+20261107	Bt459 RAMDAC cursor fix: compute xmax as the maximum X
+		coordinate across all cursor rows instead of being overwritten
+		by each row, which caused the right column(s) of cursors to be
+		cut off on DECstation (MIPS) and DEC 3000 (Alpha) emulations.
+		Also set non-colored pixels in b/w mode to transparent rather
+		than black.
