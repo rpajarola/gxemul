@@ -5691,3 +5691,20 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.18  ==============
 
+20261107	DECpc AXP 150 / DEC 2000 Model 300 ("Jensen"): full emulation
+		of Digital's first PC-class Alpha system with 150 MHz DECchip
+		21064 (EV4), EISA bus, sparse/dense memory and I/O mapping,
+		HAE register translation, Intel 82357 ISP (cascaded 8259 PICs,
+		8254 PIT, 8237 DMA), dual 16550A UARTs, LPT1, and PS/2 keyboard/mouse.
+		Passes 100% of genuine Digital SRM firmware v1.3 power-up
+		self-tests (CPU, MEM, NVR, SCC, IT, KBD, LPT, SCSI).
+		Adaptec AHA-1742A EISA SCSI host adapter: 32-bit Enhanced Mode
+		with mailbox in/out protocol, scatter-gather bus master DMA,
+		and selectable edge/level interrupts.
+		OpenVMS AXP V1.5-1H1: boots with SYS$PKJDRIVER on IRQ 11 to
+		Stand-alone BACKUP and interactive DCL prompt.
+		Documentation: doc/machine_jensen.html installation guide.
+
+==============  RELEASE 1.0.19  ==============
+
+
