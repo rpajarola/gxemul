@@ -139,7 +139,7 @@ static const struct machine_preset presets[] = {
 		"  \"drives\": [ { \"file\": \"disk.img\", \"kind\": \"disk\","
 		"                  \"id\": 0 },"
 		"                { \"file\": \"\", \"kind\": \"cdrom\", \"id\": 4 } ],"
-		"  \"serial\": { \"telnet\": true } }"
+		"  \"serial\": { \"telnet\": true, \"vt100\": true } }"
 	},
 	{
 		"testalpha", "",

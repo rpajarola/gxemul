@@ -120,6 +120,14 @@ static int telnet_port = DEFAULT_TELNET_PORT;	/*  the next port to try  */
 /*  Keep what is written to each console, for the control socket:  */
 static bool outlog_enabled = false;
 
+enum vt100_in_state {
+	VT100_IN_NORMAL = 0,
+	VT100_IN_ESC,
+	VT100_IN_SS3
+};
+
+static int default_vt100 = 0;
+
 struct console_handle {
 	int		in_use;
 	int		in_use_for_input;
@@ -127,6 +135,11 @@ struct console_handle {
 	int		inputonly;
 	int		outputonly;
 	int		warning_printed;
+
+	/*  7-bit VT100 translation:  */
+	int		vt100;
+	int		vt100_in_state;
+	struct timeval	vt100_in_time;
 
 	/*  The keyboard that reads the input takes keys with modifiers
 	    (console_set_keys_with_modifiers()):  */
@@ -600,13 +613,7 @@ static int d_avail(int d)
 #endif
 
 
-/*
- *  console_makeavail():
- *
- *  Put a character in the queue, so that it will be avaiable,
- *  by inserting it into the char fifo.
- */
-void console_makeavail(int handle, char ch)
+static void console_makeavail_raw(int handle, char ch)
 {
 	console_handles[handle].fifo[
 	    console_handles[handle].fifo_head] = (unsigned char) ch;
@@ -616,6 +623,108 @@ void console_makeavail(int handle, char ch)
 	if (console_handles[handle].fifo_head ==
 	    console_handles[handle].fifo_tail)
 		fatal("[ WARNING: console fifo overrun, handle %i ]\n", handle);
+}
+
+
+/*
+ *  console_vt100_flush_pending():
+ *
+ *  If an escape sequence was started and no subsequent characters arrived
+ *  within the 50 ms timeout, flush the buffered ESC / SS3 into the FIFO.
+ */
+static void console_vt100_flush_pending(int handle)
+{
+	struct console_handle *chp = &console_handles[handle];
+	struct timeval now;
+	long elapsed_usec;
+
+	if (!chp->vt100 || chp->vt100_in_state == VT100_IN_NORMAL)
+		return;
+
+	gettimeofday(&now, NULL);
+	elapsed_usec = (now.tv_sec - chp->vt100_in_time.tv_sec) * 1000000 +
+	    (now.tv_usec - chp->vt100_in_time.tv_usec);
+
+	if (elapsed_usec >= 50000) {
+		if (chp->vt100_in_state == VT100_IN_ESC) {
+			console_makeavail_raw(handle, 0x1b);
+		} else if (chp->vt100_in_state == VT100_IN_SS3) {
+			console_makeavail_raw(handle, 0x1b);
+			console_makeavail_raw(handle, 'O');
+		}
+		chp->vt100_in_state = VT100_IN_NORMAL;
+	}
+}
+
+
+/*
+ *  console_makeavail():
+ *
+ *  Put a character in the queue, so that it will be avaiable,
+ *  by inserting it into the char fifo.
+ *
+ *  If 7-bit VT100 translation is enabled on this handle, incoming 7-bit
+ *  terminal escape sequences (such as cursor keys ESC [ A..D or ESC O A..D)
+ *  are translated to 8-bit DEC CSI sequences (0x9b A..D).
+ */
+void console_makeavail(int handle, char ch)
+{
+	struct console_handle *chp = &console_handles[handle];
+	unsigned char uc = (unsigned char) ch;
+
+	if (!chp->vt100) {
+		console_makeavail_raw(handle, ch);
+		return;
+	}
+
+	switch (chp->vt100_in_state) {
+	case VT100_IN_NORMAL:
+		if (uc == 0x1b) {
+			chp->vt100_in_state = VT100_IN_ESC;
+			gettimeofday(&chp->vt100_in_time, NULL);
+			return;
+		}
+		console_makeavail_raw(handle, ch);
+		break;
+
+	case VT100_IN_ESC:
+		if (ch == '[') {
+			/*  ESC [ -> 8-bit CSI (0x9b)  */
+			chp->vt100_in_state = VT100_IN_NORMAL;
+			console_makeavail_raw(handle, (char) 0x9b);
+			return;
+		}
+		if (ch == 'O') {
+			/*  ESC O -> SS3  */
+			chp->vt100_in_state = VT100_IN_SS3;
+			gettimeofday(&chp->vt100_in_time, NULL);
+			return;
+		}
+		if (uc == 0x1b) {
+			/*  ESC ESC: flush previous ESC, remain in ESC state  */
+			console_makeavail_raw(handle, 0x1b);
+			gettimeofday(&chp->vt100_in_time, NULL);
+			return;
+		}
+		/*  Any other character following ESC: emit ESC then char  */
+		chp->vt100_in_state = VT100_IN_NORMAL;
+		console_makeavail_raw(handle, 0x1b);
+		console_makeavail_raw(handle, ch);
+		break;
+
+	case VT100_IN_SS3:
+		chp->vt100_in_state = VT100_IN_NORMAL;
+		if (ch >= 'A' && ch <= 'D') {
+			/*  Application cursor key: translate to CSI A..D (\x9b + ch)  */
+			console_makeavail_raw(handle, (char) 0x9b);
+			console_makeavail_raw(handle, ch);
+		} else {
+			/*  Other SS3: emit 8-bit SS3 (0x8f) then char  */
+			console_makeavail_raw(handle, (char) 0x8f);
+			console_makeavail_raw(handle, ch);
+		}
+		break;
+	}
 }
 
 
@@ -772,6 +881,8 @@ static void console_poll_input(int handle)
 			console_makeavail(handle, ch[i]);
 		}
 	}
+
+	console_vt100_flush_pending(handle);
 }
 
 
@@ -878,17 +989,8 @@ int console_readchar(int handle)
 }
 
 
-/*
- *  console_putchar():
- *
- *  Prints a char to stdout, and sets the console_stdout_pending flag.
- */
-void console_putchar(int handle, int ch)
+static void console_putchar_raw(int handle, int ch)
 {
-	if (!console_handles[handle].in_use_for_input &&
-	    !console_handles[handle].outputonly)
-		console_change_inputability(handle, 1);
-
 	if (outlog_enabled) {
 		struct console_handle *chp = &console_handles[handle];
 		if (chp->outlog == NULL)
@@ -915,9 +1017,62 @@ void console_putchar(int handle, int ch)
 		printf("[ console_putchar(): handle %i not in"
 		    " use! ]\n", handle);
 		return;
-		}
+	}
 
 	telnet_output(handle, ch);
+}
+
+
+/*
+ *  console_putchar():
+ *
+ *  Prints a char to stdout or telnet, and sets the console_stdout_pending flag.
+ *  If 7-bit VT100 translation is enabled, DEC 8-bit C1 controls (0x80..0x9f,
+ *  such as 0x9b for CSI) are translated to standard 7-bit escape sequences
+ *  (such as ESC [ for CSI), and CP437 box drawing characters are mapped to
+ *  ASCII equivalents.
+ */
+void console_putchar(int handle, int ch)
+{
+	if (!console_handles[handle].in_use_for_input &&
+	    !console_handles[handle].outputonly)
+		console_change_inputability(handle, 1);
+
+	ch &= 0xff;
+
+	if (console_handles[handle].vt100) {
+		if (ch >= 0x80 && ch <= 0x9f) {
+			/*  DEC C1 control character -> 7-bit VT100 ESC sequence  */
+			console_putchar_raw(handle, 0x1b);
+			console_putchar_raw(handle, ch - 0x40);
+			return;
+		}
+
+		/*  CP437 line drawing characters mapped to 7-bit VT100 ASCII  */
+		switch (ch) {
+		case 0xc9: case 0xbb: case 0xc8: case 0xbc:
+		case 0xda: case 0xbf: case 0xc0: case 0xd9:
+		case 0xcb: case 0xca: case 0xcc: case 0xb9:
+		case 0xce:
+			console_putchar_raw(handle, '+');
+			return;
+		case 0xcd: case 0xc4:
+			console_putchar_raw(handle, '-');
+			return;
+		case 0xba: case 0xb3:
+			console_putchar_raw(handle, '|');
+			return;
+		case 0xb0: case 0xb1: case 0xb2: case 0xdb:
+			console_putchar_raw(handle, '#');
+			return;
+		default:
+			if (ch > 0x7f)
+				ch &= 0x7f;
+			break;
+		}
+	}
+
+	console_putchar_raw(handle, ch);
 }
 
 
@@ -1127,6 +1282,7 @@ static struct console_handle *console_new_handle(const char *name, int *handlep)
 	memset(chp, 0, sizeof(struct console_handle));
 
 	chp->in_use = 1;
+	chp->vt100 = default_vt100;
 	chp->machine_name = strdup("");
 	CHECK_ALLOCATION(chp->name = strdup(name));
 
@@ -1168,6 +1324,8 @@ int console_start_slave(struct machine *machine, const char *consolename,
 
 	chp = console_new_handle(consolename, &handle);
 	chp->machine = machine;
+	if (machine != NULL && machine->vt100_7bit)
+		chp->vt100 = 1;
 	chp->in_use_for_input = use_for_input;
 	if (use_for_input == CONSOLE_OUTPUT_ONLY) {
 		chp->outputonly = 1;
@@ -1215,6 +1373,8 @@ int console_start_slave_inputonly(struct machine *machine, const char *consolena
 
 	chp = console_new_handle(consolename, &handle);
 	chp->machine = machine;
+	if (machine != NULL && machine->vt100_7bit)
+		chp->vt100 = 1;
 	chp->inputonly = 1;
 	chp->in_use_for_input = use_for_input;
 
@@ -1421,6 +1581,55 @@ void console_allow_slaves(int allow)
 
 
 /*
+ *  console_set_vt100():
+ *
+ *  Enables or disables 7-bit VT100 translation for a console handle, or
+ *  for all handles if handle is -1.
+ */
+void console_set_vt100(int handle, int enabled)
+{
+	if (handle < 0) {
+		console_set_all_vt100(enabled);
+		return;
+	}
+
+	if (handle >= 0 && handle < n_console_handles)
+		console_handles[handle].vt100 = enabled;
+}
+
+
+/*
+ *  console_get_vt100():
+ *
+ *  Returns 1 if 7-bit VT100 translation is enabled for a console handle,
+ *  0 otherwise.
+ */
+int console_get_vt100(int handle)
+{
+	if (handle >= 0 && handle < n_console_handles)
+		return console_handles[handle].vt100;
+
+	return default_vt100;
+}
+
+
+/*
+ *  console_set_all_vt100():
+ *
+ *  Enables or disables 7-bit VT100 translation for all existing console
+ *  handles and sets the default for future handles.
+ */
+void console_set_all_vt100(int enabled)
+{
+	default_vt100 = enabled;
+
+	for (int i = 0; i < n_console_handles; i++)
+		if (console_handles[i].in_use)
+			console_handles[i].vt100 = enabled;
+}
+
+
+/*
  *  console_are_slaves_allowed():
  *
  *  Returns the value of allow_slaves.
@@ -1500,6 +1709,9 @@ void console_init(void)
 	settings_add(console_settings, "allow_slaves", 0,
             SETTINGS_TYPE_INT, SETTINGS_FORMAT_YESNO, (void *)&allow_slaves);
 
+	settings_add(console_settings, "vt100", 0,
+            SETTINGS_TYPE_INT, SETTINGS_FORMAT_YESNO, (void *)&default_vt100);
+
 	chp = console_new_handle("MAIN", &handle);
 	if (handle != MAIN_CONSOLE) {
 		printf("console_init(): fatal error: could not create"
@@ -1518,6 +1730,7 @@ void console_init(void)
  */
 void console_deinit(void)
 {
+	settings_remove(console_settings, "vt100");
 	settings_remove(console_settings, "allow_slaves");
 	settings_remove(global_settings, "console");
 }

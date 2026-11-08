@@ -252,6 +252,8 @@ static void usage(bool longusage)
 	printf("  -x        give each emulated serial port a TCP port on localhost, from\n"
 	       "            4000 and up, to connect to with telnet (default is on when\n"
 	       "            -X is used, off otherwise)\n");
+	printf("  -7, --vt100\n"
+	       "            translate 8-bit controls to 7-bit VT100 on serial console\n");
 	printf("  --control unix:path | tcp:port\n"
 	       "            listen for requests from programs; send them with\n"
 	       "            %s --ctl unix:path|tcp:port command [argument]\n"
@@ -314,7 +316,7 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 	struct machine *m = emul_add_machine(emul, NULL);
 
 	const char *opts =
-	    "AC:c:Dd:E:e:GHhI:iJj:k:KL:M:Nn:Oo:p:QqRrSs:TtVvx"
+	    "7AC:c:Dd:E:e:GHhI:iJj:k:KL:M:Nn:Oo:p:QqRrSs:TtVvx"
 #ifdef WITH_DISPLAY
 	    "XY:"
 #endif
@@ -322,6 +324,9 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 
 	while ((ch = getopt(argc, argv, opts)) != -1) {
 		switch (ch) {
+		case '7':
+			console_set_all_vt100(1);
+			break;
 		case 'A':
 			enable_colorized_output = false;
 			break;
@@ -825,6 +830,17 @@ int main(int argc, char *argv[])
 			    sizeof(char *) * (argc - i - n + 1));
 			argc -= n;
 			want_ui = true;
+			break;
+		}
+
+	/*  --vt100 / --vt100-7bit: 7-bit VT100 translation for serial console:  */
+	for (i = 1; i < argc; i++)
+		if (strcmp(argv[i], "--vt100") == 0 ||
+		    strcmp(argv[i], "--vt100-7bit") == 0) {
+			memmove(&argv[i], &argv[i + 1],
+			    sizeof(char *) * (argc - i));
+			argc --;
+			console_set_all_vt100(1);
 			break;
 		}
 

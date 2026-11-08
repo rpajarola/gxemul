@@ -2321,6 +2321,8 @@ static void page_display(void)
 	mu_label(ctx, "");
 	check("Serial ports on telnet ports (localhost, 4000 and up)",
 	    &c->serial_telnet);
+	check("Translate 8-bit controls to 7-bit VT100 on serial console",
+	    &c->serial_vt100);
 }
 
 

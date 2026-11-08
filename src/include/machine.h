@@ -136,6 +136,7 @@ struct machine {
 	struct memory *memory;
 
 	int	main_console_handle;
+	bool	vt100_7bit;
 
 	/*  Tick functions (e.g. hardware devices):  */
 	struct tick_functions tick_functions;

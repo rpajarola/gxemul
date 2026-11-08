@@ -71,6 +71,9 @@ int console_keys_with_modifiers(int handle);
 void console_init_main(struct emul *);
 void console_debug_dump(struct machine *);
 void console_allow_slaves(int);
+void console_set_vt100(int handle, int enabled);
+int console_get_vt100(int handle);
+void console_set_all_vt100(int enabled);
 void console_enable_output_log(void);
 size_t console_output_read(int handle, uint64_t since, unsigned char *buf,
 	size_t maxlen, uint64_t *startp, uint64_t *totalp);

@@ -309,7 +309,7 @@ shown here, except for the machine type:
     "scale": 0,                 <font color="#2020cf">the window size in percent (e.g. 50, 100, 200), 0 = fit the screen</font>
     "cards": -1                 <font color="#2020cf">graphics cards, -1 = the default (as -Z)</font>
   },
-  "serial": { "telnet": false },  <font color="#2020cf">serial ports on telnet ports (as -x; on with the framebuffer)</font>
+  "serial": { "telnet": false, "vt100": false },  <font color="#2020cf">serial ports on telnet ports (as -x); 7-bit VT100 translation (as -7 or --vt100)</font>
   "slots": { "0": "PMAG-BA.bin" },  <font color="#2020cf">option ROM images, by TURBOchannel slot (see <a href="machine_decstation.html#PROM200">the 5000/200's slots 5 and 6</a>)</font>
   "network": {
     "enabled": true,
@@ -396,7 +396,7 @@ pre-populated ECU NVRAM, booting Windows NT 3.1 Alpha Setup via ARC Multiboot ov
   "boot": { "prom_emulation": false, "rom": "media/rom/jensen_v1_3.rom", "nvram": "nvram.bin", "populate_ecu": true },
   "drives": [ { "file": "nt_disk.img", "kind": "disk", "id": 0 },
               { "file": "nt31_alpha.iso", "kind": "cdrom", "id": 4, "readonly": true } ],
-  "serial": { "telnet": true }
+  "serial": { "telnet": true, "vt100": true }
 }
 </pre></td></tr></table>
 

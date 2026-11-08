@@ -117,6 +117,7 @@ struct machine_config {
 	int		scale;		/*  window size in percent, 0 = fit  */
 	int		gfx_cards;	/*  -1 = default  */
 	bool		serial_telnet;	/*  serial ports on telnet ports  */
+	bool		serial_vt100;	/*  7-bit VT100 translation on serial console  */
 
 	/*  TURBOchannel option ROM images (with a system ROM only):  */
 	char		*slot_rom[MC_MAX_SLOTS];	/*  NULL = built-in  */

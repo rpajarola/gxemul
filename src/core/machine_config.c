@@ -1138,11 +1138,14 @@ static const struct key_alias display_aliases[] = {
 };
 
 static const char *serial_keys[] = {
-	"telnet"
+	"telnet", "vt100"
 };
 static const struct key_alias serial_aliases[] = {
 	{ "tcp", "telnet" },
-	{ "network", "telnet" }
+	{ "network", "telnet" },
+	{ "vt100_7bit", "vt100" },
+	{ "translate_vt100", "vt100" },
+	{ "7bit", "vt100" }
 };
 
 static const char *network_keys[] = {
@@ -1503,6 +1506,7 @@ struct machine_config *machine_config_parse(const char *text,
 		    sizeof(serial_keys) / sizeof(serial_keys[0]),
 		    serial_aliases, sizeof(serial_aliases) / sizeof(serial_aliases[0]), &err);
 		get_bool(o, "serial", "telnet", &c->serial_telnet, &err);
+		get_bool(o, "serial", "vt100", &c->serial_vt100, &err);
 	}
 
 	if ((o = section(root, "slots", &err)) != NULL) {
@@ -1694,6 +1698,7 @@ bool machine_config_save(struct machine_config *c, const char *path,
 
 	o = cJSON_AddObjectToObject(root, "serial");
 	cJSON_AddBoolToObject(o, "telnet", c->serial_telnet);
+	cJSON_AddBoolToObject(o, "vt100", c->serial_vt100);
 
 	o = cJSON_AddObjectToObject(root, "slots");
 	for (i = 0; i < MC_MAX_SLOTS; i++)
@@ -3065,6 +3070,10 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 		m->n_gfx_cards = 0;
 	if (c->display || c->serial_telnet)
 		console_allow_slaves(1);
+	if (c->serial_vt100) {
+		m->vt100_7bit = true;
+		console_set_vt100(m->main_console_handle, 1);
+	}
 
 	for (i = 0; machine_config_uses_rom(c) && i < MC_MAX_SLOTS &&
 	    i < MACHINE_MAX_TC_SLOTS; i++)

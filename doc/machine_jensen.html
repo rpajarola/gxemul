@@ -131,9 +131,16 @@ by selecting <b>Alpha</b> in the Architecture menu and <b>DECpc AXP 150 / DEC 20
     { "file": "nt_disk.img", "kind": "disk", "id": 0 },
     { "file": "nt31_alpha.iso", "kind": "cdrom", "id": 4, "readonly": true }
   ],
-  "serial": { "telnet": true }
+  "serial": { "telnet": true, "vt100": true }
 }
 </pre>
+
+<p><b>7-bit VT100 Translation:</b> Digital ARC Multiboot 3.0.g natively outputs 8-bit DEC C1 control sequences (<tt>0x9b</tt> for CSI) and expects 8-bit CSI key sequences for arrow navigation (<tt>\x9bA..\x9bD</tt>). Modern terminal emulators (xterm, GNOME Terminal, Windows Terminal, macOS Terminal) expect standard 7-bit VT100/ANSI escape sequences (<tt>\x1b[</tt>). Setting <tt>"vt100": true</tt> (or command line option <tt>-7</tt> / <tt>--vt100</tt>) enables bidirectional 7-bit VT100 translation:
+<ul>
+  <li>Output: translates 8-bit C1 controls (<tt>0x80..0x9f</tt>, such as <tt>0x9b</tt> &rarr; <tt>\x1b[</tt>) to standard 7-bit escape sequences, and translates CP437 box drawing characters to clean ASCII borders (<tt>+</tt>, <tt>-</tt>, <tt>|</tt>).
+  <li>Input: translates host terminal 7-bit cursor sequences (<tt>\x1b[A..\x1b[D</tt> or <tt>\x1bOA..\x1bOD</tt>) to 8-bit CSI (<tt>\x9bA..\x9bD</tt>) so ARC Multiboot menus can be navigated cleanly with arrow keys.
+</ul>
+</p>
 
 <p>Launch the emulator:
 <pre>
