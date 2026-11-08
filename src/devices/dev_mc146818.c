@@ -133,7 +133,21 @@ struct mc_data {
 static void timer_tick(struct timer *timer, void *extra)
 {
 	struct mc_data *d = (struct mc_data *) extra;
-	d->pending_timer_interrupts ++;
+
+	/*
+	 *  Ticks that the guest hasn't taken yet are counted, so that its
+	 *  clock keeps up with the host's when it falls behind for a while,
+	 *  but only while periodic interrupts are enabled (a real chip has
+	 *  none to catch up on from before), and at most a second's worth.
+	 *  A larger backlog came in a burst that moved the guest's clock
+	 *  ahead by many seconds at once: the DEC 3000's console enables
+	 *  periodic interrupts and never takes them, and OSF/1 V3.0's 4
+	 *  second SCSI selection watchdog then expired during autoconfig,
+	 *  before the 53C94's 262 ms selection timeout.
+	 */
+	if (d->reg[MC_REGB * 4] & MC_REGB_PIE &&
+	    d->pending_timer_interrupts < d->interrupt_hz)
+		d->pending_timer_interrupts ++;
 	d->pf_tick = 1;
 }
 
@@ -680,6 +694,8 @@ DEVICE_ACCESS(mc146818)
 			    (d->reg[MC_REGB*4] & MC_REGB_SET) &&
 			    !(data[0] & MC_REGB_SET))
 				mc146818_set_guest_time(d);
+			if (!(d->reg[MC_REGB*4] & MC_REGB_PIE))
+				d->pending_timer_interrupts = 0;
 			d->reg[MC_REGB*4] = data[0];
 			if (!(data[0] & MC_REGB_PIE)) {
 				INTERRUPT_DEASSERT(d->irq);

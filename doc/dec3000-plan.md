@@ -364,9 +364,15 @@ Everything below is in `media/` (not in git).
       `option_access()` masks the offset to 4 MB; before, every other
       write was lost and X drew in stripes.
   - **OSF/1 V3.0 installs and runs multi-user with DECwindows** (all
-    subsets, with /var on rz0h). TODO: its sim94 driver resets the bus
-    after every selection timeout on an empty target ("sim94_sel_timeout,
-    Sending SCSI bus reset"), which V1.2 and V2.0B don't; it recovers.
+    subsets, with /var on rz0h).
+    - Its sim94 driver has a 4 second watchdog on selections, and it
+      expired during autoconfig, before the 53C94's selection timeout
+      of an empty target (262 ms in host time): "sim94_sel_timeout,
+      Sending SCSI bus reset". The console enables the RTC's periodic
+      interrupts and never takes them, and the MC146818 model counted
+      the missed ticks (about 22000 by then) and delivered them in a
+      burst. It now counts them only while PIE is set, and at most a
+      second's worth.
   - **OpenVMS AXP V1.0 boots multi-user.** `boot dka400` from the V1.0
     CD boots stand-alone BACKUP, which restores the base system saveset
     to disk (`dka0`). First boot runs the installation procedure,

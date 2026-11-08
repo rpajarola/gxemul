@@ -5707,4 +5707,11 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.19  ==============
 
-
+20261107	MC146818: the ticks that the guest has yet to take (so that its
+		clock catches up with the host's) are counted only while
+		periodic interrupts are enabled, and at most a second's
+		worth. The DEC 3000's console enables them and never takes
+		them, and the backlog then came in a burst that made OSF/1
+		V3.0's SCSI selection watchdog expire and reset the bus.
+		DEC 3000/400: DEC OSF/1 AXP V3.0 installs and runs with
+		DECwindows.
