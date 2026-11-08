@@ -5723,4 +5723,24 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.20  ==============
 
+20261108	DECpc AXP 150 / DEC 2000 Model 300 ("Jensen"): Windows NT 3.1
+		ARC Multiboot firmware initialization and setup support.
+		Added configurable 'populate_ecu' option (default true for
+		Jensen) in machine_config, JSON config, and the interactive UI.
+		Pre-populates authentic Digital factory NVRAM tables: Block 6
+		(EISA slot 1 AHA-1742A SCSI host adapter on IRQ 11) and Block C
+		(ARC Configuration Tree and Environment Variables), eliminating
+		checksum / popup errors during ARC Multiboot 3.0.g boot.
+		Dynamic OS type selection via CMOS register 0x4f: defaults to
+		Windows NT ARC Multiboot (1), switches to OpenVMS SRM (2) with
+		-o vms, and DEC OSF/1 SRM (3) with -o osf.
+		MC146818 PC CMOS year modulo 100 and dynamic BCD register
+		tracking for ARC time validation.
+		Windows NT 3.1 Setup boots and reaches interactive setup.
+		Documentation: doc/machine_jensen.html ARC console and Setup
+		instructions.
+
+==============  RELEASE 1.0.21  ==============
+
+
 
