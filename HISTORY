@@ -5720,3 +5720,7 @@ Changelog for GXemul:
 		and the patched code wasn't always seen. Compares (CMPTxx)
 		with infinities and denormals no longer trap; only NaNs do.
 		DEC 3000/400: Digital UNIX V4.0D installs and runs with CDE.
+
+==============  RELEASE 1.0.20  ==============
+
+
