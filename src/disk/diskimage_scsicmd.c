@@ -905,12 +905,23 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		}
 
 		/*
-		 *  On the DEC 3000, a plain SCSI-2 answer as from DEC's
+		 *  On the DEC 3000 and Jensen, a plain SCSI-2 answer as from DEC's
 		 *  drives: response data format 2, the additional length of
 		 *  36 bytes, and no wide bus (OpenVMS's port driver asks
 		 *  again and again otherwise).
 		 */
-		if (machine->machine_type == MACHINE_DEC3000) {
+		if (machine->machine_type == MACHINE_DEC3000 ||
+		    machine->machine_type == MACHINE_JENSEN) {
+			if (d->inq_vendor == NULL) {
+				memcpy(xferp->data_in + 8, "DEC     ", 8);
+				if (d->is_a_cdrom) {
+					memcpy(xferp->data_in + 16, "RRD42   (C) DEC ", 16);
+					memcpy(xferp->data_in + 32, "4.5d", 4);
+				} else {
+					memcpy(xferp->data_in + 16, "RZ26     (C) DEC", 16);
+					memcpy(xferp->data_in + 32, "T386", 4);
+				}
+			}
 			xferp->data_in[3] = 0x02;
 			xferp->data_in[4] = 36 - 5;
 			xferp->data_in[6] = 0x00;
@@ -989,7 +1000,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		    pages are then all zero), and the default and saved
 		    values are the current ones.  */
 		if ((xferp->cmd[2] & 0xc0) != 0 &&
-		    machine->machine_type != MACHINE_DEC3000)
+		    machine->machine_type != MACHINE_DEC3000 &&
+		    machine->machine_type != MACHINE_JENSEN)
 			fatal("WARNING: mode sense, cmd[2] = 0x%02x\n",
 			    xferp->cmd[2]);
 
@@ -1018,7 +1030,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		xferp->data_in[q+1] = 0;	/*  nr of blocks, high  */
 		xferp->data_in[q+2] = 0;	/*  nr of blocks, mid  */
 		xferp->data_in[q+3] = 0;	/*  nr of blocks, low */
-		if (machine->machine_type == MACHINE_DEC3000) {
+		if (machine->machine_type == MACHINE_DEC3000 ||
+		    machine->machine_type == MACHINE_JENSEN) {
 			/*  Default medium type; a CD is write protected:  */
 			xferp->data_in[1] = 0x00;
 			xferp->data_in[2] = d->is_a_cdrom || d->writable == 0?
@@ -1068,7 +1081,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 			q += xferp->data_in[q + 1] + 2;
 
 		/*  The mode data length doesn't count itself:  */
-		if (machine->machine_type == MACHINE_DEC3000) {
+		if (machine->machine_type == MACHINE_DEC3000 ||
+		    machine->machine_type == MACHINE_JENSEN) {
 			/*  Changeable values: none (all bits zero, but each
 			    page's code and length):  */
 			if ((xferp->cmd[2] & 0xc0) == 0x40) {

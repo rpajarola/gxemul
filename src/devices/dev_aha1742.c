@@ -119,6 +119,7 @@
 #define	ECB_DAT			0x0100
 
 #define	ST_DON			0x0001
+#define	AHA_SW_ME		0x1000
 #define	HS_OK			0x00
 #define	HS_TIMED_OUT		0x11
 #define	HS_HARDWARE_ERR		0x20
@@ -168,10 +169,12 @@ static void aha1742_assert_irq(struct aha1742_data *d)
 	if (!(d->intdef & 0x10))	/* Interrupt enable bit */
 		return;
 
-	if (d->irq_asserted)
-		return;
+	if (d->irq_asserted) {
+		INTERRUPT_DEASSERT(d->irq[d->irq_asserted]);
+	}
 
 	d->irq_asserted = irq;
+	debug("[ aha1742: ASSERT IRQ %d intdef=0x%02x ]\n", irq, d->intdef);
 	INTERRUPT_ASSERT(d->irq[irq]);
 }
 
@@ -180,6 +183,7 @@ static void aha1742_deassert_irq(struct aha1742_data *d)
 	if (!d->irq_asserted)
 		return;
 
+	debug("[ aha1742: DEASSERT IRQ %d ]\n", d->irq_asserted);
 	INTERRUPT_DEASSERT(d->irq[d->irq_asserted]);
 	d->irq_asserted = 0;
 }
@@ -192,7 +196,7 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 	uint32_t data_addr, data_len, status_addr;
 	int target, lun, res;
 	struct scsi_transfer *xferp;
-	uint8_t status_block[16];
+	uint8_t status_block[32];
 
 	target = d->attn & ATTN_TARGET;
 
@@ -219,16 +223,107 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 
 	debug("[ aha1742: ECB cmd op=0x%02x target=%d lun=%d cdb_len=%d data_addr=0x%x data_len=%d status=0x%x ]\n",
 	    opcode, target, lun, scsi_cmd_len, data_addr, data_len, status_addr);
+	memset(status_block, 0, sizeof(status_block));
+
+	if (opcode == 0x0a) {
+		/*
+		 *  Read Host Adapter Inquiry Data (AHA_OP_RHAID).
+		 *  Target 7 is the host adapter itself.
+		 */
+		uint8_t inq[256];
+		uint32_t to_copy = data_len;
+		memset(inq, 0, sizeof(inq));
+		inq[0] = 0x00;  /* dev_type */
+		inq[1] = 0x00;
+		inq[2] = 0x01;  /* support_level */
+		inq[3] = 0x00;
+		inq[4] = 0x00;  /* residual_length */
+		inq[5] = 0x08;  /* num_lun */
+		inq[6] = 0x40;  /* num_cb = 64 */
+		inq[7] = 0x00;  /* flags */
+		memcpy(inq + 8,  "Adaptec ", 8);
+		memcpy(inq + 16, "AHA-1740", 8);
+		memcpy(inq + 24, "enhanced", 8);
+		memcpy(inq + 32, "H   ", 4);    /* firmware_rev: rev H */
+		memcpy(inq + 36, "010193  ", 8);
+		memcpy(inq + 44, "120000  ", 8);
+
+		if (to_copy > sizeof(inq))
+			to_copy = sizeof(inq);
+
+		if (data_addr != 0 && to_copy > 0) {
+			if (opt1 & ECB_S_G) {
+				uint32_t cur = 0;
+				uint32_t seg_idx = 0;
+				while (cur < to_copy && seg_idx * 8 < data_len) {
+					uint8_t sbuf[8];
+					uint32_t saddr, slen, chunk;
+					cpu->memory_rw(cpu, cpu->mem,
+					    data_addr + seg_idx * 8, sbuf, 8,
+					    MEM_READ, PHYSICAL | NO_EXCEPTIONS);
+					saddr = sbuf[0] | (sbuf[1]<<8) | (sbuf[2]<<16) | (sbuf[3]<<24);
+					slen  = sbuf[4] | (sbuf[5]<<8) | (sbuf[6]<<16) | (sbuf[7]<<24);
+					chunk = to_copy - cur;
+					if (chunk > slen)
+						chunk = slen;
+					cpu->memory_rw(cpu, cpu->mem, saddr,
+					    inq + cur, chunk,
+					    MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
+					cur += chunk;
+					seg_idx++;
+				}
+			} else {
+				cpu->memory_rw(cpu, cpu->mem, data_addr,
+				    inq, to_copy,
+				    MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
+			}
+		}
+
+		status_block[0] = ST_DON & 0xff;
+		status_block[1] = (ST_DON >> 8) & 0xff;
+		status_block[2] = HS_OK;
+		status_block[3] = 0x00;
+
+		if (status_addr != 0) {
+			cpu->memory_rw(cpu, cpu->mem, status_addr, status_block,
+			    sizeof(status_block), MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
+		}
+
+		d->mboxin = d->mboxout;
+		d->g2intst = (target & ATTN_TARGET) | AHB_ECB_OK;
+		d->g2stat |= G2STAT_INT_PEND;
+		d->g2stat |= G2STAT_MBOX_EMPTY;
+		aha1742_assert_irq(d);
+		return;
+	}
+
+	if (opcode == 0x00) {
+		/* AHA_OP_NOP */
+		status_block[0] = ST_DON & 0xff;
+		status_block[1] = (ST_DON >> 8) & 0xff;
+		status_block[2] = HS_OK;
+		status_block[3] = 0x00;
+
+		if (status_addr != 0) {
+			cpu->memory_rw(cpu, cpu->mem, status_addr, status_block,
+			    sizeof(status_block), MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
+		}
+
+		d->mboxin = d->mboxout;
+		d->g2intst = (target & ATTN_TARGET) | AHB_ECB_OK;
+		d->g2stat |= G2STAT_INT_PEND;
+		d->g2stat |= G2STAT_MBOX_EMPTY;
+		aha1742_assert_irq(d);
+		return;
+	}
 
 	if (scsi_cmd_len > 12)
 		scsi_cmd_len = 12;
 
-	memset(status_block, 0, sizeof(status_block));
-
 	/* Check if target device exists on SCSI bus: */
 	if (!diskimage_exist(d->machine, target, DISKIMAGE_SCSI) || lun != 0) {
-		status_block[0] = ST_DON & 0xff;
-		status_block[1] = (ST_DON >> 8) & 0xff;
+		status_block[0] = 0x00;
+		status_block[1] = (AHA_SW_ME >> 8) & 0xff;
 		status_block[2] = HS_TIMED_OUT;
 		status_block[3] = 0x00;
 
@@ -281,8 +376,11 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 					seg_idx++;
 				}
 			} else {
+				uint32_t chunk = xferp->data_out_len;
+				if (chunk > data_len)
+					chunk = data_len;
 				cpu->memory_rw(cpu, cpu->mem, data_addr,
-				    xferp->data_out, xferp->data_out_len,
+				    xferp->data_out, chunk,
 				    MEM_READ, PHYSICAL | NO_EXCEPTIONS);
 			}
 
@@ -314,8 +412,11 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 					seg_idx++;
 				}
 			} else {
+				uint32_t chunk = xferp->data_in_len;
+				if (chunk > data_len)
+					chunk = data_len;
 				cpu->memory_rw(cpu, cpu->mem, data_addr,
-				    xferp->data_in, xferp->data_in_len,
+				    xferp->data_in, chunk,
 				    MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
 			}
 		}
@@ -451,6 +552,14 @@ DEVICE_ACCESS(aha1742)
 				d->g2stat |= G2STAT_INT_PEND;
 				d->g2stat |= G2STAT_MBOX_EMPTY;
 				aha1742_assert_irq(d);
+			} else if ((d->attn & ATTN_OPCODE) == OP_ABORT_ECB) {
+				/* Abort ECB */
+				debug("[ aha1742: OP_ABORT_ECB target=%d ]\n", d->attn & ATTN_TARGET);
+				d->mboxin = d->mboxout;
+				d->g2intst = (d->attn & ATTN_TARGET) | AHB_ECB_OK;
+				d->g2stat |= G2STAT_INT_PEND;
+				d->g2stat |= G2STAT_MBOX_EMPTY;
+				aha1742_assert_irq(d);
 			} else {
 				debug("[ aha1742: unknown ATTN opcode 0x%02x ]\n", d->attn & ATTN_OPCODE);
 			}
@@ -462,6 +571,7 @@ DEVICE_ACCESS(aha1742)
 	case AHA_G2CNTRL:
 		if (writeflag == MEM_WRITE) {
 			d->g2cntrl = idata;
+			debug("[ aha1742: write G2CNTRL = 0x%02x ]\n", (int)idata);
 			if (idata & G2CNTRL_CLEAR_EISA_INT) {
 				d->g2stat &= ~G2STAT_INT_PEND;
 				aha1742_deassert_irq(d);
@@ -482,6 +592,7 @@ DEVICE_ACCESS(aha1742)
 	case AHA_G2INTST:
 		if (writeflag == MEM_WRITE)
 			break;
+		debug("[ aha1742: read G2INTST = 0x%02x ]\n", (int)d->g2intst);
 		odata = d->g2intst;
 		break;
 
@@ -512,6 +623,7 @@ DEVICE_ACCESS(aha1742)
 	case AHA_MBOXIN3:
 		if (writeflag == MEM_WRITE)
 			break;
+		debug("[ aha1742: read MBOXIN = 0x%08x ]\n", (unsigned int)d->mboxin);
 		odata = (d->mboxin >> 24) & 0xff;
 		break;
 

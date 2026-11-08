@@ -197,21 +197,24 @@ DEVICE_ACCESS(jensen_flash)
 	if (writeflag == MEM_WRITE) {
 		uint8_t val = data[0];
 		if (d->flash_cmd == 0x40 || d->flash_cmd == 0x10) {
-			/* Byte write */
-			if (offset < d->rom_size)
+			/* Byte write: protect Block 6 (0x60000) and Block C (0xc0000) */
+			if ((offset < 0x60000 || (offset >= 0x70000 && offset < 0xc0000) || offset >= 0xd0000)
+			    && offset < d->rom_size)
 				d->rom[offset] = val;
 			d->flash_cmd = 0x70;
 			d->flash_status = 0x80;
 			return 1;
 		}
 		if (d->flash_cmd == 0x20 && val == 0xd0) {
-			/* Block Erase Confirm: erase 64KB block */
+			/* Block Erase Confirm: erase 64KB block (protect Block 6 and Block C) */
 			uint32_t block_start = offset & ~0xffff;
 			uint32_t block_end = block_start + 0x10000;
-			if (block_end > d->rom_size)
-				block_end = d->rom_size;
-			if (block_start < block_end)
-				memset(d->rom + block_start, 0xff, block_end - block_start);
+			if (block_start != 0x60000 && block_start != 0xc0000) {
+				if (block_end > d->rom_size)
+					block_end = d->rom_size;
+				if (block_start < block_end)
+					memset(d->rom + block_start, 0xff, block_end - block_start);
+			}
 			d->flash_cmd = 0x70;
 			d->flash_status = 0x80;
 			return 1;
@@ -373,6 +376,8 @@ DEVICE_ACCESS(jensen_inta)
 	}
 	d->inta_second = !d->inta_second;
 
+	debug("[ jensen: INTA cycle returning 0x%02x ]\n", vector);
+
 	memory_writemax64(cpu, data, len, vector);
 	return 1;
 }
@@ -453,14 +458,10 @@ DEVICE_ACCESS(jensen_combo)
  */
 DEVICE_ACCESS(jensen_board_id)
 {
-	static const uint8_t id[4] = { 0x10, 0xa3, 0x24, 0x00 };
 	uint8_t b = 0xff;
 
 	if (writeflag == MEM_WRITE)
 		return 1;
-
-	if (relative_addr < 4)
-		b = id[relative_addr];
 
 	memory_writemax64(cpu, data, len, b);
 	return 1;
@@ -753,6 +754,53 @@ struct jensen_data *dev_jensen_init(struct machine *machine,
 
 
 /*
+ *  dev_jensen_init_ecu():
+ *
+ *  Populate standard factory ECU configuration for Jensen:
+ *  Block 6 (0x60000): Flash NVRAM Table for EISA slots 1..6.
+ *  For slot s in [1..6], entry is at 12 * (s - 1) bytes.
+ *    0..7: 8-byte ASCII device ID ("ADP0001 ")
+ *    8..11: 32-bit sbb_offset.
+ *  Slots 2..6 are zero (sbb_offset = 0 => slot empty).
+ */
+static void dev_jensen_init_ecu(struct jensen_data *d)
+{
+	/*  Clear Block 6 (headers and NVRAM):  */
+	memset(d->rom + 0x60000, 0, 0x10000);
+
+	/*
+	 *  OpenVMS AXP autoconfiguration (SYS$CPU_ROUTINES_0702.EXE):
+	 *  Slot 1 entry at 0x60000:
+	 *  0x60000..0x60007: "ADP0001 "
+	 *  0x60008..0x6000b: sbb_offset = 0x00ff.
+	 *
+	 *  Physical address = 0x1ac000000 + (sbb_offset << 9) + 512.
+	 *  With sbb_offset = 0x00ff:
+	 *  Physical address = 0x1ac020000 (dense ROM offset 0x60100).
+	 */
+	memcpy(d->rom + 0x60000, "ADP0001 ", 8);
+	d->rom[0x60008] = 0xff;
+	d->rom[0x60009] = 0x00;
+	d->rom[0x6000a] = 0x00;
+	d->rom[0x6000b] = 0x00;
+
+	/*
+	 *  Function data at 0x60100:
+	 *  Offset 65 (0x41): Function info (0x04 = Interrupt config present)
+	 *  Offset 0xd1 (0xb2 + 0x1f): IRQ 11, level-triggered (0x2b, 0x00)
+	 *  Offset 31 (0x1f): Also set for compatibility
+	 */
+	d->rom[0x60100 + 0x1f] = 0x2b;
+	d->rom[0x60100 + 0x20] = 0x00;
+	d->rom[0x60100 + 0x21] = 0x00;
+	d->rom[0x60100 + 0x22] = 0x00;
+	d->rom[0x60100 + 0x41] = 0x04;
+	d->rom[0x60100 + 0xd1] = 0x2b;
+	d->rom[0x60100 + 0xd2] = 0x00;
+}
+
+
+/*
  *  dev_jensen_set_rom():
  *
  *  Load the Flash ROM image into memory.
@@ -766,6 +814,8 @@ void dev_jensen_set_rom(struct jensen_data *d, const unsigned char *image,
 	memcpy(d->rom, image, len);
 	d->rom_size = len;
 	d->have_rom = 1;
+
+	dev_jensen_init_ecu(d);
 }
 
 
