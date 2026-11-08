@@ -373,6 +373,8 @@ Everything below is in `media/` (not in git).
       the missed ticks (about 22000 by then) and delivered them in a
       burst. It now counts them only while PIE is set, and at most a
       second's worth.
+  - **Digital UNIX V3.2C installs and runs multi-user with DECwindows**,
+    the same way as OSF/1 V3.0 (all subsets, /var on rz0h).
   - **OpenVMS AXP V1.0 boots multi-user.** `boot dka400` from the V1.0
     CD boots stand-alone BACKUP, which restores the base system saveset
     to disk (`dka0`). First boot runs the installation procedure,
