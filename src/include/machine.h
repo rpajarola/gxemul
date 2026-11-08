@@ -175,6 +175,7 @@ struct machine {
 	int	emulated_hz;
 	int	allow_instruction_combinations;
 	int	force_netboot;
+	int	populate_ecu;
 	uint64_t file_loaded_end_addr;
 	char	*config_path;	/*  machine.json it was set up from  */
 	char	*nvram_filename;	/*  the RTC NVRAM is kept here  */

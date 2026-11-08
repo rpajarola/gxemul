@@ -40,7 +40,8 @@
  *	  "boot": { "prom_emulation": true, "rom": "", "load": [],
  *	            "bootname": "", "bootarg": null, "netboot": false,
  *	            "start_paused": false, "nvram": "",
- *	            "skip_failing_tests": false },
+ *	            "skip_failing_tests": false,
+ *	            "populate_ecu": true },
  *	  "drives": [ { "file": "disk.img", "kind": "disk", "bus": "default",
  *	                "id": -1, "readonly": false, "overlay": false,
  *	                "vendor": "", "product": "", "revision": "",
@@ -197,6 +198,7 @@ struct machine_config *machine_config_new(void)
 	c->byte_order = xstrdup("");
 	c->prom_emulation = true;
 	c->rom = xstrdup("");
+	c->populate_ecu = true;
 	c->bootname = xstrdup("");
 	c->nvram = xstrdup("");
 	c->scale = 0;
@@ -1077,7 +1079,8 @@ static const struct key_alias machine_aliases[] = {
 
 static const char *boot_keys[] = {
 	"bootarg", "bootname", "load", "netboot", "nvram",
-	"prom_emulation", "rom", "skip_failing_tests", "start_paused"
+	"populate_ecu", "prom_emulation", "rom", "skip_failing_tests",
+	"start_paused"
 };
 static const struct key_alias boot_aliases[] = {
 	{ "kernel", "load" },
@@ -1093,7 +1096,8 @@ static const struct key_alias boot_aliases[] = {
 	{ "arg", "bootarg" },
 	{ "paused", "start_paused" },
 	{ "pause", "start_paused" },
-	{ "skip_tests", "skip_failing_tests" }
+	{ "skip_tests", "skip_failing_tests" },
+	{ "ecu", "populate_ecu" }
 };
 
 static const char *drive_keys[] = {
@@ -1393,6 +1397,8 @@ struct machine_config *machine_config_parse(const char *text,
 		get_str(o, "boot", "nvram", &c->nvram, &err);
 		get_bool(o, "boot", "skip_failing_tests", &c->skip_failing_tests,
 		    &err);
+		get_bool(o, "boot", "populate_ecu", &c->populate_ecu,
+		    &err);
 	}
 
 	v = cJSON_GetObjectItemCaseSensitive(root, "drives");
@@ -1662,6 +1668,7 @@ bool machine_config_save(struct machine_config *c, const char *path,
 	cJSON_AddBoolToObject(o, "start_paused", c->start_paused);
 	cJSON_AddStringToObject(o, "nvram", c->nvram);
 	cJSON_AddBoolToObject(o, "skip_failing_tests", c->skip_failing_tests);
+	cJSON_AddBoolToObject(o, "populate_ecu", c->populate_ecu);
 
 	a = cJSON_AddArrayToObject(root, "drives");
 	for (i = 0; i < c->n_drives; i++) {
@@ -3041,7 +3048,9 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	m->prom_emulation = c->prom_emulation;
 	m->force_netboot = c->force_netboot && !machine_config_uses_rom(c);
 	m->start_paused = c->start_paused;
-	if (c->bootarg != NULL && !machine_config_uses_rom(c))
+	m->populate_ecu = c->populate_ecu;
+	if (c->bootarg != NULL && (!machine_config_uses_rom(c) ||
+	    machine_config_machine_type(c->type) == MACHINE_JENSEN))
 		m->boot_string_argument = xstrdup(c->bootarg);
 
 	if (c->nvram[0])
@@ -3142,7 +3151,8 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	    emulation):  */
 	if (machine_config_uses_rom(c)) {
 		char *f = rom_to_load(c, c->rom);
-		if (machine_config_machine_type(c->type) == MACHINE_DEC3000)
+		if (machine_config_machine_type(c->type) == MACHINE_DEC3000 ||
+		    machine_config_machine_type(c->type) == MACHINE_JENSEN)
 			/*  A firmware update file, or ROM images, which the
 			    machine's serial ROM emulation takes apart:  */
 			s = xstrdup(f);
@@ -3160,7 +3170,8 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	}
 
 	/*  The boot file name; by default, that of the last file loaded:  */
-	if (c->bootname[0] && !machine_config_uses_rom(c))
+	if (c->bootname[0] && (!machine_config_uses_rom(c) ||
+	    machine_config_machine_type(c->type) == MACHINE_JENSEN))
 		m->boot_kernel_filename = xstrdup(c->bootname);
 	else if (n_loads > 0 && !machine_config_uses_rom(c)) {
 		const char *last = loads[n_loads - 1];

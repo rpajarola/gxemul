@@ -48,6 +48,25 @@
 #define	DEV_PCCMOS_LENGTH		2
 #define	PCCMOS_MC146818_FAKE_ADDR	0x1d00000000ULL
 
+
+static int str_contains_ci(const char *haystack, const char *needle)
+{
+	size_t hlen, nlen, i;
+	if (haystack == NULL || needle == NULL)
+		return 0;
+	nlen = strlen(needle);
+	if (nlen == 0)
+		return 1;
+	hlen = strlen(haystack);
+	if (hlen < nlen)
+		return 0;
+	for (i = 0; i <= hlen - nlen; i++) {
+		if (strncasecmp(haystack + i, needle, nlen) == 0)
+			return 1;
+	}
+	return 0;
+}
+
 struct pccmos_data {
 	unsigned char	select;
 	unsigned char	ram[256];
@@ -143,15 +162,29 @@ DEVINIT(pccmos)
 	case MACHINE_MVMEPPC:
 	case MACHINE_ALPHA:
 		break;
-	case MACHINE_JENSEN:
+	case MACHINE_JENSEN: {
+		const char *bootarg = devinit->machine->boot_string_argument;
+		const char *bootname = devinit->machine->boot_kernel_filename;
+		uint8_t os_type = 0x01;		/* OS_TYPE: 1=NT, 2=VMS, 3=OSF */
+
+		if (str_contains_ci(bootarg, "vms") || str_contains_ci(bootarg, "srm") ||
+		    str_contains_ci(bootname, "vms") || str_contains_ci(bootname, "srm")) {
+			os_type = 0x02;
+		} else if (str_contains_ci(bootarg, "osf") || str_contains_ci(bootarg, "unix") ||
+		    str_contains_ci(bootarg, "tru64") || str_contains_ci(bootname, "osf") ||
+		    str_contains_ci(bootname, "unix") || str_contains_ci(bootname, "tru64")) {
+			os_type = 0x03;
+		}
+
 		d->ram[0x1e] = 0x55;
 		d->ram[0x1f] = 0xaa;
 		d->ram[0x20] = 0x33;
 		d->ram[0x21] = 0x0f;
-		d->ram[0x4f] = 0x02;		/* OS_TYPE: 1=NT, 2=VMS, 3=OSF */
+		d->ram[0x4f] = os_type;
 		d->ram[0x69] = 0x9d;
 		d->ram[0x6a] = 0x07;
 		break;
+	}
 	case MACHINE_IYONIX:	// TODO: not sure about exact type.
 		break;
 	default:fatal("devinit_pccmos(): unimplemented machine type"

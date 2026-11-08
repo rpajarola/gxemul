@@ -53,6 +53,7 @@
 #include "machine.h"
 #include "memory.h"
 #include "misc.h"
+#include "dev_jensen_nvram.h"
 
 #define	JENSEN_ROM_SIZE		(1024 * 1024)
 
@@ -108,6 +109,7 @@ struct jensen_data {
 	uint8_t			serial_irq_mask;
 
 	int			have_rom;
+	int			populate_ecu;
 	size_t			rom_size;
 	unsigned char		rom[JENSEN_ROM_SIZE];
 	uint8_t			flash_cmd;
@@ -197,24 +199,21 @@ DEVICE_ACCESS(jensen_flash)
 	if (writeflag == MEM_WRITE) {
 		uint8_t val = data[0];
 		if (d->flash_cmd == 0x40 || d->flash_cmd == 0x10) {
-			/* Byte write: protect Block 6 (0x60000) and Block C (0xc0000) */
-			if ((offset < 0x60000 || (offset >= 0x70000 && offset < 0xc0000) || offset >= 0xd0000)
-			    && offset < d->rom_size)
+			/* Byte write: allow writes to Flash */
+			if (offset < d->rom_size)
 				d->rom[offset] = val;
 			d->flash_cmd = 0x70;
 			d->flash_status = 0x80;
 			return 1;
 		}
 		if (d->flash_cmd == 0x20 && val == 0xd0) {
-			/* Block Erase Confirm: erase 64KB block (protect Block 6 and Block C) */
+			/* Block Erase Confirm: erase 64KB block */
 			uint32_t block_start = offset & ~0xffff;
 			uint32_t block_end = block_start + 0x10000;
-			if (block_start != 0x60000 && block_start != 0xc0000) {
-				if (block_end > d->rom_size)
-					block_end = d->rom_size;
-				if (block_start < block_end)
-					memset(d->rom + block_start, 0xff, block_end - block_start);
-			}
+			if (block_end > d->rom_size)
+				block_end = d->rom_size;
+			if (block_start < block_end)
+				memset(d->rom + block_start, 0xff, block_end - block_start);
 			d->flash_cmd = 0x70;
 			d->flash_status = 0x80;
 			return 1;
@@ -616,6 +615,7 @@ struct jensen_data *dev_jensen_init(struct machine *machine,
 	d->machine = machine;
 	d->mem = mem;
 	d->ram_size = ram_size;
+	d->populate_ecu = machine ? machine->populate_ecu : 1;
 
 	d->sysctl = (ram_size == 128 * 1024 * 1024) ? 0xa0 : 0x20;
 	d->flash_status = 0x80;
@@ -757,46 +757,27 @@ struct jensen_data *dev_jensen_init(struct machine *machine,
  *  dev_jensen_init_ecu():
  *
  *  Populate standard factory ECU configuration for Jensen:
- *  Block 6 (0x60000): Flash NVRAM Table for EISA slots 1..6.
- *  For slot s in [1..6], entry is at 12 * (s - 1) bytes.
- *    0..7: 8-byte ASCII device ID ("ADP0001 ")
- *    8..11: 32-bit sbb_offset.
- *  Slots 2..6 are zero (sbb_offset = 0 => slot empty).
+ *  Block 6 (0x60000): Flash NVRAM Table for EISA slots 1..6 and AHA-1742A SCSI.
+ *  Block C (0xc0000): ARC Configuration Tree (Section 1) and Environment
+ *                     Variables (Section 2).
  */
 static void dev_jensen_init_ecu(struct jensen_data *d)
 {
-	/*  Clear Block 6 (headers and NVRAM):  */
+	/*  If ECU / NVRAM pre-population is disabled, leave raw ROM:  */
+	if (!d->populate_ecu)
+		return;
+
+	/*  Clear Block 6 (0x60000..0x6ffff) and Block C (0xc0000..0xcffff):  */
 	memset(d->rom + 0x60000, 0, 0x10000);
+	memset(d->rom + 0xc0000, 0, 0x10000);
 
-	/*
-	 *  OpenVMS AXP autoconfiguration (SYS$CPU_ROUTINES_0702.EXE):
-	 *  Slot 1 entry at 0x60000:
-	 *  0x60000..0x60007: "ADP0001 "
-	 *  0x60008..0x6000b: sbb_offset = 0x00ff.
-	 *
-	 *  Physical address = 0x1ac000000 + (sbb_offset << 9) + 512.
-	 *  With sbb_offset = 0x00ff:
-	 *  Physical address = 0x1ac020000 (dense ROM offset 0x60100).
-	 */
-	memcpy(d->rom + 0x60000, "ADP0001 ", 8);
-	d->rom[0x60008] = 0xff;
-	d->rom[0x60009] = 0x00;
-	d->rom[0x6000a] = 0x00;
-	d->rom[0x6000b] = 0x00;
+	/*  Populate Block 6 (EISA Slot table & AHA-1742A configuration):  */
+	memcpy(d->rom + 0x60000, jensen_default_nvram_block6,
+	    sizeof(jensen_default_nvram_block6));
 
-	/*
-	 *  Function data at 0x60100:
-	 *  Offset 65 (0x41): Function info (0x04 = Interrupt config present)
-	 *  Offset 0xd1 (0xb2 + 0x1f): IRQ 11, level-triggered (0x2b, 0x00)
-	 *  Offset 31 (0x1f): Also set for compatibility
-	 */
-	d->rom[0x60100 + 0x1f] = 0x2b;
-	d->rom[0x60100 + 0x20] = 0x00;
-	d->rom[0x60100 + 0x21] = 0x00;
-	d->rom[0x60100 + 0x22] = 0x00;
-	d->rom[0x60100 + 0x41] = 0x04;
-	d->rom[0x60100 + 0xd1] = 0x2b;
-	d->rom[0x60100 + 0xd2] = 0x00;
+	/*  Populate Block C (ARC Configuration Tree & Environment Variables):  */
+	memcpy(d->rom + 0xc0000, jensen_default_nvram_blockc,
+	    sizeof(jensen_default_nvram_blockc));
 }
 
 

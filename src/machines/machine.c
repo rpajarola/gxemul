@@ -84,6 +84,7 @@ struct machine *machine_new(char *name, struct emul *emul, int id)
 	m->arch_pagesize = 4096;	/*  Should be overriden in
 					    emul.c for other pagesizes.  */
 	m->prom_emulation = 1;
+	m->populate_ecu = 1;
 	m->allow_instruction_combinations = 1;
 	m->byte_order_override = NO_BYTE_ORDER_OVERRIDE;
 	m->boot_kernel_filename = strdup("");
