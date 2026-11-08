@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+  <title>GXemul: DECpc AXP 150 / DEC 2000 Model 300 ("Jensen") emulation</title>
+  <meta name="robots" content="noarchive,nofollow,noindex">
+</head>
+<body style="font-family : sans-serif;">
+
+<!-- 10 lines header.  -->
+
+<h1>GXemul: DECpc AXP 150 / DEC 2000 Model 300 ("Jensen") emulation</h1>
+<p>
+
+<a href="./">Back to the index.</a>
+
+<!--
+
+Copyright (C) 2006-2026  Anders Gavare and contributors.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+-->
+
+<p>The <a href="https://en.wikipedia.org/wiki/DECpc_AXP_150">DECpc AXP 150</a>
+(also known as the <b>DEC 2000 Model 300 AXP</b>, code-named <i>"Jensen"</i>)
+was Digital Equipment Corporation's first PC-class Alpha system, introduced in
+May 1993. Unlike the workstation-oriented DEC 3000 family which used TURBOchannel,
+the Jensen combined Digital's high-performance 64-bit Alpha RISC microprocessor
+with an industry-standard <b>EISA</b> (Extended Industry Standard Architecture) bus
+and standard PC peripherals.</p>
+
+<p>GXemul emulates the complete Jensen motherboard and expansion subsystem:
+<ul>
+	<li><b>DECchip 21064 (EV4)</b> 64-bit Alpha RISC microprocessor running at 150 MHz.
+	<li><b>EISA Bus Logic</b> featuring full sparse address mapping:
+		<ul>
+			<li>Sparse EISA memory space (0x200000000) and sparse EISA I/O space (0x300000000).
+			<li>Dense EISA memory space (0x3f0000000).
+			<li>Hardware Address Extension (HAE) register for dense access to arbitrary EISA memory banks.
+			<li>Hardware system control logic: SYSCTL, LED/switch registers, and INTA interrupt vector generation.
+		</ul>
+	<li><b>Adaptec AHA-1742A</b> EISA SCSI Host Adapter in Slot 1:
+		<ul>
+			<li>Enhanced 32-bit Mode with Mailbox In/Out communication protocol.
+			<li>Enhanced Command Block (ECB) execution with scatter-gather physical bus master DMA.
+			<li>Target inquiries, read/write commands, and SCSI bus device identification.
+			<li>Selectable edge- or level-triggered EISA interrupts (IRQ 9, 10, 11, 12, 14, 15; factory default IRQ 11).
+		</ul>
+	<li><b>Intel 82357 Integrated System Peripheral (ISP)</b>:
+		<ul>
+			<li>Dual cascaded 8259 interrupt controllers (PIC) delivering PC and EISA IRQs.
+			<li>8254 programmable interval timer (PIT).
+			<li>Dual 8237 DMA controllers.
+		</ul>
+	<li><b>Super I/O and System Peripherals</b>:
+		<ul>
+			<li>Dual 16550A compatible UARTs (COM1 serial console at 0x3f8, COM2 at 0x2f8).
+			<li>Parallel printer port (LPT1 at 0x3bc).
+			<li>Standard 8042 PS/2 keyboard and mouse controller.
+			<li>MC146818 / DS1287 real-time clock and NVRAM.
+		</ul>
+	<li><b>Flash ROM Subsystem</b>:
+		<ul>
+			<li>512 KB Flash ROM containing genuine Digital SRM console firmware or ARC console.
+			<li>Embedded EISA Configuration Utility (ECU) non-volatile configuration memory (NVRAM Block 6).
+			<li>Write protection logic protecting flash sectors while permitting NVRAM updates.
+		</ul>
+</ul>
+
+<p>The following guest firmware and operating systems have been verified:
+<ul>
+	<li><a href="#firmware">Digital SRM Firmware ROM v1.3</a> &mdash; Passes 100% of power-up self-tests:
+		<tt>CPU OK</tt>, <tt>MEM OK 64MB</tt>, <tt>NVR OK</tt>, <tt>SCC OK</tt>, <tt>IT OK</tt>, <tt>KBD OK</tt>, <tt>LPT OK</tt>, <tt>SCSI OK</tt>.
+	<li><a href="#openvmsinstall">OpenVMS AXP V1.5-1H1</a> &mdash; Full bootstrap via Adaptec AHA-1742A SCSI driver (<tt>SYS$PKJDRIVER</tt>) to Stand-alone BACKUP and interactive DCL prompt (<tt>$ </tt>).
+	<li><small><a href="#decosf1"><font color="red">DEC OSF/1 AXP</font></a> (in active development)</small>
+</ul>
+
+
+
+
+<p><br>
+<a name="firmware"></a>
+<h3>Digital SRM Firmware ROM:</h3>
+
+<p>To run the genuine Digital Jensen SRM firmware in GXemul:
+<pre>
+	<b>gxemul -e jensen -x -M 64 media/rom/jensen_v1_3.rom</b>
+</pre>
+
+<p>The SRM firmware initializes the hardware and performs full power-up diagnostics:
+<pre>
+	Alpha AXP System - ROM Version 1.3
+	Copyright (c) 1993 Digital Equipment Corporation.
+
+	Alpha AXP SRM Firmware Version - 309
+	System conducting power up tests
+	------------------------------------------------------------
+
+	Devnam            Devstat
+	--------          -------
+	     CPU          OK EV4 P3.0 6.6ns
+	     MEM          OK 64MB
+	     NVR          OK 
+	     SCC          OK 
+	      IT          OK 
+	     KBD          OK 
+	     LPT          OK 
+	    SCSI          OK 
+	------------------------------------------------------------
+	System power up OK.
+	Invoking Eisa Config Utility. Insert System Config floppy. Continue (Y/N)? <b>N</b>
+
+	 &gt;&gt;&gt;
+</pre>
+
+<p>Press <b>N</b> when prompted for the EISA Configuration Utility floppy to drop directly
+into the interactive SRM console prompt (<tt>&gt;&gt;&gt;</tt>).</p>
+
+
+
+
+<p><br>
+<a name="openvmsinstall"></a>
+<h3>OpenVMS AXP 1.5-1H1:</h3>
+
+<p><a href="https://en.wikipedia.org/wiki/OpenVMS">OpenVMS AXP</a> V1.5-1H1 includes native
+support for the DECpc AXP 150 and the Adaptec AHA-1742A SCSI adapter via the
+<tt>SYS$PKJDRIVER.EXE</tt> port driver.</p>
+
+<p>To boot the OpenVMS AXP 1.5-1H1 installation media:
+<ol>
+  <li><b>Launch GXemul with the installation CD attached to SCSI ID 0:</b><br>
+<pre>
+	<b>gxemul -e jensen -x -M 64 -d 0:/path/to/openvms_axp_1.5-1H1_os.iso media/rom/jensen_v1_3.rom</b>
+</pre>
+
+  <li><b>Connect to the serial console:</b><br>
+	In a separate terminal, connect to the emulated COM1 serial console:
+<pre>
+	<b>telnet localhost 4000</b>
+</pre>
+
+  <li><b>Boot the CD-ROM from the SRM console:</b><br>
+	When prompted <tt>Continue (Y/N)?</tt>, press <b>N</b>. At the <tt>&gt;&gt;&gt;</tt> prompt:
+<pre>
+	&gt;&gt;&gt; <b>boot dka0</b>
+</pre>
+
+  <li><b>OpenVMS Startup:</b><br>
+	The SRM console loads the Primary Bootstrap (<tt>APB</tt>), mounts the CD-ROM, and starts the executive:
+<pre>
+	INIT-S-CPU...
+	AUDIT_BOOT_STARTS ... 
+	AUDIT_CHECKSUM_GOOD
+	AUDIT_LOAD_BEGINS
+	AUDIT_LOAD_DONE
+
+	    OpenVMS AXP (TM) Operating System, Version V1.5-1H1  
+
+	Please enter date and time (DD-MMM-YYYY  HH:MM)  <b>07-NOV-2026 12:00</b>
+	%SAB$IOGEN-I-Beginning device autoconfiguration..
+	Available device PKA0:  type WIDGET
+	Available device DKA0:  type RRD42
+	%BACKUP-I-IDENT, Stand-alone BACKUP V1.5; the date is  7-NOV-2026 12:00:03.31  
+	$ 
+</pre>
+	At the Stand-alone BACKUP prompt (<tt>$ </tt>), OpenVMS is ready to restore savesets or inspect disks.
+</ol>
+
+
+
+
+<p><br>
+<a name="decosf1"></a>
+<h3>DEC OSF/1 AXP:</h3>
+
+<p>DEC OSF/1 AXP supports the DECpc AXP 150 hardware configuration with the Adaptec
+AHA-1742A EISA SCSI host adapter (<tt>aha0</tt> driver). Support for booting DEC OSF/1
+under GXemul is currently in active development.</p>
+
+</body>
+</html>

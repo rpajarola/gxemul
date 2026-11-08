@@ -1024,6 +1024,9 @@ if (x&1)
 			case 0xae:
 				d->cmdbyte &= ~KC8_KDISABLE;
 				break;
+			case 0xc0:	/*  read input port  */
+				pckbc_add_code(d, 0x80, port_nr);
+				break;
 			case 0xd0:
 				d->state[port_nr] = STATE_RDOUTPUT;
 				break;

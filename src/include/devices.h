@@ -122,6 +122,19 @@ void dev_dec3000_set_rom(struct dec3000_data *d, int sys,
 	const unsigned char *image, size_t len);
 uint64_t dev_dec3000_srom(struct dec3000_data *d, struct cpu *cpu);
 
+/*  dev_aha1742.c:  */
+struct aha1742_data;
+struct aha1742_data *dev_aha1742_init(struct machine *machine,
+	struct memory *mem, uint64_t baseaddr, const char *interrupt_base_path);
+
+/*  dev_jensen.c:  */
+struct jensen_data;
+struct jensen_data *dev_jensen_init(struct machine *machine,
+	struct memory *mem, uint64_t ram_size, const char *cpu_irq);
+void dev_jensen_set_rom(struct jensen_data *d, const unsigned char *image,
+	size_t len);
+uint64_t dev_jensen_srom(struct jensen_data *d, struct cpu *cpu);
+
 struct dec_ioasic_data *dev_dec_ioasic_init(struct cpu *cpu, struct memory *mem, uint64_t baseaddr, int rackmount_flag, struct interrupt* irq);
 
 /*  dev_asc.c:  */
