@@ -425,6 +425,47 @@ front, and reboots by itself). On a 2 GB RZ28 (<tt>"product": "RZ28     (C) DEC"
 <tt>doconfig</tt> from <tt>genvmunix</tt> as for the earlier versions; CDE's dtlogin
 then comes up on the HX.</p>
 
+<p>A sample <tt>machine.json</tt> for installing DEC OSF/1 or Digital UNIX on the DEC 3000/400:</p>
+<pre>
+{
+  "gxemul": 1,
+  "name": "Digital UNIX 4.0D (DEC 3000/400)",
+  "machine": {
+    "type": "dec3000",
+    "model": "400",
+    "memory_mb": 128
+  },
+  "boot": {
+    "prom_emulation": false,
+    "rom": "media/rom/m400_v3_3.rom",
+    "nvram": "nvram.bin"
+  },
+  "drives": [
+    {
+      "file": "rz28.img",
+      "kind": "disk",
+      "id": 0,
+      "vendor": "DEC",
+      "product": "RZ28     (C) DEC",
+      "revision": "442D"
+    },
+    {
+      "file": "du40d.iso",
+      "kind": "cdrom",
+      "id": 4,
+      "readonly": true,
+      "vendor": "DEC",
+      "product": "RRD42   (C) DEC",
+      "revision": "4.5d"
+    }
+  ],
+  "display": {
+    "enabled": true
+  }
+}
+</pre>
+<p>Launch with <tt><b>gxemul dec3000_du40.json</b></tt> and issue <tt><b>boot dka400</b></tt> at the SRM <tt>&gt;&gt;&gt;</tt> prompt.</p>
+
 <p>For implementation details and architecture milestones, refer to the development notes in
 <a href="dec3000-plan.md"><tt>doc/dec3000-plan.md</tt></a>.</p>
 

@@ -191,9 +191,11 @@ MACHINE_REGISTER(dec3000)
 	MR_DEFAULT(dec3000, "DEC 3000 AXP", MACHINE_DEC3000);
 
 	machine_entry_add_alias(me, "dec3000");
+	machine_entry_add_alias(me, "3000");
+	machine_entry_add_alias(me, "sandpiper");
 
 	machine_entry_add_subtype(me, "DEC 3000/400", MACHINE_DEC3000_400,
-	    "400", "3000/400", NULL);
+	    "400", "3000/400", "", NULL);
 
 	me->set_default_ram = machine_default_ram_dec3000;
 }

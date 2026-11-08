@@ -91,12 +91,91 @@ and standard PC peripherals.</p>
 
 <p>The following guest firmware and operating systems have been verified:
 <ul>
+	<li><a href="#configfile">Configuration via machine.json</a> &mdash; Graphical and JSON configuration files for Windows NT and OpenVMS.
 	<li><a href="#windowsnt">Windows NT 3.1 Alpha</a> (Build 528) &mdash; Genuine Digital ARC Multiboot console (Version 3.0.g) and Microsoft Windows NT 3.1 Setup loader (<tt>\alpha\setupldr</tt>).
 	<li><a href="#firmware">Digital SRM Firmware ROM v1.3</a> &mdash; Passes 100% of power-up self-tests:
 		<tt>CPU OK</tt>, <tt>MEM OK 64MB</tt>, <tt>NVR OK</tt>, <tt>SCC OK</tt>, <tt>IT OK</tt>, <tt>KBD OK</tt>, <tt>LPT OK</tt>, <tt>SCSI OK</tt>.
 	<li><a href="#openvmsinstall">OpenVMS AXP V1.5-1H1</a> &mdash; Full bootstrap via Adaptec AHA-1742A SCSI driver (<tt>SYS$PKJDRIVER</tt>) to Stand-alone BACKUP and interactive DCL prompt (<tt>$ </tt>).
 	<li><small><a href="#decosf1"><font color="red">DEC OSF/1 AXP</font></a> (in active development)</small>
 </ul>
+
+
+
+
+<p><br>
+<a name="configfile"></a>
+<h3>Configuration using machine.json:</h3>
+
+<p>A Jensen system is easiest to set up and run using a <a href="configfiles.html"><tt>machine.json</tt></a> configuration file.
+You can create or edit one interactively using the graphical configuration window (<tt>gxemul</tt> without arguments, or <tt>gxemul --edit machine.json</tt>)
+by selecting <b>Alpha</b> in the Architecture menu and <b>DECpc AXP 150 / DEC 2000 Model 300</b> in the Machine menu.</p>
+
+<h4>Windows NT 3.1 Setup Configuration (<tt>jensen_nt.json</tt>):</h4>
+<p>This configuration attaches the installation CD-ROM to SCSI ID 4, creates a hard disk image on SCSI ID 0, enables NVRAM ECU pre-population, and connects the serial console over telnet (port 4000):</p>
+<pre>
+{
+  "gxemul": 1,
+  "name": "Windows NT 3.1 (DECpc AXP 150)",
+  "machine": {
+    "type": "jensen",
+    "model": "300",
+    "memory_mb": 64
+  },
+  "boot": {
+    "prom_emulation": false,
+    "rom": "media/rom/jensen_v1_3.rom",
+    "nvram": "nvram.bin",
+    "populate_ecu": true
+  },
+  "drives": [
+    { "file": "nt_disk.img", "kind": "disk", "id": 0 },
+    { "file": "nt31_alpha.iso", "kind": "cdrom", "id": 4, "readonly": true }
+  ],
+  "serial": { "telnet": true }
+}
+</pre>
+
+<p>Launch the emulator:
+<pre>
+	<b>gxemul jensen_nt.json</b>
+</pre>
+and in another terminal, connect to the emulated COM1 console:
+<pre>
+	<b>telnet localhost 4000</b>
+</pre>
+</p>
+
+<h4>OpenVMS AXP Configuration (<tt>jensen_vms.json</tt>):</h4>
+<p>To boot OpenVMS via the genuine Digital SRM firmware console, add <tt>"bootarg": "-o vms"</tt> (which switches CMOS register 0x4f to OS type 2):</p>
+<pre>
+{
+  "gxemul": 1,
+  "name": "OpenVMS AXP (DECpc AXP 150)",
+  "machine": {
+    "type": "jensen",
+    "model": "300",
+    "memory_mb": 64
+  },
+  "boot": {
+    "prom_emulation": false,
+    "rom": "media/rom/jensen_v1_3.rom",
+    "bootarg": "-o vms",
+    "nvram": "nvram.bin",
+    "populate_ecu": true
+  },
+  "drives": [
+    { "file": "vms_disk.img", "kind": "disk", "id": 0 },
+    { "file": "openvms_axp_1.5-1H1_os.iso", "kind": "cdrom", "id": 4, "readonly": true }
+  ],
+  "serial": { "telnet": true }
+}
+</pre>
+<p>Launch the emulator:
+<pre>
+	<b>gxemul jensen_vms.json</b>
+</pre>
+and connect via telnet (<tt>telnet localhost 4000</tt>) to reach the <tt>&gt;&gt;&gt;</tt> prompt.
+</p>
 
 
 

@@ -1792,6 +1792,7 @@ uint64_t machine_config_rom_address(const char *type)
 	switch (machine_config_machine_type(type)) {
 	case MACHINE_PMAX:	return 0xbfc00000ULL;
 	case MACHINE_DEC3000:	return 0x1e0000000ULL;	/*  (the FEPROM)  */
+	case MACHINE_JENSEN:	return 0x180000000ULL;	/*  (Flash ROM window 0)  */
 	}
 	return 0;
 }

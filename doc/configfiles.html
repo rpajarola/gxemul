@@ -282,14 +282,15 @@ shown here, except for the machine type:
   },
   "boot": {
     "prom_emulation": true,     <font color="#2020cf">false = run a real ROM (as -Q)</font>
-    "rom": "",                  <font color="#2020cf">the system ROM image (loaded at 0xbfc00000 on DECstations)</font>
+    "rom": "",                  <font color="#2020cf">the system ROM image (0xbfc00000 on DECstations, 0x1e0000000 on DEC 3000, 0x180000000 on Jensen)</font>
     "load": [],                 <font color="#2020cf">other files to load, e.g. "netbsd" or "0xbfc00000:rom.bin"</font>
     "bootname": "",             <font color="#2020cf">as -j</font>
     "bootarg": null,            <font color="#2020cf">as -o; null = the default</font>
     "netboot": false,           <font color="#2020cf">as -O</font>
     "start_paused": false,      <font color="#2020cf">start in the debugger (as -V)</font>
     "nvram": "",                <font color="#2020cf">a file for the RTC's NVRAM (the firmware's settings), "" = not kept</font>
-    "skip_failing_tests": false <font color="#2020cf">load copies of known ROMs whose tests that fail in gxemul pass</font>
+    "skip_failing_tests": false <font color="#2020cf">load copies of known ROMs whose tests that fail in gxemul pass</font>,
+    "populate_ecu": true        <font color="#2020cf">Jensen: pre-populate factory NVRAM &amp; ECU configuration tables</font>
   },
   "drives": [
     { "file": "disk.img",       <font color="#2020cf">"" for a CD-ROM or tape drive without a medium</font>
@@ -366,6 +367,36 @@ from:
               { "file": "ultrix-4.5.iso", "kind": "cdrom", "id": 4 } ],
   "display": { "enabled": true },
   "slots": { "0": "PMAG-BA_V5.3a.bin" }
+}
+</pre></td></tr></table>
+
+<p>This runs genuine SRM firmware on a 64-bit Alpha <b>DEC 3000/400</b> workstation
+with the PMAGB-BA (SFB) accelerated framebuffer, for DEC OSF/1, Digital UNIX, or OpenVMS AXP:
+
+<p><table border="0"><tr><td><pre>
+{
+  "gxemul": 1,
+  "name": "DEC 3000/400",
+  "machine": { "type": "dec3000", "model": "400", "memory_mb": 64 },
+  "boot": { "prom_emulation": false, "rom": "media/rom/m400_v3_3.rom", "nvram": "nvram.bin" },
+  "drives": [ { "file": "rz26.img", "kind": "disk", "id": 0 },
+              { "file": "osf1_v3.iso", "kind": "cdrom", "id": 4 } ],
+  "display": { "enabled": true }
+}
+</pre></td></tr></table>
+
+<p>And this runs the <b>DECpc AXP 150</b> ("Jensen") with genuine ROM v1.3 firmware and
+pre-populated ECU NVRAM, booting Windows NT 3.1 Alpha Setup via ARC Multiboot over serial console:
+
+<p><table border="0"><tr><td><pre>
+{
+  "gxemul": 1,
+  "name": "DECpc AXP 150",
+  "machine": { "type": "jensen", "model": "300", "memory_mb": 64 },
+  "boot": { "prom_emulation": false, "rom": "media/rom/jensen_v1_3.rom", "nvram": "nvram.bin", "populate_ecu": true },
+  "drives": [ { "file": "nt_disk.img", "kind": "disk", "id": 0 },
+              { "file": "nt31_alpha.iso", "kind": "cdrom", "id": 4, "readonly": true } ],
+  "serial": { "telnet": true }
 }
 </pre></td></tr></table>
 

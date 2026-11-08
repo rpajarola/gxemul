@@ -168,12 +168,12 @@ If SDL2 is not installed, GXemul builds in console/terminal mode.</p>
 <pre>
 $ <b>gxemul</b>
 </pre>
-<p>From here you can view recently used machines, create new machines, inspect hardware configurations,
+<p>From here you can view recently used machines, create new machines (with presets for MIPS, Alpha, and other systems), inspect hardware configurations,
 and launch emulation with a click. See <a href="configfiles.html#window">The Machines Window</a>.</p>
 
 <h3>2. Using Machine Configuration Files (Recommended)</h3>
-<p>A machine is best defined by a <code>machine.json</code> configuration file describing its CPU, memory,
-ROMs, disks, and network interfaces. To launch a configured machine:</p>
+<p>A machine is best defined by a <code>machine.json</code> configuration file describing its architecture, CPU, memory,
+ROMs, disks, and network interfaces (such as DECstation 5000, DEC 3000/400, or DECpc AXP 150). To launch a configured machine:</p>
 <pre>
 $ <b>gxemul machine.json</b>
 <i>or:</i>
@@ -183,7 +183,7 @@ $ <b>gxemul --config machine.json</b>
 <pre>
 $ <b>gxemul --edit machine.json</b>
 </pre>
-<p>See <a href="configfiles.html">Configuration Files</a> for format details and ready-to-use examples.</p>
+<p>See <a href="configfiles.html">Configuration Files</a> for format details and ready-to-use examples for DECstation, DEC 3000, and Jensen systems.</p>
 
 <h3>3. Recording Video to MP4</h3>
 <p>You can record the graphical framebuffer window directly into an MP4 video (requires <code>ffmpeg</code> installed on the host):</p>

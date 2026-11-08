@@ -106,6 +106,48 @@ static const struct machine_preset presets[] = {
 		"{ \"gxemul\": 1, \"name\": \"MIPS test machine\","
 		"  \"machine\": { \"type\": \"testmips\" } }"
 	},
+	{
+		"dec3000", "400",
+		"DEC 3000 Model 400 (Sandpiper), Digital's 133 MHz "
+		"Alpha AXP workstation with TURBOchannel bus, NCR 53C94 SCSI, "
+		"and PMAGB-BA (SFB) 2D graphics at 1280x1024. Runs genuine SRM "
+		"firmware version 3.3 (choose under Firmware). Installs and runs "
+		"DEC OSF/1 AXP (V2.0B, V3.0), Digital UNIX (V3.2C, V4.0D) with "
+		"DECwindows/CDE, and OpenVMS AXP.",
+		"{ \"gxemul\": 1, \"name\": \"DEC 3000/400\","
+		"  \"machine\": { \"type\": \"dec3000\", \"model\": \"400\","
+		"                 \"memory_mb\": 64 },"
+		"  \"boot\": { \"prom_emulation\": false, \"rom\": \"dec3000_srm.bin\","
+		"             \"nvram\": \"nvram.bin\" },"
+		"  \"drives\": [ { \"file\": \"disk.img\", \"kind\": \"disk\","
+		"                  \"id\": 0 },"
+		"                { \"file\": \"\", \"kind\": \"cdrom\", \"id\": 4 } ],"
+		"  \"display\": { \"enabled\": true } }"
+	},
+	{
+		"jensen", "300",
+		"DECpc AXP 150 / DEC 2000 Model 300 (Jensen), Digital's first "
+		"PC-class 150 MHz Alpha system with EISA bus and Adaptec AHA-1742A "
+		"SCSI. Runs genuine ROM firmware v1.3. Boots Windows NT 3.1 "
+		"Alpha via ARC Multiboot (default) or OpenVMS AXP via SRM console "
+		"(bootarg: \"-o vms\").",
+		"{ \"gxemul\": 1, \"name\": \"DECpc AXP 150\","
+		"  \"machine\": { \"type\": \"jensen\", \"model\": \"300\","
+		"                 \"memory_mb\": 64 },"
+		"  \"boot\": { \"prom_emulation\": false, \"rom\": \"jensen_v1_3.rom\","
+		"             \"nvram\": \"nvram.bin\", \"populate_ecu\": true },"
+		"  \"drives\": [ { \"file\": \"disk.img\", \"kind\": \"disk\","
+		"                  \"id\": 0 },"
+		"                { \"file\": \"\", \"kind\": \"cdrom\", \"id\": 4 } ],"
+		"  \"serial\": { \"telnet\": true } }"
+	},
+	{
+		"testalpha", "",
+		"gxemul's simple Alpha machine, for running a program of your "
+		"own (add it under Firmware, Files to load).",
+		"{ \"gxemul\": 1, \"name\": \"Alpha test machine\","
+		"  \"machine\": { \"type\": \"testalpha\" } }"
+	},
 };
 
 
@@ -159,8 +201,9 @@ static const struct mc_drive_model dec_drives[] = {
 int machine_drive_models(const char *type,
 	const struct mc_drive_model **listp)
 {
+	int t = machine_config_machine_type(type);
 	*listp = dec_drives;
-	if (machine_config_machine_type(type) == MACHINE_PMAX)
+	if (t == MACHINE_PMAX || t == MACHINE_DEC3000 || t == MACHINE_JENSEN)
 		return (int) (sizeof(dec_drives) / sizeof(dec_drives[0]));
 	return 0;
 }
