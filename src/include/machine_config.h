@@ -106,6 +106,7 @@ struct machine_config {
 	bool		start_paused;
 	char		*nvram;		/*  the RTC's NVRAM file, "" = none  */
 	bool		skip_failing_tests;	/*  patch the ROMs' tests  */
+	bool		populate_ecu;		/*  pre-populate ECU / NVRAM configuration (e.g. Jensen)  */
 
 	/*  Drives:  */
 	int		n_drives;

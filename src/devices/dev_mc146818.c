@@ -414,6 +414,7 @@ static void mc146818_update_time(struct mc_data *d)
 		d->reg[4 * MC_YEAR] += (0x18 - 104);
 		break;
 	case MC146818_CATS:
+	case MC146818_PC_CMOS:
 		d->reg[4 * MC_YEAR] %= 100;
 		break;
 	case MC146818_SGI:
@@ -680,6 +681,7 @@ DEVICE_ACCESS(mc146818)
 			    (d->reg[MC_REGB*4] & MC_REGB_SET) &&
 			    !(data[0] & MC_REGB_SET))
 				mc146818_set_guest_time(d);
+			d->use_bcd = (data[0] & (1 << 2)) ? 0 : 1;
 			d->reg[MC_REGB*4] = data[0];
 			if (!(data[0] & MC_REGB_PIE)) {
 				INTERRUPT_DEASSERT(d->irq);

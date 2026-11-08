@@ -1996,6 +1996,11 @@ static void page_firmware(void)
 		check("Skip the self-tests that fail only in gxemul (KN02-BA "
 		    "V5.7j: cache, rtc/time; PMAG-BA V5.3a: curs, ptrn)",
 		    &c->skip_failing_tests);
+		if (machine_config_machine_type(c->type) == MACHINE_JENSEN) {
+			row(1, full);
+			check("Pre-populate ECU and NVRAM configuration",
+			    &c->populate_ecu);
+		}
 		option_roms();
 		nvram_field();
 		row(1, full);
