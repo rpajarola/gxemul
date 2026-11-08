@@ -106,6 +106,10 @@ struct scc_data {
 	    and waits for the next). Otherwise it is pending at once.  */
 	int64_t		tx_delay;
 
+	/*  The character in the transmit buffer of a disabled transmitter,
+	    or -1 (see the data register):  */
+	int		tx_held[N_SCC_PORTS];
+
 	unsigned char	scc_register_r[N_SCC_PORTS * N_SCC_REGS];
 	unsigned char	scc_register_w[N_SCC_PORTS * N_SCC_REGS];
 
@@ -263,8 +267,9 @@ static void scc_clear_ip(struct scc_data *d, int bits)
  *  scc_channel_reset():
  *
  *  Resets a channel (from a WR9 channel or hardware reset): interrupts,
- *  the receiver, transmitter, and baud rate generator are disabled, no
- *  interrupts are pending, and received characters are discarded.
+ *  the receiver, transmitter, and baud rate generator are disabled, the
+ *  transmit buffer is empty, no interrupts are pending, and received
+ *  characters are discarded.
  */
 static void scc_channel_reset(struct scc_data *d, int port)
 {
@@ -284,6 +289,7 @@ static void scc_channel_reset(struct scc_data *d, int port)
 	    SCC_RR3_EXT_IP_B | SCC_RR3_TX_IP_B | SCC_RR3_RX_IP_B);
 
 	d->tx_finishing[port] = 0;
+	d->tx_held[port] = -1;
 	d->register_selected[port] = 0;
 	d->register_select_in_progress[port] = 0;
 }
@@ -379,7 +385,9 @@ DEVICE_TICK(scc)
 	}
 
 	for (i=0; i<N_SCC_PORTS; i++) {
-		d->scc_register_r[i * N_SCC_REGS + SCC_RR0] |= SCC_RR0_TX_EMPTY;
+		if (d->tx_held[i] < 0)
+			d->scc_register_r[i * N_SCC_REGS + SCC_RR0] |=
+			    SCC_RR0_TX_EMPTY;
 		/*
 		 *  No receive errors, everything has been sent, and the
 		 *  residue code bits read 011 as they do in asynchronous
@@ -547,6 +555,40 @@ static void scc_tx(struct scc_data *d, int port, int ch)
 	if (loopback && d->scc_register_w[port * N_SCC_REGS + SCC_WR3] &
 	    SCC_WR3_RX_ENABLE)
 		rx_enqueue(d, port, ch);
+}
+
+
+/*
+ *  scc_tx_start():
+ *
+ *  The transmitter takes the character of the transmit buffer and sends
+ *  it.  The transmit interrupt (if enabled) is pending at once, or, with
+ *  tx_delay, when the character has been sent; a character sent while
+ *  transmit interrupts are off makes it pending if they are on by the
+ *  time it has been sent (see the tick).
+ */
+static void scc_tx_start(struct cpu *cpu, struct scc_data *d, int port,
+	int ch)
+{
+	scc_tx(d, port, ch);
+
+	if (d->tx_delay > 0) {
+		/*  Loading the buffer clears the pending interrupt; it is
+		    pending again when the character has been sent.  */
+		scc_clear_ip(d, port == SCC_CHANNEL_A?
+		    SCC_RR3_TX_IP_A : SCC_RR3_TX_IP_B);
+		d->tx_finishing[port] = 1;
+		d->tx_written_at[port] = cpu->ninstrs;
+	} else if (d->scc_register_w[port * N_SCC_REGS + SCC_WR9] &
+	    SCC_WR9_MASTER_IE &&
+	    d->scc_register_w[port * N_SCC_REGS + SCC_WR1] & SCC_WR1_TX_IE) {
+		d->scc_register_r[N_SCC_REGS + SCC_RR3] |=
+		    port == SCC_CHANNEL_A? SCC_RR3_TX_IP_A : SCC_RR3_TX_IP_B;
+		d->tx_finishing[port] = 0;
+	} else {
+		d->tx_finishing[port] = 1;
+		d->tx_written_at[port] = cpu->ninstrs;
+	}
 }
 
 
@@ -750,6 +792,19 @@ DEVICE_ACCESS(scc)
 					d->scc_register_r[port * N_SCC_REGS +
 					    SCC_RR0] |= SCC_RR0_TX_UNDERRUN;
 
+				/*  Enabling the transmitter sends the character
+				    that its buffer holds:  */
+				if (d->register_selected[port] == SCC_WR5 &&
+				    idata & SCC_WR5_TX_ENABLE &&
+				    d->tx_held[port] >= 0) {
+					int ch = d->tx_held[port];
+
+					d->tx_held[port] = -1;
+					d->scc_register_r[port * N_SCC_REGS +
+					    SCC_RR0] |= SCC_RR0_TX_EMPTY;
+					scc_tx_start(cpu, d, port, ch);
+				}
+
 				/*  Disabling an interrupt source in WR1 also
 				    clears its interrupt pending bit:  */
 				if (d->register_selected[port] == SCC_WR1) {
@@ -801,33 +856,24 @@ DEVICE_ACCESS(scc)
 			    "(port %i) write data to 0x%08lx: 0x%08x\n",
 			    port, (long)relative_addr, (int)idata);
 
-			scc_tx(d, port, idata);
-
-			/*  TX interrupt:  */
-			if (d->tx_delay > 0) {
-				/*  Loading the buffer clears the pending
-				    interrupt; it is pending again when the
-				    character has been sent.  */
+			/*
+			 *  A disabled transmitter keeps the character in the
+			 *  transmit buffer, which is then not empty, until the
+			 *  transmitter is enabled (see WR5); a character
+			 *  written meanwhile replaces it.
+			 */
+			if (!(d->scc_register_w[port * N_SCC_REGS + SCC_WR5] &
+			    SCC_WR5_TX_ENABLE)) {
+				d->tx_held[port] = idata;
+				d->scc_register_r[port * N_SCC_REGS + SCC_RR0] &=
+				    ~SCC_RR0_TX_EMPTY;
 				scc_clear_ip(d, port == SCC_CHANNEL_A?
 				    SCC_RR3_TX_IP_A : SCC_RR3_TX_IP_B);
-				d->tx_finishing[port] = 1;
-				d->tx_written_at[port] = cpu->ninstrs;
-			} else if (d->scc_register_w[port * N_SCC_REGS + SCC_WR9] &
-			    SCC_WR9_MASTER_IE &&
-			    d->scc_register_w[port * N_SCC_REGS + SCC_WR1] &
-			    SCC_WR1_TX_IE) {
-				if (port == SCC_CHANNEL_A)
-					d->scc_register_r[N_SCC_REGS + SCC_RR3]
-					    |= SCC_RR3_TX_IP_A;
-				else
-					d->scc_register_r[N_SCC_REGS + SCC_RR3]
-					    |= SCC_RR3_TX_IP_B;
 				d->tx_finishing[port] = 0;
-			} else {
-				d->tx_finishing[port] = 1;
-				d->tx_written_at[port] = cpu->ninstrs;
+				break;
 			}
 
+			scc_tx_start(cpu, d, port, idata);
 			dev_scc_tick(cpu, extra);
 		}
 		break;
@@ -888,6 +934,15 @@ void *dev_scc_init(struct machine *machine, struct memory *mem,
 	/*  Power-on is a hardware reset:  */
 	scc_channel_reset(d, SCC_CHANNEL_A);
 	scc_channel_reset(d, SCC_CHANNEL_B);
+
+	/*  A PROM sets up the channels it uses.  The PROM emulation does
+	    not, so the program it starts finds the transmitters enabled:  */
+	if (machine->prom_emulation) {
+		d->scc_register_w[SCC_CHANNEL_A * N_SCC_REGS + SCC_WR5] |=
+		    SCC_WR5_TX_ENABLE;
+		d->scc_register_w[SCC_CHANNEL_B * N_SCC_REGS + SCC_WR5] |=
+		    SCC_WR5_TX_ENABLE;
+	}
 
 	lk201_init(&d->lk201, use_fb,
 	    dev_scc_space_available_in_queue,

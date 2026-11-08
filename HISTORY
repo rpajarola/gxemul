@@ -5805,3 +5805,9 @@ Changelog for GXemul:
 		the memory error and ECC registers. Ultrix 4.5's generic
 		kernel and Windows NT 3.5 run on it with PROM emulation.
 		(Antoni Sawicki)
+20261110	SCC: a character written while WR5 disables the transmitter
+		stays in the transmit buffer, as on a Z8530, and is sent when
+		the transmitter is enabled; it was sent at once, which hid a
+		bug in the SCC driver of the NT port (NTMAX) on a real
+		5000/240. With PROM emulation the transmitters start enabled,
+		as before. (Antoni Sawicki)
