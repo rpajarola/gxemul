@@ -355,6 +355,14 @@ Everything below is in `media/` (not in git).
       tested as far as the X cursor.
     - Headless testing: `SDL_VIDEODRIVER=dummy` and the control socket's
       `screendump`.
+  - **OSF/1 V2.0B installs and runs multi-user with DECwindows** (ADVANCED
+    installation from the May 1994 CD, same recipe as V1.2).
+    - Its X server writes the HX VRAM through eight aliases in turn
+      (slot offsets 0x200000, 0x600000, ... 0x1e00000), so that the
+      write buffer never merges successive writes to one address. TC
+      option cards decode 22 address bits (the 3MAX's 4 MB slots), so
+      `option_access()` masks the offset to 4 MB; before, every other
+      write was lost and X drew in stripes.
   - **OpenVMS AXP V1.0 boots multi-user.** `boot dka400` from the V1.0
     CD boots stand-alone BACKUP, which restores the base system saveset
     to disk (`dka0`). First boot runs the installation procedure,

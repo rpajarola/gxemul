@@ -1050,14 +1050,23 @@ static int tc_csr_access(struct dec3000_data *d, uint32_t off,
  *  that the byte mask enables. Real cards decode their slot coarsely and
  *  answer everywhere in it, so where gxemul's model of the card has
  *  nothing, reads give 0 and writes are ignored.
+ *
+ *  The cards were made for the 4 MB slots of the first TURBOchannel
+ *  machines and decode 22 address bits, so they repeat every 4 MB in the
+ *  DEC 3000's larger slots. OSF/1's X server for the HX relies on this:
+ *  it writes the VRAM through eight such
+ *  aliases in turn, so that the CPU's write buffer never merges two
+ *  successive writes to the same address.
  */
+#define	OPTION_DECODE_MASK	0x3fffff
+
 static int option_access(struct memory *mem, struct cpu *cpu, uint32_t off,
 	uint32_t *val, int bytemask, int writeflag)
 {
 	unsigned char buf[4];
 	int i;
 
-	off &= ~3;
+	off &= OPTION_DECODE_MASK & ~3;
 	if (!writeflag) {
 		memset(buf, 0, sizeof(buf));
 		if (!sub_access(mem, cpu, off, buf, 4, MEM_READ))

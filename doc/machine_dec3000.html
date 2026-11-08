@@ -66,6 +66,7 @@ featuring:
 	<li><a href="#openvmsinstall">OpenVMS AXP 1.0</a>
 	<li><a href="#decwindows">DECwindows Motif 1.2</a>
 	<li><a href="#decosf1">DEC OSF/1 AXP V1.2</a> (multi-user, networking, DECwindows)
+	<li><a href="#decosf1">DEC OSF/1 AXP V2.0B</a> (multi-user, networking, DECwindows)
 </ul>
 
 
@@ -397,6 +398,16 @@ flawlessly on OpenVMS AXP V1.0.</p>
 Digital UNIX and Tru64 UNIX) was Digital's 64-bit Unix operating system for the Alpha architecture.
 Support for booting the DEC OSF/1 V1.2 installation kernel directly from disk and CD-ROM via the
 real SRM console callbacks is currently in active development.</p>
+
+<p>DEC OSF/1 AXP V2.0B (May 1994) installs from its CD in the same way as V1.2
+(<tt>boot dka400</tt>, then <tt>boot -fl a dka0</tt> for the second phase) and runs
+multi-user with networking and DECwindows on the HX (PMAGB-BA). With 128 MB and an RZ26,
+an ADVANCED installation of all optional subsets does not fit in the default
+<tt>/usr</tt> partition; leaving out a few (realtime, CAST, AdvFS, C2, exercisers) does.
+A kernel built without the display has no framebuffer driver: to add it, boot the
+generic kernel (<tt>boot -flags i dka0</tt>, then <tt>genvmunix -s</tt> at the
+boot prompt), run <tt>doconfig</tt> and copy <tt>/sys/<i>NAME</i>/vmunix</tt>
+to <tt>/vmunix</tt>.</p>
 
 <p>For implementation details and architecture milestones, refer to the development notes in
 <a href="dec3000-plan.md"><tt>doc/dec3000-plan.md</tt></a>.</p>
