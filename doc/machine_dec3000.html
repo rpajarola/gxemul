@@ -67,6 +67,7 @@ featuring:
 	<li><a href="#decwindows">DECwindows Motif 1.2</a>
 	<li><a href="#decosf1">DEC OSF/1 AXP V1.2</a> (multi-user, networking, DECwindows)
 	<li><a href="#decosf1">DEC OSF/1 AXP V2.0B</a> (multi-user, networking, DECwindows)
+	<li><a href="#decosf1">DEC OSF/1 AXP V3.0</a> (multi-user, networking, DECwindows)
 </ul>
 
 
@@ -408,6 +409,12 @@ A kernel built without the display has no framebuffer driver: to add it, boot th
 generic kernel (<tt>boot -flags i dka0</tt>, then <tt>genvmunix -s</tt> at the
 boot prompt), run <tt>doconfig</tt> and copy <tt>/sys/<i>NAME</i>/vmunix</tt>
 to <tt>/vmunix</tt>.</p>
+
+<p>DEC OSF/1 AXP V3.0 installs the same way, and also asks for the root and
+<tt>/usr</tt> file system types (UFS or AdvFS). With <tt>/var</tt> on a partition of
+its own (<tt>rz0h</tt>, and <tt>/usr</tt> on <tt>rz0g</tt>), all optional subsets fit on
+an RZ26. At boot its SCSI driver resets the bus after the selection timeout of each
+empty target, and then carries on.</p>
 
 <p>For implementation details and architecture milestones, refer to the development notes in
 <a href="dec3000-plan.md"><tt>doc/dec3000-plan.md</tt></a>.</p>

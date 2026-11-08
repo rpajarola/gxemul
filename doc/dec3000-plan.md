@@ -363,6 +363,10 @@ Everything below is in `media/` (not in git).
       option cards decode 22 address bits (the 3MAX's 4 MB slots), so
       `option_access()` masks the offset to 4 MB; before, every other
       write was lost and X drew in stripes.
+  - **OSF/1 V3.0 installs and runs multi-user with DECwindows** (all
+    subsets, with /var on rz0h). TODO: its sim94 driver resets the bus
+    after every selection timeout on an empty target ("sim94_sel_timeout,
+    Sending SCSI bus reset"), which V1.2 and V2.0B don't; it recovers.
   - **OpenVMS AXP V1.0 boots multi-user.** `boot dka400` from the V1.0
     CD boots stand-alone BACKUP, which restores the base system saveset
     to disk (`dka0`). First boot runs the installation procedure,
