@@ -5682,3 +5682,12 @@ Changelog for GXemul:
 		that copy-pasting long strings into the serial console no
 		longer overflows the guest receive silo/buffer and drops
 		characters after 16 bytes.
+20261107	DEC 3000/400: DEC OSF/1 AXP V2.0B installs from CD-ROM and runs
+		multi-user with networking and DECwindows on the HX
+		(PMAGB-BA). TURBOchannel option cards repeat every 4 MB in
+		the DEC 3000's slots, as they decode 22 address bits: OSF/1
+		2.0's X server writes the HX VRAM through eight such aliases
+		in turn, and drew in stripes when only the first one worked.
+
+==============  RELEASE 1.0.18  ==============
+
