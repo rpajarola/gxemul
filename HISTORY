@@ -5742,5 +5742,26 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.21  ==============
 
+20261108	Alpha presets and machine.json configuration:
+		Added machine presets for Alpha systems in the graphical
+		configuration window (Architecture -> Alpha):
+		  - DEC 3000/400 (Sandpiper): 133 MHz EV4, 64 MB RAM,
+		    PMAGB-BA (SFB) 1280x1024 2D graphics, NCR 53C94 SCSI,
+		    real SRM v3.3 firmware, DEC OSF/1 and OpenVMS support.
+		  - DECpc AXP 150 / DEC 2000 Model 300 (Jensen): 150 MHz
+		    EV4, 64 MB RAM, AHA-1742A SCSI, real ROM v1.3 firmware,
+		    telnet serial console, populate_ecu pre-population.
+		  - Test-machine for Alpha.
+		Enabled DEC SCSI drive catalog (RZ22..RZ74, RRD40/42) for
+		both DEC 3000 and Jensen drive model selection.
+		Added Flash ROM window 0 address mapping (0x180000000) for
+		Jensen in machine_config_rom_address.
+		Updated documentation across doc/configfiles.html,
+		doc/machine_jensen.html, doc/machine_dec3000.html, and
+		doc/intro.html with complete machine.json examples.
+
+==============  RELEASE 1.0.22  ==============
+
+
 
 
