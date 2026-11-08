@@ -375,6 +375,17 @@ Everything below is in `media/` (not in git).
       second's worth.
   - **Digital UNIX V3.2C installs and runs multi-user with DECwindows**,
     the same way as OSF/1 V3.0 (all subsets, /var on rz0h).
+  - **Digital UNIX V4.0D installs and runs multi-user with CDE** (RZ28,
+    all subsets). Two EV4 fixes:
+    - IMB: the kernel patches its call sites at boot (lock_patch_*: store
+      the new instruction over the call, IMB, jump back to it), and the
+      store wasn't always seen as a write to translated code, so the old
+      call ran forever. A write to the Abox FLUSH_IC/FLUSH_IC_ASM IPR (the
+      PALcode's IMB) now resets the translation cache.
+    - CMPTxx: compares with an infinity (or a denormal) trapped with INV,
+      and as plain (non-/S) instructions the kernel couldn't complete
+      them: /sbin/sh's fabs(x) == HUGE_VAL got SIGFPE, and init respawned
+      the single-user shell forever. Only NaNs trap now.
   - **OpenVMS AXP V1.0 boots multi-user.** `boot dka400` from the V1.0
     CD boots stand-alone BACKUP, which restores the base system saveset
     to disk (`dka0`). First boot runs the installation procedure,

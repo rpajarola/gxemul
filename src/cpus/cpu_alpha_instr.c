@@ -864,6 +864,22 @@ X(hw_mtpr)
 	}
 	ev4_mtpr(cpu, ic->arg[1], reg(ic->arg[0]), 1);
 
+	/*
+	 *  Flushing the instruction cache (what IMB does): code that was
+	 *  written may not have been seen as written to translated pages,
+	 *  e.g. Digital UNIX 4.0 patching its call sites, so all
+	 *  translations go, and execution goes on from new ones.
+	 */
+	if (ic->arg[1] & EV4_IPR_ABX &&
+	    ((ic->arg[1] & 31) == EV4_IPR_FLUSH_IC ||
+	    (ic->arg[1] & 31) == EV4_IPR_FLUSH_IC_ASM)) {
+		SYNCH_PC;
+		cpu->pc += sizeof(uint32_t);
+		cpu_create_or_reset_tc(cpu);
+		alpha_pc_to_pointers(cpu);
+		return;
+	}
+
 	/*  Outside of PALmode (with ICCSR<HWE>), this may have made an
 	    interrupt deliverable:  */
 	if (!cpu->cd.alpha.palmode && ev4_interrupt_pending(cpu)) {

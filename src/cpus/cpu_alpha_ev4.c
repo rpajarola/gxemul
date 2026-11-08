@@ -984,7 +984,7 @@ void ev4_mtpr(struct cpu *cpu, int ipr, uint64_t value, int unused)
 			break;
 		case EV4_IPR_FLUSH_IC:
 		case EV4_IPR_FLUSH_IC_ASM:
-			/*  Translations are always coherent with memory.  */
+			/*  X(hw_mtpr) drops all code translations.  */
 			break;
 		default:
 			/*  Read-only registers: ignored.  */

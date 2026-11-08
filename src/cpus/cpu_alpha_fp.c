@@ -493,6 +493,31 @@ static void afp_div(struct afp *a, struct afp *b, struct afp *r)
 	r->mant |= (rem != 0 || carry);
 }
 
+/*
+ *  IEEE T compares: infinities and denormals are ordered like any other
+ *  value, as a compare with them can't take an exception (and the 21064
+ *  doesn't trap on them: DEC's C code tests fabs(x) == HUGE_VAL without
+ *  /S, which the kernel couldn't complete). Only NaNs are unordered.
+ */
+static int ieee_is_nan(uint64_t x)
+{
+	return ((x >> 52) & 0x7ff) == 0x7ff &&
+	    (x & 0x000fffffffffffffULL) != 0;
+}
+
+static int ieee_compare(uint64_t a, uint64_t b)
+{
+	int64_t ka = a & 0x7fffffffffffffffULL;
+	int64_t kb = b & 0x7fffffffffffffffULL;
+
+	/*  Sign and magnitude to two's complement; -0 and +0 are equal:  */
+	if (a >> 63)
+		ka = -ka;
+	if (b >> 63)
+		kb = -kb;
+	return ka < kb? -1 : ka > kb? 1 : 0;
+}
+
 /*  Returns -1, 0 or 1.  */
 static int afp_compare(struct afp *a, struct afp *b)
 {
@@ -656,13 +681,13 @@ static int fp_ieee(struct cpu *cpu, uint32_t iword)
 		/*  CMPTUN, CMPTEQ, CMPTLT, CMPTLE  */
 		if (src != 2)
 			return ALPHA_FP_OPCDEC;
-		unpack_ieee(cpu->cd.alpha.f[fa], &a);
-		unpack_ieee(cpu->cd.alpha.f[fb], &b);
 		result = 0;
-		if (a.cls == AFP_SPECIAL || b.cls == AFP_SPECIAL)
+		if (ieee_is_nan(cpu->cd.alpha.f[fa]) ||
+		    ieee_is_nan(cpu->cd.alpha.f[fb]))
 			exc = EXC_INV;
 		else {
-			cmp = afp_compare(&a, &b);
+			cmp = ieee_compare(cpu->cd.alpha.f[fa],
+			    cpu->cd.alpha.f[fb]);
 			switch (fnc) {
 			case 4: result = 0; break;
 			case 5: result = cmp == 0; break;

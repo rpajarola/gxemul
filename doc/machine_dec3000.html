@@ -69,6 +69,7 @@ featuring:
 	<li><a href="#decosf1">DEC OSF/1 AXP V2.0B</a> (multi-user, networking, DECwindows)
 	<li><a href="#decosf1">DEC OSF/1 AXP V3.0</a> (multi-user, networking, DECwindows)
 	<li><a href="#decosf1">Digital UNIX V3.2C</a> (multi-user, networking, DECwindows)
+	<li><a href="#decosf1">Digital UNIX V4.0D</a> (multi-user, networking, CDE)
 </ul>
 
 
@@ -415,6 +416,14 @@ to <tt>/vmunix</tt>.</p>
 <tt>/usr</tt> file system types (UFS or AdvFS). With <tt>/var</tt> on a partition of
 its own (<tt>rz0h</tt>, and <tt>/usr</tt> on <tt>rz0g</tt>), all optional subsets fit on
 an RZ26. Digital UNIX V3.2C (July 1995) installs in exactly the same way.</p>
+
+<p>Digital UNIX V4.0D (December 1997) has a new installer (Custom Installation, which
+asks for the host name, root password, time zone, date and file system layout up
+front, and reboots by itself). On a 2 GB RZ28 (<tt>"product": "RZ28     (C) DEC"</tt>,
+4110480 sectors), with <tt>/usr</tt> on <tt>rz0h</tt> and <tt>/var</tt> on
+<tt>rz0g</tt>, all subsets fit, CDE included. The framebuffer kernel is built with
+<tt>doconfig</tt> from <tt>genvmunix</tt> as for the earlier versions; CDE's dtlogin
+then comes up on the HX.</p>
 
 <p>For implementation details and architecture milestones, refer to the development notes in
 <a href="dec3000-plan.md"><tt>doc/dec3000-plan.md</tt></a>.</p>
