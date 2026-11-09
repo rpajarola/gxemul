@@ -5772,3 +5772,7 @@ Changelog for GXemul:
 		effect, and the time the guest sets is kept in the NVRAM file.
 		DEC 3000/400: Tru64 UNIX V5.1 installs and runs with CDE, with
 		the SRM V7.0 console.
+
+==============  RELEASE 1.0.23  ==============
+
+
