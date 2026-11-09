@@ -45,6 +45,7 @@
 #include <string.h>
 
 #include "bus_isa.h"
+#include "control.h"
 #include "cpu.h"
 #include "cpu_alpha.h"
 #include "device.h"
@@ -107,6 +108,8 @@ struct jensen_data {
 	struct interrupt	irq_kbd;	/* EV4 irq_h[3] */
 	struct interrupt	irq_serial;	/* EV4 irq_h[5] */
 	uint8_t			serial_irq_mask;
+
+	struct isadma_data	*dma;
 
 	int			have_rom;
 	int			populate_ecu;
@@ -399,10 +402,20 @@ static int jensen_bus_access(struct cpu *cpu, struct memory *mem,
 		int mid = (start + end) >> 1;
 		if (paddr >= mem->devices[mid].baseaddr &&
 		    paddr < mem->devices[mid].endaddr) {
+			uint64_t ofs = paddr - mem->devices[mid].baseaddr;
+			int res;
+
 			mem->last_accessed_device = mid;
-			return mem->devices[mid].f(cpu, mem,
-			    paddr - mem->devices[mid].baseaddr,
-			    data, len, writeflag, mem->devices[mid].extra);
+			res = mem->devices[mid].f(cpu, mem, ofs, data, len,
+			    writeflag, mem->devices[mid].extra);
+
+			/*  Let control socket watches see bridged accesses:  */
+			if (control_watch_devices)
+				control_device_access(cpu,
+				    mem->devices[mid].name, ofs, data, len,
+				    writeflag);
+
+			return res;
 		}
 		if (paddr < mem->devices[mid].baseaddr)
 			end = mid - 1;
@@ -453,14 +466,21 @@ DEVICE_ACCESS(jensen_combo)
 /*
  *  jensen_board_id_access():
  *
- *  System-board EISA ID DEC2400 at port 0xc80..0xc83.
+ *  System-board EISA ID DEC2400 at port 0xc80..0xc83, in the compressed
+ *  EISA form: three 5-bit letters ("DEC", 'A' = 1) in the first two
+ *  bytes, then the product number (0x24) and revision (0x00).  The ECU
+ *  matches this against !DEC2400.CFG.
  */
 DEVICE_ACCESS(jensen_board_id)
 {
+	static const uint8_t id[4] = { 0x10, 0xa3, 0x24, 0x00 };
 	uint8_t b = 0xff;
 
 	if (writeflag == MEM_WRITE)
 		return 1;
+
+	if (relative_addr < 4)
+		b = id[relative_addr];
 
 	memory_writemax64(cpu, data, len, b);
 	return 1;
@@ -606,6 +626,7 @@ struct jensen_data *dev_jensen_init(struct machine *machine,
 	struct jensen_data *d;
 	struct interrupt templ;
 	char jensen_irq_path[300];
+	char fdc_irq_path[310];
 	char tmp[300];
 	uint32_t bus_isa_flags;
 
@@ -745,6 +766,14 @@ struct jensen_data *dev_jensen_init(struct machine *machine,
 	bus_isa_flags = BUS_ISA_VGA | BUS_ISA_LPTBASE_3BC | BUS_ISA_JENSEN_IRQS;
 	bus_isa_init(machine, jensen_irq_path, bus_isa_flags,
 	    JENSEN_ISA_PORTBASE, JENSEN_ISA_MEMBASE);
+
+	/*  82357 ISP DMA controllers, and the 82077 floppy controller
+	    (IRQ 6, DMA channel 2):  */
+	d->dma = dev_isadma_init(machine, mem, JENSEN_ISA_PORTBASE);
+	snprintf(fdc_irq_path, sizeof(fdc_irq_path), "%s.isa.6",
+	    jensen_irq_path);
+	dev_fdc_init(machine, mem, JENSEN_ISA_PORTBASE + 0x3f0, fdc_irq_path,
+	    d->dma, 2);
 
 	/*  Adaptec AHA-1742A SCSI host adapter in EISA slot 1:  */
 	dev_aha1742_init(machine, mem, JENSEN_ISA_PORTBASE + 0x1c80, jensen_irq_path);

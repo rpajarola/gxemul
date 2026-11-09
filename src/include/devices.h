@@ -127,6 +127,19 @@ struct aha1742_data;
 struct aha1742_data *dev_aha1742_init(struct machine *machine,
 	struct memory *mem, uint64_t baseaddr, const char *interrupt_base_path);
 
+/*  dev_isadma.c:  */
+struct isadma_data;
+struct isadma_data *dev_isadma_init(struct machine *machine,
+	struct memory *mem, uint64_t isa_portbase);
+int isadma_transfer(struct isadma_data *d, int ch, unsigned char *buf,
+	int len, int to_memory, int *tc);
+
+/*  dev_fdc.c:  */
+struct fdc82077_data;
+struct fdc82077_data *dev_fdc_init(struct machine *machine,
+	struct memory *mem, uint64_t baseaddr, const char *irq_path,
+	struct isadma_data *dma, int dma_channel);
+
 /*  dev_jensen.c:  */
 struct jensen_data;
 struct jensen_data *dev_jensen_init(struct machine *machine,
