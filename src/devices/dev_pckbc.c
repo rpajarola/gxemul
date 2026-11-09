@@ -108,6 +108,8 @@ struct pckbc_data {
 	int		head[2], tail[2];
 
 	int		mouse_buttons;
+	uint8_t		port61;
+	uint8_t		refresh_toggle;
 };
 
 #define	STATE_NORMAL			0
@@ -897,17 +899,22 @@ DEVICE_ACCESS(pckbc)
 		relative_addr += PS2;
 	} else if (d->pc_style_flag) {
 		/*  PC-style:  */
+		if (relative_addr == 1) {
+			/*  Port 0x61: System Control Port B (NMI status/control, refresh toggle)  */
+			if (writeflag == MEM_WRITE) {
+				d->port61 = idata & 0x0f;
+				return 1;
+			}
+			d->refresh_toggle ^= 0x10;
+			odata = (d->port61 & 0x0f) | (d->refresh_toggle & 0x10);
+			if (d->port61 & 0x01)
+				odata |= 0x20;
+			memory_writemax64(cpu, data, len, odata);
+			return 1;
+		}
 		if (relative_addr != 0 && relative_addr != 4) {
-			/*  TODO (port 0x61)  */
-			odata = 0x21;
-{
-static int x = 0;
-x++;
-if (x&1)
-			odata ^= 0x10;
-}
 			if (writeflag == MEM_READ)
-				memory_writemax64(cpu, data, len, odata);
+				memory_writemax64(cpu, data, len, 0xff);
 			return 1;
 		}
 		if (relative_addr != 0)

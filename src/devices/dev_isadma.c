@@ -85,7 +85,10 @@ struct isadma_data {
 	uint8_t		command[2];
 	int		flipflop[2];
 
+	uint8_t		chain[2];	/*  chaining registers at 0x40a / 0x4d4  */
 	uint8_t		scratch[16];	/*  unused page register ports  */
+	uint8_t		elcr[2];	/*  ELCR1/ELCR2 at 0x4d0/0x4d1  */
+	uint8_t		ext[8][3];	/*  high address and stop count (0x4e0..0x4fe)  */
 };
 
 /*  Port 0x80 + n -> channel (or -1 for scratch registers):  */
@@ -116,6 +119,7 @@ static void isadma_reset(struct isadma_data *d, int ctrl)
 	d->command[ctrl] = 0;
 	d->status[ctrl] = 0;
 	d->flipflop[ctrl] = 0;
+	d->chain[ctrl] = 0;
 	d->mask |= (0x0f << (ctrl * 4));
 	d->request &= ~(0x0f << (ctrl * 4));
 }
@@ -243,8 +247,12 @@ static uint8_t isadma_channel_reg(struct isadma_data *d, int ctrl, int reg,
 		else
 			*base = (*base & 0xff00) | val;
 		*cur = *base;
-		if (reg & 1)
-			d->cur_hcount[ch] = d->base_hcount[ch];
+		if (reg & 1) {
+			d->base_hcount[ch] = 0;
+			d->cur_hcount[ch] = 0;
+		} else {
+			d->hpage[ch] = 0;
+		}
 	} else {
 		r = hi ? (*cur >> 8) : (*cur & 0xff);
 	}
@@ -272,7 +280,7 @@ static uint8_t isadma_control_reg(struct isadma_data *d, int ctrl, int reg,
 			d->status[ctrl] = 0;
 			break;
 		case 15:	/*  Mask (82357 allows reading it)  */
-			r = 0xf0 | ((d->mask >> shift) & 0x0f);
+			r = (d->mask >> shift) & 0x0f;
 			break;
 		default:
 			break;
@@ -412,9 +420,11 @@ DEVICE_ACCESS(isadma_hpage)
 /*
  *  EISA high count and extended mode registers:
  *	0x401, 0x403, 0x405, 0x407	High count, channels 0..3
- *	0x40a				Chaining status (read)
+ *	0x40a				Chaining status (read/write)
  *	0x40b				Extended mode, channels 0..3
  *	0x4c6, 0x4ca, 0x4ce		High count, channels 5..7
+ *	0x4d0, 0x4d1			PIC ELCR1 / ELCR2
+ *	0x4d4				Chaining status (read/write)
  *	0x4d6				Extended mode, channels 4..7
  */
 static int isadma_hcount_channel(uint32_t port)
@@ -442,15 +452,31 @@ static void isadma_eisa_port(struct isadma_data *d, struct cpu *cpu,
 		if (ch >= 0) {
 			d->base_hcount[ch] = val;
 			d->cur_hcount[ch] = val;
-		} else if (port == 0x40b)
+		} else if (port == 0x40a)
+			d->chain[0] = val;
+		else if (port == 0x40b)
 			d->ext_mode[val & 3] = val;
+		else if (port == 0x4d4)
+			d->chain[1] = val;
 		else if (port == 0x4d6)
 			d->ext_mode[4 + (val & 3)] = val;
+		else if (port == 0x4d0)
+			d->elcr[0] = val & 0xf8;
+		else if (port == 0x4d1)
+			d->elcr[1] = val & 0xde;
 		return;
 	}
 
 	if (ch >= 0)
 		r = d->cur_hcount[ch];
+	else if (port == 0x40a)
+		r = d->chain[0];
+	else if (port == 0x4d4)
+		r = d->chain[1];
+	else if (port == 0x4d0)
+		r = d->elcr[0] & 0xf8;
+	else if (port == 0x4d1)
+		r = d->elcr[1] & 0xde;
 
 	memory_writemax64(cpu, data, len, r);
 }
@@ -466,6 +492,50 @@ DEVICE_ACCESS(isadma_eisa2)
 {
 	isadma_eisa_port((struct isadma_data *) extra, cpu,
 	    0x4c0 + relative_addr, data, len, writeflag);
+	return 1;
+}
+
+
+/*  EISA high address and stop count extension registers: 0x4e0..0x4fe  */
+static int isadma_ext_port_to_ch(uint32_t port, int *subreg)
+{
+	if (port >= 0x4e0 && port <= 0x4ee) {
+		*subreg = (port - 0x4e0) & 3;
+		return (port - 0x4e0) >> 2; /* ch 0..3 */
+	}
+	if (port >= 0x4f4 && port <= 0x4fe) {
+		*subreg = (port - 0x4f4) & 3;
+		return 5 + ((port - 0x4f4) >> 2); /* ch 5..7 */
+	}
+	return -1;
+}
+
+DEVICE_ACCESS(isadma_ext)
+{
+	struct isadma_data *d = (struct isadma_data *) extra;
+	uint32_t port = 0x4e0 + relative_addr;
+	int subreg = 0;
+	int ch = isadma_ext_port_to_ch(port, &subreg);
+	uint8_t byte = 0;
+
+	if (writeflag == MEM_WRITE) {
+		byte = data[0];
+		if (ch >= 0 && subreg < 3) {
+			if (subreg == 0)
+				d->ext[ch][subreg] = byte & 0xfc;
+			else
+				d->ext[ch][subreg] = byte;
+		}
+		return 1;
+	}
+
+	if (ch >= 0 && subreg < 3) {
+		byte = d->ext[ch][subreg];
+		if (subreg == 0)
+			byte &= 0xfc;
+	}
+
+	memory_writemax64(cpu, data, len, byte);
 	return 1;
 }
 
@@ -509,6 +579,9 @@ struct isadma_data *dev_isadma_init(struct machine *machine,
 	/*  0x4c0..0x4d7: high count 5..7 and extended mode 4..7:  */
 	memory_device_register(mem, "isadma_eisa2", isa_portbase + 0x4c0, 0x18,
 	    dev_isadma_eisa2_access, d, DM_DEFAULT, NULL);
+	/*  0x4e0..0x4ff: high address and stop count extensions:  */
+	memory_device_register(mem, "isadma_ext", isa_portbase + 0x4e0, 0x20,
+	    dev_isadma_ext_access, d, DM_DEFAULT, NULL);
 
 	return d;
 }
