@@ -238,7 +238,7 @@ bool diskimage_recalc_size(struct diskimage *d)
 		if (!d->chs_override) {
 			d->cylinders = 80;
 			d->heads = 2;
-			d->sectors_per_track = d->nr_of_logical_blocks * d->logical_block_size
+			d->sectors_per_track = d->total_size
 				/ (d->cylinders * d->heads * 512);
 		}
 		break;
