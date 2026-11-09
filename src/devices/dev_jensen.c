@@ -466,14 +466,21 @@ DEVICE_ACCESS(jensen_combo)
 /*
  *  jensen_board_id_access():
  *
- *  System-board EISA ID DEC2400 at port 0xc80..0xc83.
+ *  System-board EISA ID DEC2400 at port 0xc80..0xc83, in the compressed
+ *  EISA form: three 5-bit letters ("DEC", 'A' = 1) in the first two
+ *  bytes, then the product number (0x24) and revision (0x00).  The ECU
+ *  matches this against !DEC2400.CFG.
  */
 DEVICE_ACCESS(jensen_board_id)
 {
+	static const uint8_t id[4] = { 0x10, 0xa3, 0x24, 0x00 };
 	uint8_t b = 0xff;
 
 	if (writeflag == MEM_WRITE)
 		return 1;
+
+	if (relative_addr < 4)
+		b = id[relative_addr];
 
 	memory_writemax64(cpu, data, len, b);
 	return 1;
