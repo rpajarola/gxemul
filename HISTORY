@@ -5762,6 +5762,13 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.22  ==============
 
-
-
-
+20261108	Alpha: WH64 and ECB are no-ops (cache hints), not OPCDECs.
+		SCSI: INQUIRY with EVPD returns the VPD pages 0x00, 0x80 (a
+		unit serial number that stays the same for an image) and 0x83.
+		DEC 3000: sparse-space quadword reads have zero in the high
+		longword (the byte mask of a quadword write), so that
+		read-modify-write with LDQ_U/STQ_U works.
+		MC146818: a time register written while the clock runs takes
+		effect, and the time the guest sets is kept in the NVRAM file.
+		DEC 3000/400: Tru64 UNIX V5.1 installs and runs with CDE, with
+		the SRM V7.0 console.

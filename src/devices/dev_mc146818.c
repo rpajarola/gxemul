@@ -108,6 +108,7 @@ struct mc_data {
 	time_t		guest_base;
 	time_t		host_base;
 	int		guest_dow;
+	bool		clock_saved;	/*  the above is in the NVRAM file  */
 
 	time_t		last_update;	/*  for the Update-ended flag  */
 };
@@ -182,6 +183,7 @@ static void mc146818_set_guest_time(struct mc_data *d)
 	d->guest_dow = r[MC_DOW] >= 1 && r[MC_DOW] <= 7? r[MC_DOW] : 1;
 	d->guest_time_set = 1;
 	d->last_update = d->host_base;
+	d->clock_saved = false;
 }
 
 
@@ -191,7 +193,29 @@ static void mc146818_set_guest_time(struct mc_data *d)
  *  console variables).  It is read when the machine starts (if it
  *  exists), and written after changes, at most once a second, and when
  *  gxemul exits or resets the machine.
+ *
+ *  A time that the guest has set follows, as the battery-backed clock
+ *  keeps it: "GXCLOCK1", the guest's and the host's time then (64-bit
+ *  little-endian) and the day of the week.  The clock runs on while
+ *  gxemul isn't running.  (Older versions read only the 50 bytes.)
  */
+
+#define	CLOCK_MAGIC	"GXCLOCK1"
+#define	CLOCK_LEN	(8 + 8 + 8 + 1)
+
+static void put_le64(unsigned char *p, uint64_t x)
+{
+	for (int i = 0; i < 8; i++)
+		p[i] = x >> (8 * i);
+}
+
+static uint64_t get_le64(const unsigned char *p)
+{
+	uint64_t x = 0;
+	for (int i = 7; i >= 0; i--)
+		x = (x << 8) | p[i];
+	return x;
+}
 
 #define	MAX_NVRAMS	4
 static struct mc_data *nvrams[MAX_NVRAMS];
@@ -201,6 +225,8 @@ static bool nvram_has_changed(struct mc_data *d)
 {
 	int i;
 
+	if (d->guest_time_set && !d->clock_saved)
+		return true;
 	if (!d->nvram_have_saved)
 		return d->nvram_dirty;
 	for (i = 0; i < MC_NVRAM_SIZE; i++)
@@ -212,20 +238,29 @@ static bool nvram_has_changed(struct mc_data *d)
 
 static void nvram_write(struct mc_data *d)
 {
-	unsigned char buf[MC_NVRAM_SIZE];
+	unsigned char buf[MC_NVRAM_SIZE + CLOCK_LEN];
+	size_t len = MC_NVRAM_SIZE;
 	FILE *f;
 	int i;
 
 	for (i = 0; i < MC_NVRAM_SIZE; i++)
 		buf[i] = d->reg[4 * (MC_NVRAM_START + i)];
+	if (d->guest_time_set) {
+		memcpy(buf + len, CLOCK_MAGIC, 8);
+		put_le64(buf + len + 8, (uint64_t) d->guest_base);
+		put_le64(buf + len + 16, (uint64_t) d->host_base);
+		buf[len + 24] = d->guest_dow;
+		len += CLOCK_LEN;
+	}
 	f = fopen(d->nvram_file, "wb");
-	if (f == NULL || fwrite(buf, 1, sizeof(buf), f) != sizeof(buf)) {
+	if (f == NULL || fwrite(buf, 1, len, f) != len) {
 		fprintf(stderr, "[ mc146818: could not write the NVRAM to "
 		    "%s ]\n", d->nvram_file);
 		d->nvram_file = NULL;
 	} else {
-		memcpy(d->nvram_saved, buf, sizeof(buf));
+		memcpy(d->nvram_saved, buf, MC_NVRAM_SIZE);
 		d->nvram_have_saved = true;
+		d->clock_saved = d->guest_time_set;
 	}
 	if (f != NULL)
 		fclose(f);
@@ -234,18 +269,30 @@ static void nvram_write(struct mc_data *d)
 
 static void nvram_read(struct mc_data *d)
 {
-	unsigned char buf[MC_NVRAM_SIZE];
+	unsigned char buf[MC_NVRAM_SIZE + CLOCK_LEN];
 	FILE *f = fopen(d->nvram_file, "rb");
+	size_t len;
 	int i;
 
 	if (f == NULL)
 		return;		/*  (A new NVRAM: it is written when set.)  */
-	if (fread(buf, 1, sizeof(buf), f) == sizeof(buf)) {
+	len = fread(buf, 1, sizeof(buf), f);
+	if (len >= MC_NVRAM_SIZE) {
 		for (i = 0; i < MC_NVRAM_SIZE; i++)
 			d->reg[4 * (MC_NVRAM_START + i)] = buf[i];
-		memcpy(d->nvram_saved, buf, sizeof(buf));
+		memcpy(d->nvram_saved, buf, MC_NVRAM_SIZE);
 		d->nvram_have_saved = true;
 		d->dec_year_done = 1;
+		if (len == sizeof(buf) &&
+		    memcmp(buf + MC_NVRAM_SIZE, CLOCK_MAGIC, 8) == 0) {
+			d->guest_base = (time_t) get_le64(buf + MC_NVRAM_SIZE + 8);
+			d->host_base = (time_t) get_le64(buf + MC_NVRAM_SIZE + 16);
+			d->guest_dow = buf[MC_NVRAM_SIZE + 24];
+			if (d->guest_dow < 1 || d->guest_dow > 7)
+				d->guest_dow = 1;
+			d->guest_time_set = 1;
+			d->clock_saved = true;
+		}
 	} else
 		fprintf(stderr, "[ mc146818: %s is too short to be an NVRAM; "
 		    "ignored ]\n", d->nvram_file);
@@ -719,6 +766,23 @@ DEVICE_ACCESS(mc146818)
 				for (j=0; j<cpu->machine->ncpus; j++)
 					cpu->machine->cpus[j]->running = false;
 			}
+			break;
+		case 4 * MC_SEC:
+		case 4 * MC_MIN:
+		case 4 * MC_HOUR:
+		case 4 * MC_DOW:
+		case 4 * MC_DOM:
+		case 4 * MC_MONTH:
+		case 4 * MC_YEAR:
+			/*
+			 *  A time register written while the clock runs (as
+			 *  Tru64 UNIX 5.x does, without the SET bit) takes
+			 *  effect at once, as on the real chip.
+			 */
+			d->reg[relative_addr] = data[0];
+			if (d->access_style == MC146818_DEC &&
+			    !(d->reg[MC_REGB*4] & MC_REGB_SET))
+				mc146818_set_guest_time(d);
 			break;
 		default:
 			/*  Other registers and the NVRAM.  */

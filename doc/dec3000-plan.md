@@ -386,6 +386,36 @@ Everything below is in `media/` (not in git).
       and as plain (non-/S) instructions the kernel couldn't complete
       them: /sbin/sh's fabs(x) == HUGE_VAL got SIGFPE, and init respawned
       the single-user shell forever. Only NaNs trap now.
+  - **Tru64 UNIX V5.1 installs and runs multi-user with CDE** (RZ29B,
+    AdvFS, all subsets), with SRM V7.0. The release notes retire the
+    DEC 3000 in 5.1 (5.0A is the last version for it), but kn15aa and the
+    TURBOchannel drivers are still in the kernel; 5.1A drops them. Fixes:
+    - WH64 and ECB (opcode 0x18, functions 0xf800 and 0xe800) are cache
+      hints, and no-ops; they were OPCDECs. _OtsMove uses WH64, and the
+      kernel panicked in _XentIF at once.
+    - SCSI INQUIRY with EVPD: VPD pages 0x00, 0x80 (unit serial number)
+      and 0x83 (a T10 vendor id descriptor). Tru64 5.x names disks after
+      their WWID, asks for pages 0x00 and 0x83, and ignored a disk that
+      answered with standard inquiry data ("This system appears to have
+      no disks"). The serial number is made from the SCSI id and a hash of
+      the image's file name, so that it doesn't change.
+    - Sparse-space quadword reads return zero in the high longword (where
+      a quadword write has its byte mask). Tru64 5.x writes the RTC with
+      LDQ_U/INSBL/MSKBL/STQ_U, which wrote the register's old value back
+      as the byte mask, and most writes were lost.
+    - MC146818: a time register written while the clock runs takes effect
+      (5.x sets the clock without the SET bit), and a time set by the
+      guest is kept in the NVRAM file, after the 50 NVRAM bytes. 5.x keeps
+      year - 1952 in the year register (OSF/1 up to 4.x keeps 70 and takes
+      the year from the file system).
+    - With SRM V3.3 the kernel can't read its hardware and device
+      databases early in boot ("error reading PVD block", "kds - unable to
+      open /etc/gen_databases"): the kernel opens the boot device through
+      the console before it remaps the console to virtual addresses, and
+      V3.3's first callback after the remap runs its virtual-mode
+      initialisation, which clears the channel table. V7.0 keeps the
+      channel. With V3.3 the system still boots, but devices get new
+      hardware ids on every boot.
   - **OpenVMS AXP V1.0 boots multi-user.** `boot dka400` from the V1.0
     CD boots stand-alone BACKUP, which restores the base system saveset
     to disk (`dka0`). First boot runs the installation procedure,

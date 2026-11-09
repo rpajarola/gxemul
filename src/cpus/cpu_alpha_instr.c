@@ -1653,6 +1653,13 @@ X(to_be_translated)
 		case 0x4400:	/*  wmb  */
 		case 0x8000:	/*  fetch  */
 		case 0xa000:	/*  fetch_m  */
+		case 0xe800:	/*  ecb  */
+		case 0xf800:	/*  wh64  */
+			/*
+			 *  ECB and WH64 are cache hints that leave memory
+			 *  as it is; the 21064 doesn't trap on them, and
+			 *  Tru64 5.1's _OtsMove uses WH64.
+			 */
 			ic->f = instr(nop);
 			break;
 		case 0xe000:	/*  rc  ra  */

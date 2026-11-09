@@ -53,7 +53,7 @@ these systems represented the dawn of 64-bit RISC computing at Digital.</p>
 featuring:
 <ul>
 	<li><b>DECchip 21064 (EV4)</b> 64-bit Alpha RISC microprocessor.
-	<li>Execution of real <b>SRM console firmware</b> (e.g. version 3.3) and genuine EV4 PALcode.
+	<li>Execution of real <b>SRM console firmware</b> (e.g. version 3.3 or 7.0) and genuine EV4 PALcode.
 	<li><b>TURBOchannel</b> expansion bus with option slot ROM emulation.
 	<li><b>PMAGB-BA</b> (SFB &mdash; Smart Frame Buffer) 2D accelerated graphics at 1280x1024 resolution in 8-bit color.
 	<li><b>NCR 53C94 (ASC)</b> SCSI controller attached to the DEC IOASIC DMA engine.
@@ -70,6 +70,7 @@ featuring:
 	<li><a href="#decosf1">DEC OSF/1 AXP V3.0</a> (multi-user, networking, DECwindows)
 	<li><a href="#decosf1">Digital UNIX V3.2C</a> (multi-user, networking, DECwindows)
 	<li><a href="#decosf1">Digital UNIX V4.0D</a> (multi-user, networking, CDE)
+	<li><a href="#decosf1">Tru64 UNIX V5.1</a> (multi-user, networking, CDE; with SRM V7.0)
 </ul>
 
 
@@ -424,6 +425,26 @@ front, and reboots by itself). On a 2 GB RZ28 (<tt>"product": "RZ28     (C) DEC"
 <tt>rz0g</tt>, all subsets fit, CDE included. The framebuffer kernel is built with
 <tt>doconfig</tt> from <tt>genvmunix</tt> as for the earlier versions; CDE's dtlogin
 then comes up on the HX.</p>
+
+<p>Tru64 UNIX V5.1 (August 2000) officially no longer supports the DEC 3000 (5.0A
+was the last version that does; 5.1A and later don't have its platform code at
+all), but it installs and runs, with CDE on the HX. It needs the SRM V7.0
+console: with V3.3 the kernel can't read its hardware and device databases
+early in boot ("error reading PVD block"), and devices get new names on every
+boot. A V7.0 ROM image for the emulator is the system ROM and the I/O ROM image
+of the firmware update, one after the other (<tt>cat
+m400_v7_0-0-sand_sys.bin m400_v7_0-1-sand_io.bin &gt; m400_v7_0.rom</tt>, with
+<tt>experiments/dec3000_extract_rom.py</tt>). V7.0 asks for the keyboard
+language on the graphics console at the first power-up.
+Tru64 5.x names disks after their WWID: the emulated disks answer the SCSI
+INQUIRY vital product data pages with a serial number made from the SCSI id and
+the image's file name. On an RZ29B
+(<tt>"product": "RZ29B    (C) DEC"</tt>, 8380080 sectors), the default AdvFS
+layout holds all subsets. The installer's kernel has no framebuffer
+driver (the installation ran on the serial console); <tt>doconfig</tt> from
+<tt>genvmunix</tt> (<tt>boot -fl i dka0</tt>, <tt>genvmunix -s</tt>,
+<tt>/sbin/bcheckrc</tt>) adds it, and dtlogin comes up on the HX. The time
+that 5.1 sets is kept in the NVRAM file.</p>
 
 <p>A sample <tt>machine.json</tt> for installing DEC OSF/1 or Digital UNIX on the DEC 3000/400:</p>
 <pre>

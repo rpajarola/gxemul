@@ -1158,9 +1158,16 @@ DEVICE_ACCESS(dec3000_io)
 			else
 				ok = tc_access(d, cpu, slot, tc, &val, 0xf,
 				    MEM_READ, 1);
+			/*
+			 *  A quadword read has the data in the low
+			 *  longword and zero (no byte mask) in the high
+			 *  one: Tru64 5.x writes the RTC with LDQ_U/STQ_U,
+			 *  and the mask it then writes back must mean
+			 *  "all bytes".
+			 */
 			put_le32(data, val);
 			if (len == 8)
-				put_le32(data + 4, val);
+				put_le32(data + 4, 0);
 		} else {
 			int mask = 0xf;
 			if (off & 4)

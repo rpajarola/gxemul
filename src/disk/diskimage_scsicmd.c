@@ -243,6 +243,7 @@ static void diskimage__switch_tape(struct diskimage *d)
 
 /*  Additional sense codes:  */
 #define	ASC_LBA_OUT_OF_RANGE		0x21
+#define	ASC_INVALID_FIELD_IN_CDB	0x24
 #define	ASC_MEDIUM_MAY_HAVE_CHANGED	0x28
 #define	ASC_MEDIUM_NOT_PRESENT		0x3a
 #define	ASC_MEDIUM_REMOVAL_PREVENTED	0x53	/*  ASCQ 0x02  */
@@ -261,6 +262,90 @@ static void check_condition(struct diskimage *d,
 	xferp->status[0] = 0x02;	/*  CHECK CONDITION  */
 	d->sense_key = key;
 	d->sense_asc = asc;
+}
+
+
+/*
+ *  inquiry_serial():
+ *
+ *  A unit serial number that stays the same for the same image: the SCSI
+ *  id and a hash of the image's file name (without its directory).
+ *  Tru64 UNIX 5.x names disks after it, so it must not change between
+ *  runs, and two disks mustn't share one.
+ */
+static void inquiry_serial(struct diskimage *d, char *buf, size_t len)
+{
+	const char *name = d->fname != NULL ? d->fname : "";
+	const char *slash = strrchr(name, '/');
+	uint32_t h = 2166136261u;
+
+	if (slash != NULL)
+		name = slash + 1;
+	for (; *name; name++)
+		h = (h ^ (unsigned char) *name) * 16777619u;
+
+	snprintf(buf, len, "GX%02d%08X", d->id, h);
+}
+
+
+/*
+ *  inquiry_vpd():
+ *
+ *  INQUIRY with the EVPD bit: the Vital Product Data pages for supported
+ *  pages (0x00), the unit serial number (0x80) and device identification
+ *  (0x83, a T10 vendor id descriptor).  Others fail with ILLEGAL REQUEST.
+ */
+static void inquiry_vpd(struct diskimage *d, struct scsi_transfer *xferp)
+{
+	unsigned char page[64];
+	char serial[16];
+	size_t len, alloc = xferp->cmd[4];
+	size_t slen;
+
+	inquiry_serial(d, serial, sizeof(serial));
+	slen = strlen(serial);
+
+	memset(page, 0, sizeof(page));
+	page[0] = d->is_a_cdrom ? 0x05 : d->is_a_tape ? 0x01 : 0x00;
+	page[1] = xferp->cmd[2];
+
+	switch (xferp->cmd[2]) {
+	case 0x00:
+		page[3] = 3;
+		page[4] = 0x00;
+		page[5] = 0x80;
+		page[6] = 0x83;
+		len = 7;
+		break;
+	case 0x80:
+		page[3] = slen;
+		memcpy(page + 4, serial, slen);
+		len = 4 + slen;
+		break;
+	case 0x83:
+		page[4] = 0x02;		/*  code set: ASCII  */
+		page[5] = 0x01;		/*  T10 vendor identification  */
+		page[7] = 8 + 16 + slen;
+		memset(page + 8, ' ', 24);
+		inquiry_string(page + 8, 8,
+		    d->inq_vendor != NULL ? d->inq_vendor : "GXemul");
+		inquiry_string(page + 16, 16,
+		    d->inq_product != NULL ? d->inq_product : "DISK");
+		memcpy(page + 32, serial, slen);
+		page[3] = 4 + page[7];
+		len = 4 + page[3];
+		break;
+	default:
+		check_condition(d, xferp, SENSE_KEY_ILLEGAL_REQUEST,
+		    ASC_INVALID_FIELD_IN_CDB);
+		return;
+	}
+
+	if (len > alloc)
+		len = alloc;
+	scsi_transfer_allocbuf(&xferp->data_in_len, &xferp->data_in, len, 1);
+	memcpy(xferp->data_in, page, len);
+	diskimage__return_default_status_and_message(xferp);
 }
 
 
@@ -799,10 +884,18 @@ int diskimage_scsicommand(struct cpu *cpu, int id, int type,
 		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
 		    "id=%i: INQUIRY%s\n",
 		    id, xferp->cmd_len != 6 ? " (weird len)" : "");
-		if (xferp->cmd[1] != 0x00) {
+		if (xferp->cmd[1] & 0x01) {
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: INQUIRY VPD page 0x%02x\n",
+			    id, xferp->cmd[2]);
+			inquiry_vpd(d, xferp);
+			break;
+		}
+		if (xferp->cmd[1] != 0x00 || xferp->cmd[2] != 0x00) {
 			debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
-			    "WARNING: INQUIRY with cmd[1]=0x%02x not yet "
-			    "implemented\n", (int)xferp->cmd[1]);
+			    "WARNING: INQUIRY with cmd[1]=0x%02x cmd[2]=0x%02x"
+			    " not yet implemented\n", (int)xferp->cmd[1],
+			    (int)xferp->cmd[2]);
 		}
 
 		/*  Return values:  */
