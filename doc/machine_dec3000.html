@@ -424,7 +424,12 @@ front, and reboots by itself). On a 2 GB RZ28 (<tt>"product": "RZ28     (C) DEC"
 4110480 sectors), with <tt>/usr</tt> on <tt>rz0h</tt> and <tt>/var</tt> on
 <tt>rz0g</tt>, all subsets fit, CDE included. The framebuffer kernel is built with
 <tt>doconfig</tt> from <tt>genvmunix</tt> as for the earlier versions; CDE's dtlogin
-then comes up on the HX.</p>
+then comes up on the HX.
+Up to V3.2C, OSF/1 wants 70 in the RTC's year register and takes the year from
+the file system; from V4.0 on, the year register holds the year minus 1952. The
+emulated RTC starts at 70, so V4.0 and later find the year wrong at first
+("apparently 5 years since last boot") until the date is set once with
+<tt>date</tt>: the time the guest sets is kept in the NVRAM file.</p>
 
 <p>Tru64 UNIX V5.1 (August 2000) officially no longer supports the DEC 3000 (5.0A
 was the last version that does; 5.1A and later don't have its platform code at
