@@ -672,28 +672,34 @@ static void pckbc_type_char(struct pckbc_data *d, int ch)
 /*
  *  pckbc_type_escape():
  *
- *  Called after ESC was read from the console.  The display sends a key
- *  such as Up as one escape sequence (ESC [ A) all at once, so if '[' or
- *  'O' follows right away, the rest is read and typed as that key.
- *  Otherwise, ESC was the Esc key, and what followed is typed as it is.
+ *  Called after ESC, CSI (0x9b) or SS3 (0x8f) was read from the console.
+ *  The display sends a key such as Up as one escape sequence (ESC [ A) all
+ *  at once, so if '[' or 'O' follows ESC right away, the rest is read and
+ *  typed as that key.  Otherwise, ESC was the Esc key, and what followed
+ *  is typed as it is.  With VT100 translation on ("vt100" / -7), the
+ *  console has already turned ESC [ into CSI and ESC O into SS3.
  *  Unknown sequences (e.g. with modifiers) are dropped.
  */
-static void pckbc_type_escape(struct pckbc_data *d)
+static void pckbc_type_escape(struct pckbc_data *d, int introducer)
 {
 	char seq[16];
 	int len = 0, ch;
 
-	if (!console_charavail(d->console_handle)) {
+	if (introducer == 0x9b)
+		ch = '[';
+	else if (introducer == 0x8f)
+		ch = 'O';
+	else if (!console_charavail(d->console_handle)) {
 		pckbc_type_char(d, 27);
 		return;
-	}
-
-	ch = console_readchar(d->console_handle);
-	if (ch != '[' && ch != 'O') {
-		pckbc_type_char(d, 27);
-		if (ch >= 0)
-			pckbc_type_char(d, ch);
-		return;
+	} else {
+		ch = console_readchar(d->console_handle);
+		if (ch != '[' && ch != 'O') {
+			pckbc_type_char(d, 27);
+			if (ch >= 0)
+				pckbc_type_char(d, ch);
+			return;
+		}
 	}
 
 	seq[len++] = ch;
@@ -767,8 +773,8 @@ DEVICE_TICK(pckbc)
 	if (d->in_use) {
 		while (console_charavail(d->console_handle)) {
 			ch = console_readchar(d->console_handle);
-			if (ch == 27)
-				pckbc_type_escape(d);
+			if (ch == 27 || ch == 0x9b || ch == 0x8f)
+				pckbc_type_escape(d, ch);
 			else if (ch >= 0)
 				pckbc_type_char(d, ch);
 		}
