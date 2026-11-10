@@ -122,7 +122,7 @@ User-facing documentation lives in `doc/machine_jensen.html`.
   - Serial console 7-bit VT100 translation for ARC's 8-bit C1 output (`-7` / `"vt100": true`).
 - **Milestone 4 &ndash; EISA & SCSI (partial):**
   - EISA IDs: system board `DEC2400` at 0xC80, AHA-1742A (`ADP0001`) in slot 1.
-  - `src/devices/dev_aha1742.c`: enhanced mode, mailboxes, ECBs, scatter-gather bus-master DMA, IRQ 11.
+  - `src/devices/dev_aha1742.c`: enhanced mode, mailboxes, ECBs, scatter-gather bus-master DMA, IRQ 14 (from the ECU configuration).
   - Intel 82077AA floppy controller (`src/devices/dev_fdc.c`), PIO and DMA channel 2;
     ECU V1.9 runs from a diskette image and saves its configuration.
 - **Milestone 5 &ndash; OS verification (partial):**
@@ -147,11 +147,12 @@ Fixed on the way:
 
 ### Next
 
-1. **Hang after "Setting Windows NT Configuration Information..."**: the HAL
-   re-initializes the PICs (vectors 0/8, only IRQ 0, 2 and 12 unmasked), resets
-   the AHA (immediate command to target 7) and issues INQUIRYs, but never reads
-   G2INTST or clears the interrupt; it aborts and retries until it gives up.
-   Find what the caller (AHA174X miniport?) is waiting for.
+1. **Video for GUI-mode Setup** (now the blocker): text-mode Setup completes and
+   reboots into the installed NT 3.1, which runs autochk on C: and D: and then
+   idles, presumably waiting for the QVision display driver. Emulate a Compaq
+   QVision (or S3 911/924/928). The earlier "hang after Setting Configuration"
+   was NT running with AHA interrupts disabled: the old synthetic factory NVRAM
+   lacked the EISA port initialization (INTDEF); it now holds genuine ECU output.
 2. **ARC system ID is `DEC-00Jensen`**; NT Setup only knows `DEC-10Jensen` /
    `DEC-20Jensen` (Computer: Unknown, must be picked by hand). The digit comes from
    word 1 of the parameter block the ROM loader passes to the ARC entry point

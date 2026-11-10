@@ -853,10 +853,9 @@ struct jensen_data *dev_jensen_init(struct machine *machine,
 /*
  *  dev_jensen_init_ecu():
  *
- *  Populate standard factory ECU configuration for Jensen:
- *  Block 6 (0x60000): Flash NVRAM Table for EISA slots 1..6 and AHA-1742A SCSI.
- *  Block C (0xc0000): ARC Configuration Tree (Section 1) and Environment
- *                     Variables (Section 2).
+ *  Populate the Flash NVRAM blocks with a configured factory state (see
+ *  dev_jensen_nvram.h): Block 6 (0x60000) and Block C (0xc0000, ARC
+ *  configuration tree, environment variables and EISA configuration).
  */
 static void dev_jensen_init_ecu(struct jensen_data *d)
 {
@@ -864,9 +863,9 @@ static void dev_jensen_init_ecu(struct jensen_data *d)
 	if (!d->populate_ecu)
 		return;
 
-	/*  Clear Block 6 (0x60000..0x6ffff) and Block C (0xc0000..0xcffff):  */
-	memset(d->rom + 0x60000, 0, 0x10000);
-	memset(d->rom + 0xc0000, 0, 0x10000);
+	/*  Erase Block 6 (0x60000..0x6ffff) and Block C (0xc0000..0xcffff):  */
+	memset(d->rom + 0x60000, 0xff, 0x10000);
+	memset(d->rom + 0xc0000, 0xff, 0x10000);
 
 	/*  Populate Block 6 (EISA Slot table & AHA-1742A configuration):  */
 	memcpy(d->rom + 0x60000, jensen_default_nvram_block6,
