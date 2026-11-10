@@ -68,6 +68,23 @@ struct pic8259_data {
 	uint8_t		irr;		/*  interrupt request register  */
 	uint8_t		isr;		/*  interrupt in-service register  */
 	uint8_t		ier;		/*  interrupt enable register  */
+
+	/*
+	 *  Current level of the interrupt request input lines, and which
+	 *  of them are level-triggered (as set in an EISA ELCR register).
+	 *  An EOI must not drop the request of a level-triggered input
+	 *  whose line is still active.
+	 */
+	uint8_t		line;
+	uint8_t		elcr;
+
+	/*
+	 *  If latch_in_service is set, a request that arrives while the
+	 *  same input is in service is remembered in 'latched' and is not
+	 *  lost by the EOI, as on a real 8259.
+	 */
+	int		latch_in_service;
+	uint8_t		latched;
 };
 
 /*  dev_dec_ioasic.c:  */

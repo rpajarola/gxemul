@@ -213,6 +213,13 @@ table defining the Adaptec AHA-1742A SCSI host adapter.</p>
 This pre-population avoids the <tt>"Invalid entry in NT Configuration tree"</tt> fatal error
 and NVRAM inconsistency warning boxes on boot.</p>
 
+<p>The ARC and SRM consoles keep their settings (environment variables,
+configuration tree, boot selections and ECU data) in the Flash ROM. When an
+<tt>nvram</tt> file is configured, the whole Flash image is also kept, in
+<tt>&lt;nvram file&gt;.flash</tt>, so that these settings survive restarts.
+Once that file exists it is used instead of the <tt>rom</tt> image and of the
+pre-population below; delete it to start over from the factory state.</p>
+
 <p>Pre-population can be configured via the <tt>populate_ecu</tt> setting:
 <ul>
 	<li>In JSON configuration: <tt>"populate_ecu": true</tt> (or <tt>false</tt> to boot with raw unconfigured Flash ROM).

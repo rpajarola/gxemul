@@ -125,6 +125,8 @@
 #define	HS_HARDWARE_ERR		0x20
 
 
+#define	AHA_COMPLETION_QUEUE_LEN	64
+
 struct aha1742_data {
 	struct machine		*machine;
 	struct interrupt	irq[16];
@@ -146,6 +148,18 @@ struct aha1742_data {
 	uint8_t			g2intst;
 	uint8_t			g2stat;
 	uint8_t			g2stat2;
+
+	/*
+	 *  Completions waiting to be presented to the host. Only one
+	 *  completion (mailbox in + interrupt status) is visible at a time;
+	 *  the next one is presented when the host clears the interrupt.
+	 */
+	int			cq_head, cq_len;
+	struct {
+		uint32_t	mboxin;
+		uint8_t		intst;
+		uint8_t		set_mboxin;
+	}			cq[AHA_COMPLETION_QUEUE_LEN];
 };
 
 
@@ -188,6 +202,72 @@ static void aha1742_deassert_irq(struct aha1742_data *d)
 	d->irq_asserted = 0;
 }
 
+/*
+ *  aha1742_dma():
+ *
+ *  Bus master DMA between host memory and a buffer. memory_rw() cannot
+ *  cross a memory block boundary in one call, so the transfer is split
+ *  at page boundaries.
+ */
+static int aha1742_dma(struct cpu *cpu, struct memory *mem, uint64_t addr,
+	unsigned char *buf, size_t len, int writeflag, int flags)
+{
+	while (len > 0) {
+		size_t chunk = 4096 - (addr & 4095);
+
+		if (chunk > len)
+			chunk = len;
+		if (!cpu->memory_rw(cpu, mem, addr, buf, chunk, writeflag,
+		    flags))
+			return 0;
+		addr += chunk;
+		buf += chunk;
+		len -= chunk;
+	}
+
+	return MEMORY_ACCESS_OK;
+}
+
+static void aha1742_present(struct aha1742_data *d, uint32_t mboxin,
+	uint8_t intst, int set_mboxin)
+{
+	if (set_mboxin)
+		d->mboxin = mboxin;
+	d->g2intst = intst;
+	d->g2stat |= G2STAT_INT_PEND;
+	aha1742_assert_irq(d);
+}
+
+/*
+ *  aha1742_complete():
+ *
+ *  Report a completed ECB or immediate command. If the host has not yet
+ *  cleared the previous completion interrupt, the completion is queued.
+ */
+static void aha1742_complete(struct aha1742_data *d, uint32_t mboxin,
+	uint8_t intst, int set_mboxin)
+{
+	d->g2stat |= G2STAT_MBOX_EMPTY;
+
+	if (!(d->g2stat & G2STAT_INT_PEND)) {
+		aha1742_present(d, mboxin, intst, set_mboxin);
+		return;
+	}
+
+	if (d->cq_len >= AHA_COMPLETION_QUEUE_LEN) {
+		fatal("[ aha1742: completion queue overflow ]\n");
+		return;
+	}
+
+	{
+		int i = (d->cq_head + d->cq_len) % AHA_COMPLETION_QUEUE_LEN;
+		d->cq[i].mboxin = mboxin;
+		d->cq[i].intst = intst;
+		d->cq[i].set_mboxin = set_mboxin;
+		d->cq_len ++;
+	}
+}
+
 static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 {
 	uint8_t ecb_buf[0x40];
@@ -201,7 +281,7 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 	target = d->attn & ATTN_TARGET;
 
 	/* Read ECB structure from host physical memory: */
-	if (!cpu->memory_rw(cpu, cpu->mem, d->mboxout, ecb_buf,
+	if (!aha1742_dma(cpu, cpu->mem, d->mboxout, ecb_buf,
 	    sizeof(ecb_buf), MEM_READ, PHYSICAL | NO_EXCEPTIONS)) {
 		fatal("[ aha1742: memory_rw() failed reading ECB at 0x%x ]\n",
 		    d->mboxout);
@@ -258,7 +338,7 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 				while (cur < to_copy && seg_idx * 8 < data_len) {
 					uint8_t sbuf[8];
 					uint32_t saddr, slen, chunk;
-					cpu->memory_rw(cpu, cpu->mem,
+					aha1742_dma(cpu, cpu->mem,
 					    data_addr + seg_idx * 8, sbuf, 8,
 					    MEM_READ, PHYSICAL | NO_EXCEPTIONS);
 					saddr = sbuf[0] | (sbuf[1]<<8) | (sbuf[2]<<16) | (sbuf[3]<<24);
@@ -266,14 +346,14 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 					chunk = to_copy - cur;
 					if (chunk > slen)
 						chunk = slen;
-					cpu->memory_rw(cpu, cpu->mem, saddr,
+					aha1742_dma(cpu, cpu->mem, saddr,
 					    inq + cur, chunk,
 					    MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
 					cur += chunk;
 					seg_idx++;
 				}
 			} else {
-				cpu->memory_rw(cpu, cpu->mem, data_addr,
+				aha1742_dma(cpu, cpu->mem, data_addr,
 				    inq, to_copy,
 				    MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
 			}
@@ -285,15 +365,12 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 		status_block[3] = 0x00;
 
 		if (status_addr != 0) {
-			cpu->memory_rw(cpu, cpu->mem, status_addr, status_block,
+			aha1742_dma(cpu, cpu->mem, status_addr, status_block,
 			    sizeof(status_block), MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
 		}
 
-		d->mboxin = d->mboxout;
-		d->g2intst = (target & ATTN_TARGET) | AHB_ECB_OK;
-		d->g2stat |= G2STAT_INT_PEND;
-		d->g2stat |= G2STAT_MBOX_EMPTY;
-		aha1742_assert_irq(d);
+		aha1742_complete(d, d->mboxout,
+		    (target & ATTN_TARGET) | AHB_ECB_OK, 1);
 		return;
 	}
 
@@ -305,15 +382,12 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 		status_block[3] = 0x00;
 
 		if (status_addr != 0) {
-			cpu->memory_rw(cpu, cpu->mem, status_addr, status_block,
+			aha1742_dma(cpu, cpu->mem, status_addr, status_block,
 			    sizeof(status_block), MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
 		}
 
-		d->mboxin = d->mboxout;
-		d->g2intst = (target & ATTN_TARGET) | AHB_ECB_OK;
-		d->g2stat |= G2STAT_INT_PEND;
-		d->g2stat |= G2STAT_MBOX_EMPTY;
-		aha1742_assert_irq(d);
+		aha1742_complete(d, d->mboxout,
+		    (target & ATTN_TARGET) | AHB_ECB_OK, 1);
 		return;
 	}
 
@@ -328,15 +402,12 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 		status_block[3] = 0x00;
 
 		if (status_addr != 0) {
-			cpu->memory_rw(cpu, cpu->mem, status_addr, status_block,
+			aha1742_dma(cpu, cpu->mem, status_addr, status_block,
 			    sizeof(status_block), MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
 		}
 
-		d->mboxin = d->mboxout;
-		d->g2intst = (target & ATTN_TARGET) | AHB_ECB_ERR;
-		d->g2stat |= G2STAT_INT_PEND;
-		d->g2stat |= G2STAT_MBOX_EMPTY;
-		aha1742_assert_irq(d);
+		aha1742_complete(d, d->mboxout,
+		    (target & ATTN_TARGET) | AHB_ECB_ERR, 1);
 		return;
 	}
 
@@ -361,7 +432,7 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 				    seg_idx * 8 < data_len) {
 					uint8_t sbuf[8];
 					uint32_t saddr, slen, chunk;
-					cpu->memory_rw(cpu, cpu->mem,
+					aha1742_dma(cpu, cpu->mem,
 					    data_addr + seg_idx * 8, sbuf, 8,
 					    MEM_READ, PHYSICAL | NO_EXCEPTIONS);
 					saddr = sbuf[0] | (sbuf[1]<<8) | (sbuf[2]<<16) | (sbuf[3]<<24);
@@ -369,22 +440,28 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 					chunk = xferp->data_out_len - cur;
 					if (chunk > slen)
 						chunk = slen;
-					cpu->memory_rw(cpu, cpu->mem, saddr,
+					aha1742_dma(cpu, cpu->mem, saddr,
 					    xferp->data_out + cur, chunk,
 					    MEM_READ, PHYSICAL | NO_EXCEPTIONS);
 					cur += chunk;
 					seg_idx++;
 				}
+				xferp->data_out_offset = cur;
 			} else {
 				uint32_t chunk = xferp->data_out_len;
 				if (chunk > data_len)
 					chunk = data_len;
-				cpu->memory_rw(cpu, cpu->mem, data_addr,
+				aha1742_dma(cpu, cpu->mem, data_addr,
 				    xferp->data_out, chunk,
 				    MEM_READ, PHYSICAL | NO_EXCEPTIONS);
+				xferp->data_out_offset = chunk;
 			}
 
-			/* Re-run to commit the data: */
+			/*
+			 *  Re-run to commit the data. The disk image only
+			 *  writes once data_out_offset says that all of the
+			 *  data has arrived.
+			 */
 			res = diskimage_scsicommand(cpu, target, DISKIMAGE_SCSI, xferp);
 		}
 	} else if (res == 1) {
@@ -397,7 +474,7 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 				    seg_idx * 8 < data_len) {
 					uint8_t sbuf[8];
 					uint32_t saddr, slen, chunk;
-					cpu->memory_rw(cpu, cpu->mem,
+					aha1742_dma(cpu, cpu->mem,
 					    data_addr + seg_idx * 8, sbuf, 8,
 					    MEM_READ, PHYSICAL | NO_EXCEPTIONS);
 					saddr = sbuf[0] | (sbuf[1]<<8) | (sbuf[2]<<16) | (sbuf[3]<<24);
@@ -405,7 +482,7 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 					chunk = xferp->data_in_len - cur;
 					if (chunk > slen)
 						chunk = slen;
-					cpu->memory_rw(cpu, cpu->mem, saddr,
+					aha1742_dma(cpu, cpu->mem, saddr,
 					    xferp->data_in + cur, chunk,
 					    MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
 					cur += chunk;
@@ -415,7 +492,7 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 				uint32_t chunk = xferp->data_in_len;
 				if (chunk > data_len)
 					chunk = data_len;
-				cpu->memory_rw(cpu, cpu->mem, data_addr,
+				aha1742_dma(cpu, cpu->mem, data_addr,
 				    xferp->data_in, chunk,
 				    MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
 			}
@@ -429,18 +506,23 @@ static void aha1742_execute_ecb(struct cpu *cpu, struct aha1742_data *d)
 	status_block[3] = (xferp->status != NULL && xferp->status_len > 0) ?
 	    xferp->status[0] : 0;
 
+	/*  A command still waiting for data out never completed:  */
+	if (res == 2) {
+		debugmsg(SUBSYS_DEVICE, "aha1742", VERBOSITY_WARNING,
+		    "target %d: command 0x%02x got %d of %d data out bytes\n",
+		    target, xferp->cmd[0], (int)xferp->data_out_offset,
+		    (int)xferp->data_out_len);
+		status_block[2] = HS_HARDWARE_ERR;
+	}
+
 	if (status_addr != 0) {
-		cpu->memory_rw(cpu, cpu->mem, status_addr, status_block,
+		aha1742_dma(cpu, cpu->mem, status_addr, status_block,
 		    sizeof(status_block), MEM_WRITE, PHYSICAL | NO_EXCEPTIONS);
 	}
 
-	d->mboxin = d->mboxout;
-	d->g2intst = (target & ATTN_TARGET) |
-	    (status_block[3] ? AHB_ECB_ERR : AHB_ECB_OK);
-	d->g2stat |= G2STAT_INT_PEND;
-	d->g2stat |= G2STAT_MBOX_EMPTY;
-
-	aha1742_assert_irq(d);
+	aha1742_complete(d, d->mboxout, (target & ATTN_TARGET) |
+	    (status_block[2] != HS_OK || status_block[3] ?
+	    AHB_ECB_ERR : AHB_ECB_OK), 1);
 	scsi_transfer_free(xferp);
 }
 
@@ -548,18 +630,13 @@ DEVICE_ACCESS(aha1742)
 			} else if ((d->attn & ATTN_OPCODE) == OP_IMMED) {
 				/* Immediate command (target reset) */
 				debug("[ aha1742: OP_IMMED target=%d ]\n", d->attn & ATTN_TARGET);
-				d->g2intst = (d->attn & ATTN_TARGET) | AHB_IMMED_OK;
-				d->g2stat |= G2STAT_INT_PEND;
-				d->g2stat |= G2STAT_MBOX_EMPTY;
-				aha1742_assert_irq(d);
+				aha1742_complete(d, 0,
+				    (d->attn & ATTN_TARGET) | AHB_IMMED_OK, 0);
 			} else if ((d->attn & ATTN_OPCODE) == OP_ABORT_ECB) {
 				/* Abort ECB */
 				debug("[ aha1742: OP_ABORT_ECB target=%d ]\n", d->attn & ATTN_TARGET);
-				d->mboxin = d->mboxout;
-				d->g2intst = (d->attn & ATTN_TARGET) | AHB_ECB_OK;
-				d->g2stat |= G2STAT_INT_PEND;
-				d->g2stat |= G2STAT_MBOX_EMPTY;
-				aha1742_assert_irq(d);
+				aha1742_complete(d, d->mboxout,
+				    (d->attn & ATTN_TARGET) | AHB_ECB_OK, 1);
 			} else {
 				debug("[ aha1742: unknown ATTN opcode 0x%02x ]\n", d->attn & ATTN_OPCODE);
 			}
@@ -575,12 +652,24 @@ DEVICE_ACCESS(aha1742)
 			if (idata & G2CNTRL_CLEAR_EISA_INT) {
 				d->g2stat &= ~G2STAT_INT_PEND;
 				aha1742_deassert_irq(d);
+
+				/*  Present the next queued completion:  */
+				if (d->cq_len > 0) {
+					int i = d->cq_head;
+					d->cq_head = (d->cq_head + 1) %
+					    AHA_COMPLETION_QUEUE_LEN;
+					d->cq_len --;
+					aha1742_present(d, d->cq[i].mboxin,
+					    d->cq[i].intst,
+					    d->cq[i].set_mboxin);
+				}
 			}
 			if (idata & G2CNTRL_HARD_RESET) {
 				aha1742_deassert_irq(d);
 				d->g2stat = G2STAT_MBOX_EMPTY;
 				d->g2intst = 0;
 				d->mboxin = 0;
+				d->cq_head = d->cq_len = 0;
 				d->mboxout = 0;
 				d->attn = 0;
 			}

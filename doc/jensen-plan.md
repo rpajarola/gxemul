@@ -59,17 +59,21 @@
 
 ## 2. Memory & I/O Address Space
 
-Jensen's physical address space (34-bit physical addressing on EV4):
+Jensen's physical address space (34-bit physical addressing on EV4), per
+DEC EK-A0638-TD.001 and as implemented in `src/devices/dev_jensen.c`:
 
-| Physical Address | Size | Description |
-| :--- | :--- | :--- |
-| `0x0.0000.0000` &ndash; `0x0.07FF.FFFF` | 128 MB | System RAM |
-| `0x1.0000.0000` &ndash; `0x1.000F.FFFF` | 1 MB | Flash EPROM (SRM / ARC Console Firmware) |
-| `0x1.C000.0000` &ndash; `0x1.DFFF.FFFF` | 512 MB | Local Motherboard Combo I/O (`VL82C106`) |
-| `0x2.0000.0000` &ndash; `0x2.FFFF.FFFF` | 4 GB | Sparse EISA Memory Space (windowed via HAE) |
-| `0x3.0000.0000` &ndash; `0x3.FFFF.FFFF` | 4 GB | Sparse EISA I/O Space (128-byte stride) |
-| `0x3.1000.0000` | 8 bytes | Interrupt Acknowledge (IACK) cycle register |
-| `0x3.1800.0000` | 8 bytes | Hardware Address Extension (HAE) register |
+| Physical Address | Description |
+| :--- | :--- |
+| `0x0.0000.0000` | System RAM (up to 128 MB) |
+| `0x1.0000.0000` | Interrupt Acknowledge (INTA) cycle register (82357 ISP) |
+| `0x1.8000.0000` | Flash ROM window 0 (sparse, `addr >> 9`) |
+| `0x1.A000.0000` | Flash ROM window 1 (sparse, `addr >> 9`) |
+| `0x1.C000.0000` | Local Combo Super I/O (`VL82C106`: KBD, RTC, COM1, COM2, LPT) |
+| `0x1.D000.0000` | Hardware Address Extension (HAE) register |
+| `0x1.E000.0000` | System Control (SYSCTL) register (RAM size, watchdog, LEDs) |
+| `0x1.F000.0000` | Spare register |
+| `0x2.0000.0000` | Sparse EISA Memory Space (windowed via HAE) |
+| `0x3.0000.0000` | Sparse EISA I/O Space (128-byte stride, width in bits 5..6) |
 
 ### Sparse I/O Address Decoding Formula
 For an EISA I/O port `addr`:
@@ -96,53 +100,68 @@ The firmware supports setting `os_type` to dynamically select console personalit
 
 ---
 
-## 4. Implementation Roadmap & Milestones
+## 4. Status (updated 2026-11-09)
 
-### Milestone 0: Branch & ROM Extraction
-- Create feature branch `jensen`.
-- Write Python script to strip the 81-byte text header from `JENSFW.BIN;1` into `media/rom/jensen_v1_3.rom` (1,048,576 bytes).
-- Verify ROM header format and initial PALcode entry vector.
+Machine type is `jensen` (model `300`), e.g. `gxemul -e jensen -x -M 64 media/rom/jensen_v1_3.rom`.
+User-facing documentation lives in `doc/machine_jensen.html`.
 
-### Milestone 1: Machine Setup & Sparse Memory Router
-- Create `src/machines/machine_jensen.c` and register machine type `dec2000` (subtypes: `300` for Model 300 / AXP 150).
-- Create `src/devices/dev_jensen.c`:
-  - Implement memory router for `0x1.0000.0000` (Flash ROM), `0x1.C000.0000` (Local Combo I/O), `0x3.0000.0000` (Sparse EISA I/O), and `0x2.0000.0000` (Sparse EISA Memory).
-  - Implement `HAE` register and `IACK` cycle handling.
-- Wire build files: `Makefile.skel`, `configure`, `automachine`.
+### Done
 
-### Milestone 2: Standard PC Peripherals Wiring
-- Attach `dev_8259` dual cascaded PIC:
-  - Route PIC interrupt request line to Alpha EV4 `irq_h[3]`.
-  - Handle IACK cycle to return the interrupting vector to the PALcode dispatcher.
-- Attach `dev_8253` PIT at ports `0x40..0x43`.
-- Attach `dev_ns16550` UARTs: COM1 (`0x3F8`, IRQ 4) and COM2 (`0x2F8`, IRQ 3).
-- Attach `dev_pckbc` (8042 keyboard/mouse) at ports `0x60`, `0x64` (IRQ 1 for keyboard, IRQ 12 for mouse).
-- Attach `dev_mc146818` (DS1287 RTC) at ports `0x70`, `0x71` (IRQ 8).
-- Attach `dev_vga` for video output (VGA registers at `0x3C0..0x3DF`, VRAM at `0xA0000`).
+- **Milestone 0 &ndash; ROM extraction:** `media/rom/jensen_v1_3.rom` (1 MB) extracted from `JENSFW.BIN;1`.
+- **Milestone 1 &ndash; Machine & bus router:** `src/machines/machine_jensen.c`, `src/devices/dev_jensen.c`.
+  INTA, Flash windows (write-protected except NVRAM blocks), Combo I/O, HAE, SYSCTL,
+  sparse EISA memory/I/O, dense EISA memory. Build and `machine.json` / config UI wired up.
+- **Milestone 2 &ndash; PC peripherals:** cascaded 8259s (with ELCR1/ELCR2 level-trigger registers),
+  8254 PIT, 82357 DMA incl. EISA extension registers, 16550 COM1/COM2, LPT1, 8042 KBC
+  (+ port 0x61), MC146818/DS1287 RTC + CMOS (reg 0x4f = OS type), ISA VGA.
+- **Milestone 3 &ndash; Firmware:**
+  - SRM V1.3 passes all power-up tests and reaches `>>>` (`-o vms` / `-o osf`).
+  - ARC Multiboot 3.0.g reaches the boot menu with no NVRAM warning (`populate_ecu`
+    pre-populates NVRAM block 6 = ECU table and block C = ARC config tree, environment
+    and EISA slot data; see `src/devices/dev_jensen_nvram.h`).
+  - Serial console 7-bit VT100 translation for ARC's 8-bit C1 output (`-7` / `"vt100": true`).
+- **Milestone 4 &ndash; EISA & SCSI (partial):**
+  - EISA IDs: system board `DEC2400` at 0xC80, AHA-1742A (`ADP0001`) in slot 1.
+  - `src/devices/dev_aha1742.c`: enhanced mode, mailboxes, ECBs, scatter-gather bus-master DMA, IRQ 11.
+  - Intel 82077AA floppy controller (`src/devices/dev_fdc.c`), PIO and DMA channel 2;
+    ECU V1.9 runs from a diskette image and saves its configuration.
+- **Milestone 5 &ndash; OS verification (partial):**
+  - OpenVMS AXP V1.5-1H1 boots from CD via `SYS$PKJDRIVER` to Stand-alone BACKUP (`$`).
+  - Windows NT 3.1 Alpha (build 528): `scsi(0)cdrom(4)fdisk(0)\alpha\setupldr` loads
+    and shows the text-mode Setup screen.
 
-### Milestone 3: Firmware Boot to Prompt (SRM & ARC)
-- Boot `jensen_v1_3.rom` on EV4 under GXemul.
-- Verify firmware power-on self-tests:
-  - Memory sizing & parity check.
-  - 8254 timer & 8259 interrupt controller check.
-  - 8042 keyboard controller check.
-  - DS1287 RTC clock check.
-- Reach interactive prompt:
-  - SRM console: `>>>`
-  - ARC console: Firmware menu (`Boot Windows NT`, `Run a Program`, `Set Up the System`).
+### NT 3.1 text-mode Setup (2026-11-09)
 
-### Milestone 4: EISA Bus & Adaptec AHA-1742A SCSI Controller
-- Implement EISA slot product ID registers (`0xzC80..0xzC83` for slots 1..6):
-  - Slot 1: Adaptec AHA-1742A (`ADP0001` or `ADP0002`).
-  - Slot 2: Compaq QVision VGA or S3 (`CPQ0001`).
-  - Slot 3: DEC EtherWORKS DE422 EISA NIC (`DEC4220`).
-- Create `src/devices/dev_aha1742.c`:
-  - Implement AHA-1542 standard compatibility mode (Control/Status/Command/Data registers).
-  - Implement AHA-1740 Enhanced Mode 32-bit command rings (Mailbox Out, Mailbox In, EISA DMA).
-  - Connect to GXemul's SCSI command engine (`diskimage_scsicmd.c`) for disk (`DKA0:`) and CD-ROM (`DKA400:`).
+Text-mode Setup runs to 100%: arcinst creates and formats the 5 MB FAT system
+partition, Setup creates/formats D: (FAT), and copies all files (152 files,
+19.6 MB in `\winnt\system32`, plus HAL/PALcode/OSLOADER on the system partition).
+Fixed on the way:
 
-### Milestone 5: Operating System Verification
-- Boot and install **Windows NT 3.51 / 4.0 Alpha** via the ARC console.
-- Boot and install **OpenVMS AXP 1.0 / 1.5** via the SRM console (`boot dka400`).
-- Boot **DEC OSF/1 AXP** and **Linux/Alpha**.
-- Document procedures in `doc/machine_jensen.html`.
+- AHA-1742A: SCSI writes were silently dropped (`data_out_offset` never set);
+  bus-master DMA could cross a memblock boundary and `exit(1)`; completions are
+  now queued when the host has not yet cleared the previous interrupt.
+- 8259 (Jensen only): a request that arrives while the same IRQ is in service
+  survives the EOI; level-triggered inputs (ELCR) stay requested while active.
+- Flash NVRAM persistence: with an `nvram` file set, the whole Flash (ARC
+  environment, config tree, ECU data, boot selections) is kept in `<nvram>.flash`.
+
+### Next
+
+1. **Hang after "Setting Windows NT Configuration Information..."**: the HAL
+   re-initializes the PICs (vectors 0/8, only IRQ 0, 2 and 12 unmasked), resets
+   the AHA (immediate command to target 7) and issues INQUIRYs, but never reads
+   G2INTST or clears the interrupt; it aborts and retries until it gives up.
+   Find what the caller (AHA174X miniport?) is waiting for.
+2. **ARC system ID is `DEC-00Jensen`**; NT Setup only knows `DEC-10Jensen` /
+   `DEC-20Jensen` (Computer: Unknown, must be picked by hand). The digit comes from
+   word 1 of the parameter block the ROM loader passes to the ARC entry point
+   (`{1, 0, 6600 ps, ...}`); it is not SROM register T11. Find its source.
+3. **Year shows as 2006** in the ARC clock (RTC year convention).
+4. **Video:** NT 3.1 Alpha only supports Compaq QVision and S3 (911/924, 928)
+   displays; there is no plain VGA option. GUI Setup will need one of those.
+5. Boot the installed NT kernel; then DEC OSF/1 AXP; DE422 NIC; newer NT/VMS.
+
+### Not emulated
+
+- PC speaker tone (8254 counter 2) &ndash; logged at debug level only.
+- 8254 counter 1 (DMA refresh) &ndash; still a fatal error if programmed.
