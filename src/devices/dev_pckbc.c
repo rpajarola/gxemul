@@ -829,13 +829,19 @@ static void dev_pckbc_command(struct pckbc_data *d, int port_nr)
 		d->state[port_nr] = STATE_WAITING_FOR_RATE;
 		break;
 
+	case 0xf7:	/*  Set all keys typematic only  */
+	case 0xf8:	/*  Set all keys make/break  */
+	case 0xf9:	/*  Set all keys make only  */
 	case KBC_ALLKEYS_TMB:
-		/*  "Make all keys typematic/make/break"  */
+		/*  "Make all keys typematic/make/break" (scan code set 3)  */
 		pckbc_add_code(d, KBR_ACK, port_nr);
 		break;
 
+	case 0xfb:	/*  Set one key typematic only  */
 	case KBC_ONEKEY_MB:
-		/*  "Make one key typematic/make/break"  */
+	case 0xfd:	/*  Set one key make only  */
+		/*  Scan code set 3 key types, followed by a key code (the
+		    Jensen SRM console uses FC and FD):  */
 		pckbc_add_code(d, KBR_ACK, port_nr);
 		d->state[port_nr] = STATE_WAITING_FOR_ONEKEY_MB;
 		break;
@@ -1016,9 +1022,14 @@ DEVICE_ACCESS(pckbc)
 			case 0xa8:
 				d->cmdbyte &= ~KC8_MDISABLE;
 				break;
-			case 0xa9:	/*  test auxiliary port  */
-				debugmsg(d->subsys, "pckbc", VERBOSITY_WARNING,
-				    "CONTROL 0xa9, TODO\n");
+			case 0xa9:	/*  test auxiliary port: 00 = OK.
+					    Only answered when the keyboard
+					    is in use (with the display on):
+					    without an answer, firmware such
+					    as the Jensen's ARC console falls
+					    back to the serial console.  */
+				if (d->in_use)
+					pckbc_add_code(d, 0x00, port_nr);
 				break;
 			case 0xaa:	/*  keyboard self-test  */
 				pckbc_add_code(d, 0x55, port_nr);
@@ -1040,6 +1051,12 @@ DEVICE_ACCESS(pckbc)
 				break;
 			case 0xd1:
 				d->state[port_nr] = STATE_LDOUTPUT;
+				break;
+			case 0xd2:	/*  write to keyboard output buffer:
+					    the next data byte comes back as
+					    if from the keyboard (the Jensen
+					    ARC console uses it)  */
+				d->state[port_nr] = STATE_WAITING_FOR_AUX_OUT;
 				break;
 			case 0xd3:	/*  write to auxiliary device
 					    output buffer  */

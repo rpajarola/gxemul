@@ -1942,9 +1942,10 @@ int machine_config_max_gfx_cards(const struct machine_config *c)
  *  given an option ROM image (for a real system ROM to use the card), as
  *  machine_pmax.c and dev_dec3000.c set them up: graphics cards (one, or
  *  "cards", with the framebuffer on), and on the 5000/200, the SCSI and
- *  Ethernet interfaces.
+ *  Ethernet interfaces.  On the Jensen, the EISA slot of the QVision
+ *  (with the display on).
  *  Returns how many there are (at most MC_MAX_SLOTS), or -1 if the machine
- *  has no TURBOchannel.
+ *  has no such slots.
  */
 int machine_config_slots(const struct machine_config *c,
 	struct mc_slot *slots)
@@ -1955,6 +1956,15 @@ int machine_config_slots(const struct machine_config *c,
 	if (!lookup_machine(c->type, c->model, &type, &subtype, &err)) {
 		free(err);
 		return -1;
+	}
+	if (type == MACHINE_JENSEN) {
+		/*  The QVision in EISA slot 2, with the display on
+		    (dev_jensen.c):  */
+		if (c->display) {
+			slots[n].slot = 2;
+			slots[n++].device = "Compaq QVision 1024/E (EISA)";
+		}
+		return n;
 	}
 	if (type != MACHINE_PMAX && type != MACHINE_DEC3000)
 		return -1;

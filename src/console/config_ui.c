@@ -1903,11 +1903,11 @@ static void option_roms(void)
 	row(1, full);
 	mu_label(ctx, "");
 	if (n == 0)
-		mu_label(ctx, "No TURBOchannel cards need option ROM images "
+		mu_label(ctx, "No option cards need ROM images "
 		    "(a framebuffer needs the display on).");
 	else if (n > 0)
-		mu_label(ctx, "Option ROM images of the TURBOchannel cards "
-		    "(empty = gxemul's built-in one):");
+		mu_label(ctx, "Option ROM images of the cards "
+		    "(empty = built-in, or none):");
 
 	for (i = 0; i < MC_MAX_SLOTS; i++) {
 		const char *device = NULL;

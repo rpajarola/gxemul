@@ -157,6 +157,11 @@ struct fdc82077_data *dev_fdc_init(struct machine *machine,
 	struct memory *mem, uint64_t baseaddr, const char *irq_path,
 	struct isadma_data *dma, int dma_channel);
 
+/*  dev_qvision.c:  */
+void dev_qvision_init(struct machine *machine, struct memory *mem,
+	uint64_t isa_portbase, uint64_t isa_membase, int slot,
+	const char *rom_file);
+
 /*  dev_jensen.c:  */
 struct jensen_data;
 struct jensen_data *dev_jensen_init(struct machine *machine,

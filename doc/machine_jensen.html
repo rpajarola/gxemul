@@ -68,6 +68,13 @@ and standard PC peripherals.</p>
 			<li>Target inquiries, read/write commands, and SCSI bus device identification.
 			<li>Selectable edge- or level-triggered EISA interrupts (IRQ 9, 10, 11, 12, 14, 15; as configured by the ECU; the factory NVRAM uses IRQ 14).
 		</ul>
+	<li><b>Compaq QVision 1024/E</b> EISA graphics controller in Slot 2
+	    (with the display on; see <a href="#qvision">below</a>):
+		<ul>
+			<li>VGA with 1 MB of four-plane video memory, all write and read modes, text, 16- and 256-colour modes.
+			<li>QVision extended registers (unlock, chip ID, banking), the DAC extension registers, and the EISA board ID <tt>CPQ3011</tt>.
+			<li>The card's own x86 option ROM at C0000, which the ARC console runs to set up the card.
+		</ul>
 	<li><b>Intel 82357 Integrated System Peripheral (ISP)</b>:
 		<ul>
 			<li>Dual cascaded 8259 interrupt controllers (PIC) delivering PC and EISA IRQs.
@@ -98,6 +105,7 @@ and standard PC peripherals.</p>
 	<li><a href="#windowsnt">Windows NT 3.1 Alpha</a> (Build 528) &mdash; Genuine Digital ARC Multiboot console (Version 3.0.g) and Microsoft Windows NT 3.1 Setup loader (<tt>\alpha\setupldr</tt>).
 	<li><a href="#firmware">Digital SRM Firmware ROM v1.3</a> &mdash; Passes 100% of power-up self-tests:
 		<tt>CPU OK</tt>, <tt>MEM OK 64MB</tt>, <tt>NVR OK</tt>, <tt>SCC OK</tt>, <tt>IT OK</tt>, <tt>KBD OK</tt>, <tt>LPT OK</tt>, <tt>SCSI OK</tt>.
+	<li><a href="#qvision">Compaq QVision 1024/E</a> &mdash; The SRM console (power-up test <tt>VGA OK</tt>), the ARC console and the ECU run on the emulated display and PC keyboard.
 	<li><a href="#ecu">EISA Configuration Utility</a> &mdash; Digital ECU V1.9 runs from a floppy diskette image through the ARC console, and saves its configuration.
 	<li><a href="#openvmsinstall">OpenVMS AXP V1.5-1H1</a> &mdash; Full bootstrap via Adaptec AHA-1742A SCSI driver (<tt>SYS$PKJDRIVER</tt>) to Stand-alone BACKUP and interactive DCL prompt (<tt>$ </tt>).
 	<li><small><a href="#decosf1"><font color="red">DEC OSF/1 AXP</font></a> (in active development)</small>
@@ -292,6 +300,50 @@ pre-population below; delete it to start over from the factory state.</p>
 
 <p>Press <b>N</b> when prompted for the EISA Configuration Utility floppy to drop directly
 into the interactive SRM console prompt (<tt>&gt;&gt;&gt;</tt>).</p>
+
+
+
+
+<p><br>
+<a name="qvision"></a>
+<h3>Video console: Compaq QVision 1024/E:</h3>
+
+<p>With the display on (<tt>-X</tt>, or <tt>"display": { "enabled": true }</tt>
+in machine.json), the Jensen has a Compaq QVision 1024/E in EISA slot 2, as it
+shipped, and its PC keyboard is in use. Both consoles then use the screen and
+keyboard instead of the serial port. Without the display there is no video
+card, and the consoles use COM1 as before.</p>
+
+<p>The SRM console programs the VGA itself. The ARC console instead runs the
+x86 BIOS from the card's option ROM, so it needs an image of that ROM, given
+for slot 2:</p>
+<pre>
+	"display": { "enabled": true },
+	"slots": { "2": "qvision.rom" }
+</pre>
+
+<p>The image is 64 KB: the card's two 32 KB EPROMs (U40 and U21) interleaved,
+U40 holding the even bytes. It contains two banks of the BIOS, which the card
+switches with its EISA register zC85 (bit 4). To make one from two dumps:</p>
+<pre>
+	<b>python3 -c 'import sys; a=open(sys.argv[1],"rb").read(); b=open(sys.argv[2],"rb").read(); \
+	  open("qvision.rom","wb").write(bytes(x for p in zip(a,b) for x in p))' U40.bin U21.bin</b>
+</pre>
+<p>Without the ROM image, ARC falls back to the serial console.</p>
+
+<p>The factory NVRAM does not list the QVision, so at power-up the SRM console
+finds a new board and offers to run the ECU (<i>Invoking Eisa Config
+Utility... Continue (Y/N)?</i>), as a real machine does after a card is
+installed. Answer <b>Y</b> with an ECU diskette in drive A: and save the
+configuration (<a href="#ecu">see below</a>); the ECU finds the card by its
+board ID (<tt>CPQ3011</tt>, from <tt>ACPQ3011.CFG</tt> on the Digital ECU
+diskettes). With an <tt>nvram</tt> file, the configuration is kept. The ARC
+console uses the card either way.</p>
+
+<p>What is not emulated yet: the BitBLT engine, the linear framebuffer (the
+"high address video buffer"), the hardware cursor, the packed 4-, 15- and
+24-bit modes, and the video interrupt (IRQ 9). The Windows NT driver
+(<tt>QV.SYS</tt>) will need some of these.</p>
 
 
 
