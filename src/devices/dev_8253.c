@@ -141,7 +141,9 @@ DEVICE_ACCESS(8253)
 					break;
 				case 1:	fatal("TODO: DMA refresh?\n");
 					exit(1);
-				case 2:	fatal("TODO: 8253 tone generation?\n");
+				case 2:	/*  Speaker tone; not emulated.  */
+					debug("[ 8253: speaker tone %i Hz "
+					    "(not emulated) ]\n", d->hz[2]);
 					break;
 				}
 				break;

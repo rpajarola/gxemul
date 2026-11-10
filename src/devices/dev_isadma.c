@@ -460,10 +460,24 @@ static void isadma_eisa_port(struct isadma_data *d, struct cpu *cpu,
 			d->chain[1] = val;
 		else if (port == 0x4d6)
 			d->ext_mode[4 + (val & 3)] = val;
-		else if (port == 0x4d0)
-			d->elcr[0] = val & 0xf8;
-		else if (port == 0x4d1)
-			d->elcr[1] = val & 0xde;
+		else if (port == 0x4d0 || port == 0x4d1) {
+			if (port == 0x4d0)
+				d->elcr[0] = val & 0xf8;
+			else
+				d->elcr[1] = val & 0xde;
+
+			/*
+			 *  Tell the PICs which inputs are level-triggered.
+			 *  The cascade input (IRQ 2) follows the slave PIC's
+			 *  output, which is a level.
+			 */
+			if (d->machine->isa_pic_data.pic1 != NULL)
+				d->machine->isa_pic_data.pic1->elcr =
+				    d->elcr[0] | 0x04;
+			if (d->machine->isa_pic_data.pic2 != NULL)
+				d->machine->isa_pic_data.pic2->elcr =
+				    d->elcr[1];
+		}
 		return;
 	}
 

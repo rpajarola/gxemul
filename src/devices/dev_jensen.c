@@ -43,6 +43,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "bus_isa.h"
 #include "control.h"
@@ -117,7 +118,70 @@ struct jensen_data {
 	unsigned char		rom[JENSEN_ROM_SIZE];
 	uint8_t			flash_cmd;
 	uint8_t			flash_status;
+
+	/*  Flash contents are kept in this file, if set (see below):  */
+	char			*flash_file;
+	int			flash_dirty;
+	time_t			flash_changed;
 };
+
+
+/*
+ *  Flash persistence:
+ *
+ *  The ARC and SRM consoles keep their non-volatile state (environment
+ *  variables, the ARC configuration tree, boot selections, and the ECU
+ *  EISA configuration) in the 28F008SA Flash ROM itself.  When an NVRAM
+ *  file is configured for the machine, the whole Flash image is kept in
+ *  "<nvram file>.flash", and once that file exists it is used instead of
+ *  the ROM image (and of the factory NVRAM pre-population).
+ */
+static struct jensen_data *jensen_flash_owner = NULL;
+
+static void jensen_flash_save(struct jensen_data *d)
+{
+	FILE *f;
+
+	if (d->flash_file == NULL || !d->flash_dirty)
+		return;
+
+	f = fopen(d->flash_file, "wb");
+	if (f == NULL) {
+		fatal("[ jensen: could not write the Flash to %s ]\n",
+		    d->flash_file);
+		d->flash_file = NULL;
+		return;
+	}
+	if (fwrite(d->rom, 1, d->rom_size, f) != d->rom_size)
+		fatal("[ jensen: short write to %s ]\n", d->flash_file);
+	fclose(f);
+	d->flash_dirty = 0;
+}
+
+static void jensen_flash_save_atexit(void)
+{
+	if (jensen_flash_owner != NULL)
+		jensen_flash_save(jensen_flash_owner);
+}
+
+static void jensen_flash_touch(struct jensen_data *d)
+{
+	d->flash_dirty = 1;
+	d->flash_changed = time(NULL);
+}
+
+
+/*
+ *  Save the Flash once it has settled (no writes for a second), so that
+ *  the many single-byte writes of an NVRAM update end up in one save.
+ */
+DEVICE_TICK(jensen)
+{
+	struct jensen_data *d = (struct jensen_data *) extra;
+
+	if (d->flash_dirty && time(NULL) > d->flash_changed + 1)
+		jensen_flash_save(d);
+}
 
 
 /*
@@ -203,8 +267,10 @@ DEVICE_ACCESS(jensen_flash)
 		uint8_t val = data[0];
 		if (d->flash_cmd == 0x40 || d->flash_cmd == 0x10) {
 			/* Byte write: allow writes to Flash */
-			if (offset < d->rom_size)
+			if (offset < d->rom_size) {
 				d->rom[offset] = val;
+				jensen_flash_touch(d);
+			}
 			d->flash_cmd = 0x70;
 			d->flash_status = 0x80;
 			return 1;
@@ -215,8 +281,10 @@ DEVICE_ACCESS(jensen_flash)
 			uint32_t block_end = block_start + 0x10000;
 			if (block_end > d->rom_size)
 				block_end = d->rom_size;
-			if (block_start < block_end)
+			if (block_start < block_end) {
 				memset(d->rom + block_start, 0xff, block_end - block_start);
+				jensen_flash_touch(d);
+			}
 			d->flash_cmd = 0x70;
 			d->flash_status = 0x80;
 			return 1;
@@ -785,10 +853,9 @@ struct jensen_data *dev_jensen_init(struct machine *machine,
 /*
  *  dev_jensen_init_ecu():
  *
- *  Populate standard factory ECU configuration for Jensen:
- *  Block 6 (0x60000): Flash NVRAM Table for EISA slots 1..6 and AHA-1742A SCSI.
- *  Block C (0xc0000): ARC Configuration Tree (Section 1) and Environment
- *                     Variables (Section 2).
+ *  Populate the Flash NVRAM blocks with a configured factory state (see
+ *  dev_jensen_nvram.h): Block 6 (0x60000) and Block C (0xc0000, ARC
+ *  configuration tree, environment variables and EISA configuration).
  */
 static void dev_jensen_init_ecu(struct jensen_data *d)
 {
@@ -796,9 +863,9 @@ static void dev_jensen_init_ecu(struct jensen_data *d)
 	if (!d->populate_ecu)
 		return;
 
-	/*  Clear Block 6 (0x60000..0x6ffff) and Block C (0xc0000..0xcffff):  */
-	memset(d->rom + 0x60000, 0, 0x10000);
-	memset(d->rom + 0xc0000, 0, 0x10000);
+	/*  Erase Block 6 (0x60000..0x6ffff) and Block C (0xc0000..0xcffff):  */
+	memset(d->rom + 0x60000, 0xff, 0x10000);
+	memset(d->rom + 0xc0000, 0xff, 0x10000);
 
 	/*  Populate Block 6 (EISA Slot table & AHA-1742A configuration):  */
 	memcpy(d->rom + 0x60000, jensen_default_nvram_block6,
@@ -825,7 +892,44 @@ void dev_jensen_set_rom(struct jensen_data *d, const unsigned char *image,
 	d->rom_size = len;
 	d->have_rom = 1;
 
+	if (d->machine != NULL && d->machine->nvram_filename != NULL) {
+		size_t n = strlen(d->machine->nvram_filename) + 7;
+		FILE *f;
+
+		CHECK_ALLOCATION(d->flash_file = (char *) malloc(n));
+		snprintf(d->flash_file, n, "%s.flash",
+		    d->machine->nvram_filename);
+
+		f = fopen(d->flash_file, "rb");
+		if (f != NULL) {
+			unsigned char *buf;
+			size_t got;
+
+			CHECK_ALLOCATION(buf = (unsigned char *) malloc(len));
+			got = fread(buf, 1, len, f);
+			fclose(f);
+			if (got == len) {
+				memcpy(d->rom, buf, len);
+				free(buf);
+				debug("[ jensen: Flash loaded from %s ]\n",
+				    d->flash_file);
+				goto done;
+			}
+			free(buf);
+			fatal("[ jensen: %s has the wrong size; using the "
+			    "ROM image instead ]\n", d->flash_file);
+		}
+	}
+
 	dev_jensen_init_ecu(d);
+
+done:
+	if (d->flash_file != NULL) {
+		if (jensen_flash_owner == NULL)
+			atexit(jensen_flash_save_atexit);
+		jensen_flash_owner = d;
+		machine_add_tickfunction(d->machine, dev_jensen_tick, d, 24);
+	}
 }
 
 

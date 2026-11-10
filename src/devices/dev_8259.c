@@ -105,6 +105,9 @@ DEVICE_ACCESS(8259)
 				/*  End Of Interrupt  */
 				/*  TODO: in buffered mode, is this an EOI 0? */
 				d->irr &= ~d->isr;
+				d->irr |= d->isr & ((d->elcr & d->line) |
+				    d->latched);
+				d->latched &= ~d->isr;
 				d->isr = 0;
 				/*  Recalculate interrupt assertions,
 				    if necessary:  */
@@ -120,6 +123,9 @@ DEVICE_ACCESS(8259)
 				/*  Specific EOI  */
 				int old_irr = d->irr;
 				d->irr &= ~(1 << (idata & 7));
+				d->irr |= (1 << (idata & 7)) &
+				    ((d->elcr & d->line) | d->latched);
+				d->latched &= ~(1 << (idata & 7));
 				d->isr &= ~(1 << (idata & 7));
 				/*  Recalc. int assertions, if necessary:  */
 				if ((old_irr & ~d->ier) != (d->irr & ~d->ier)) {

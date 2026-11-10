@@ -55,10 +55,13 @@ void isa_interrupt_common(struct bus_isa_data *d, int old_isa_assert)
 
 	/*  Any interrupt assertions on PIC2 go to irq 2 on PIC1  */
 	/*  (TODO: don't hardcode this here)  */
-	if (d->pic2->irr & ~d->pic2->ier)
+	if (d->pic2->irr & ~d->pic2->ier) {
 		d->pic1->irr |= 0x04;
-	else
+		d->pic1->line |= 0x04;
+	} else {
 		d->pic1->irr &= ~0x04;
+		d->pic1->line &= ~0x04;
+	}
 
 	/*  printf("ISA: irr=%02x%02x ier=%02x%02x\n",
 	    d->pic2->irr, d->pic1->irr, d->pic2->ier, d->pic1->ier);  */
@@ -103,10 +106,17 @@ void isa_interrupt_assert(struct interrupt *interrupt)
 
 	old_isa_assert = d->pic1->irr & ~d->pic1->ier;
 
-	if (line < 8)
+	if (line < 8) {
+		if (d->pic1->latch_in_service && (d->pic1->isr & mask))
+			d->pic1->latched |= mask;
 		d->pic1->irr |= mask;
-	else if (d->pic2 != NULL)
+		d->pic1->line |= mask;
+	} else if (d->pic2 != NULL) {
+		if (d->pic2->latch_in_service && (d->pic2->isr & mask))
+			d->pic2->latched |= mask;
 		d->pic2->irr |= mask;
+		d->pic2->line |= mask;
+	}
 
 	isa_interrupt_common(d, old_isa_assert);
 }
@@ -125,10 +135,15 @@ void isa_interrupt_deassert(struct interrupt *interrupt)
 
 	old_isa_assert = old_irr1 & ~d->pic1->ier;
 
-	if (line < 8)
+	if (line < 8) {
 		d->pic1->irr &= ~mask;
-	else if (d->pic2 != NULL)
+		d->pic1->line &= ~mask;
+		d->pic1->latched &= ~mask;
+	} else if (d->pic2 != NULL) {
 		d->pic2->irr &= ~mask;
+		d->pic2->line &= ~mask;
+		d->pic2->latched &= ~mask;
+	}
 
 	/*  If IRQ 0 has been cleared, then this is a timer interrupt.
 	    Let's ack it here:  */
@@ -244,6 +259,17 @@ struct bus_isa_data *bus_isa_init(struct machine *machine,
 	device_add(machine, tmpstr);
 
 	if (bus_isa_flags & BUS_ISA_JENSEN_IRQS) {
+		/*
+		 *  Model the 8259 more closely on the Jensen: requests that
+		 *  arrive while in service survive the EOI, and the cascade
+		 *  input is a level.
+		 */
+		if (d->pic1 != NULL && d->pic2 != NULL) {
+			d->pic1->latch_in_service = 1;
+			d->pic2->latch_in_service = 1;
+			d->pic1->elcr = 0x04;
+		}
+
 		snprintf(tmpstr, sizeof(tmpstr), "pccmos irq=%s.rtc addr=0x%llx",
 		    interrupt_base_path, (long long)(isa_portbase + 0x70));
 		device_add(machine, tmpstr);

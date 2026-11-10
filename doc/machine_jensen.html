@@ -66,7 +66,7 @@ and standard PC peripherals.</p>
 			<li>Enhanced 32-bit Mode with Mailbox In/Out communication protocol.
 			<li>Enhanced Command Block (ECB) execution with scatter-gather physical bus master DMA.
 			<li>Target inquiries, read/write commands, and SCSI bus device identification.
-			<li>Selectable edge- or level-triggered EISA interrupts (IRQ 9, 10, 11, 12, 14, 15; factory default IRQ 11).
+			<li>Selectable edge- or level-triggered EISA interrupts (IRQ 9, 10, 11, 12, 14, 15; as configured by the ECU; the factory NVRAM uses IRQ 14).
 		</ul>
 	<li><b>Intel 82357 Integrated System Peripheral (ISP)</b>:
 		<ul>
@@ -205,13 +205,20 @@ table defining the Adaptec AHA-1742A SCSI host adapter.</p>
 <p>By default, GXemul automatically pre-populates genuine factory NVRAM tables for the Jensen:
 <ul>
 	<li><b>Block 6 (0x60000)</b>: EISA Configuration Utility (ECU) table configuring the
-		Adaptec AHA-1742A host adapter in Slot 1 with factory default level-triggered IRQ 11.
+		Adaptec AHA-1742A host adapter in Slot 1 on IRQ 14, as saved by the real ECU V1.8 (the firmware programs INTDEF from it at boot).
 	<li><b>Block C (0xc0000)</b>: ARC Configuration Tree (Section 1) and ARC Environment
 		Variables (Section 2, including <tt>SYSTEMPARTITION</tt>, <tt>OSLOADER</tt>,
 		<tt>CONSOLEIN</tt>, and <tt>CONSOLEOUT</tt>).
 </ul>
 This pre-population avoids the <tt>"Invalid entry in NT Configuration tree"</tt> fatal error
 and NVRAM inconsistency warning boxes on boot.</p>
+
+<p>The ARC and SRM consoles keep their settings (environment variables,
+configuration tree, boot selections and ECU data) in the Flash ROM. When an
+<tt>nvram</tt> file is configured, the whole Flash image is also kept, in
+<tt>&lt;nvram file&gt;.flash</tt>, so that these settings survive restarts.
+Once that file exists it is used instead of the <tt>rom</tt> image and of the
+pre-population below; delete it to start over from the factory state.</p>
 
 <p>Pre-population can be configured via the <tt>populate_ecu</tt> setting:
 <ul>

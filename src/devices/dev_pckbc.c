@@ -719,7 +719,8 @@ static void dev_pckbc_command(struct pckbc_data *d, int port_nr)
 
 		// Hack for OpenBSD/cats and NetBSD/cats:
 		if (d->type != PCKBC_8242) {
-			fatal("[ pckbc: TODO: hack for non-8242. figure out how to deal with this ]\n");
+			debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+			    "forcing translation table 1 (non-8242 hack)\n");
 			d->translation_table = 1;
 		}
 
