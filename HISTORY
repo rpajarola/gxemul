@@ -5811,3 +5811,10 @@ Changelog for GXemul:
 		bug in the SCC driver of the NT port (NTMAX) on a real
 		5000/240. With PROM emulation the transmitters start enabled,
 		as before. (Antoni Sawicki)
+20261110	DHCP: the simulated gateway answers with the DHCP message a
+		client waits for (option 53): an offer for a discover, an ack
+		(or a nak) for a request and an ack for an inform, with the
+		server identifier and an infinite lease; it sent every client
+		a BOOTP reply, which a DHCP client does not take. A renewal,
+		which a client sends to the gateway, reaches it too. Windows
+		NT 3.5 gets its address with DHCP. (Antoni Sawicki)
