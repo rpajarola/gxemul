@@ -326,6 +326,20 @@ Flash NVRAM and a backup <tt>SYSTEM.SCI</tt> file to the diskette.</p>
 2), and checks that the data rate matches the medium, as the real chip does,
 which the firmware relies on to detect the disk type.</p>
 
+<p><b>Typing ahead loses keys and can desynchronize the ECU:</b> wait for
+each ECU screen to finish drawing before pressing the next key, and do not
+hold down the arrow keys. The ARC firmware's serial console Read reads ahead
+up to five bytes into a private buffer (to collect escape sequences), but its
+GetReadStatus only looks at the UART, not at that buffer. Before waiting for
+a key, the ECU discards typeahead with "while a key is available, read it".
+If a key arrives while the ECU is still busy, that loop reads the first byte
+of the arrow key's escape sequence and leaves the rest hidden in the firmware
+buffer. From then on every arrow key reaches the ECU one byte late, as a
+plain letter, and the menus appear to stop responding. Pressing a single-byte
+key once (such as a letter that the current screen ignores) gets back in
+step. This is firmware behaviour, and real hardware has the same flaw, but
+the emulator's lower speed makes the window for it much wider.</p>
+
 
 
 
