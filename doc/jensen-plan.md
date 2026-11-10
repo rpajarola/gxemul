@@ -149,8 +149,12 @@ Fixed on the way:
 
 1. **Video for GUI-mode Setup** (now the blocker): text-mode Setup completes and
    reboots into the installed NT 3.1, which runs autochk on C: and D: and then
-   idles, presumably waiting for the QVision display driver. Emulate a Compaq
-   QVision (or S3 911/924/928). The earlier "hang after Setting Configuration"
+   idles, presumably waiting for the QVision display driver. A Compaq QVision
+   1024/E (`CPQ3011`, `dev_qvision.c`) is in slot 2 with the display on: the
+   SRM and ARC consoles and the ECU run on it (ARC runs the card's x86 BIOS
+   from its option ROM, `"slots": { "2": "qvision.rom" }`). Still missing for
+   `QV.SYS`/`QV.DLL`: the BitBLT engine, the linear framebuffer, the hardware
+   cursor, and the QVision 256-colour modes. The earlier "hang after Setting Configuration"
    was NT running with AHA interrupts disabled: the old synthetic factory NVRAM
    lacked the EISA port initialization (INTDEF); it now holds genuine ECU output.
 2. **ARC system ID is `DEC-00Jensen`**; NT Setup only knows `DEC-10Jensen` /
@@ -165,4 +169,5 @@ Fixed on the way:
 ### Not emulated
 
 - PC speaker tone (8254 counter 2) &ndash; logged at debug level only.
-- 8254 counter 1 (DMA refresh) &ndash; still a fatal error if programmed.
+- 8254 counter 1 (DMA refresh) &ndash; accepted, nothing is done with it.
+- 8254 counts do not run down: a counter reads back the value loaded.

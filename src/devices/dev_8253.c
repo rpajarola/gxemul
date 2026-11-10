@@ -27,12 +27,11 @@
  *
  *  COMMENT: Intel 8253/8254 Programmable Interval Timer
  *
- *  TODO/NOTE:
- *	The timers don't really count down. Timer 0 causes clock interrupts
- *	at a specific frequency, but reading the counter register would not
- *	result in anything meaningful.
- *
- *  (Split counter[] into reset value and current value.)
+ *  Timer 0 causes clock interrupts at its frequency.  The counters don't
+ *  count down: reading one gives the value that was loaded.  Each counter
+ *  has its own access mode (LSB, MSB or both) and byte order, and the
+ *  counter latch and 8254 read-back commands latch counts.  Nothing is
+ *  done with counters 1 and 2 (DMA refresh and the speaker tone).
  */
 
 #include <stdio.h>
@@ -60,13 +59,18 @@
 struct pit8253_data {
 	int		in_use;
 
-	int		counter_select;
-	uint8_t		mode_byte;
-
 	int		mode[3];
-	int		counter[3];
-
+	int		counter[3];		/*  reload value  */
 	int		hz[3];
+
+	/*  Per counter: access mode (I8253_TIMER_LSB, _MSB or _16BIT), which
+	    byte comes next when written or read as 16 bits, and a latched
+	    count:  */
+	int		rw_mode[3];
+	int		write_msb_next[3];
+	int		read_msb_next[3];
+	int		latched[3];
+	int		latch_value[3];
 
 	struct timer	*timer0;
 	struct interrupt irq;
@@ -97,10 +101,58 @@ DEVICE_TICK(8253)
 }
 
 
+/*
+ *  The current count of a counter.  The counters don't count down: this is
+ *  the value that was loaded.  (Firmware tests such as the Jensen ARC
+ *  console's "Timer 1" check expect the count read back soon after loading
+ *  to be close to the loaded value, which host-time counting at the
+ *  emulator's speed does not give.)
+ */
+static int pit_count(struct pit8253_data *d, int c)
+{
+	return d->counter[c] & 0xffff;
+}
+
+
+/*  A new reload value has been written to counter c:  */
+static void pit_load(struct pit8253_data *d, int c)
+{
+	if (d->counter[c] != 0)
+		d->hz[c] = (int) (I8253_TIMER_FREQ / (float) d->counter[c] + 0.5);
+	else
+		d->hz[c] = 0;
+	debug("[ 8253: counter %i set to %i (%i Hz) ]\n", c, d->counter[c],
+	    d->hz[c]);
+
+	switch (c) {
+	case 0:	if (d->timer0 == NULL)
+			d->timer0 = timer_add(d->hz[0], timer0_tick, d);
+		else
+			timer_update_frequency(d->timer0, d->hz[0]);
+		break;
+	case 1:	debug("[ 8253: counter 1 (DMA refresh) not emulated ]\n");
+		break;
+	case 2:	debug("[ 8253: counter 2 (tone generation) not emulated ]\n");
+		break;
+	}
+}
+
+
+static void pit_latch(struct pit8253_data *d, int c)
+{
+	if (d->latched[c])
+		return;
+	d->latched[c] = 1;
+	d->latch_value[c] = pit_count(d, c);
+	d->read_msb_next[c] = 0;
+}
+
+
 DEVICE_ACCESS(8253)
 {
 	struct pit8253_data *d = (struct pit8253_data *) extra;
 	uint64_t idata = 0, odata = 0;
+	int c = relative_addr, value;
 
 	if (writeflag == MEM_WRITE)
 		idata = memory_readmax64(cpu, data, len);
@@ -113,104 +165,85 @@ DEVICE_ACCESS(8253)
 	case I8253_TIMER_CNTR1:
 	case I8253_TIMER_CNTR2:
 		if (writeflag == MEM_WRITE) {
-			switch (d->mode_byte & 0x30) {
+			switch (d->rw_mode[c]) {
 			case I8253_TIMER_LSB:
-			case I8253_TIMER_16BIT:
-				d->counter[relative_addr] &= 0xff00;
-				d->counter[relative_addr] |= (idata & 0xff);
+				d->counter[c] = idata & 0xff;
+				pit_load(d, c);
 				break;
 			case I8253_TIMER_MSB:
-				d->counter[relative_addr] &= 0x00ff;
-				d->counter[relative_addr] |= ((idata&0xff)<<8);
-				if (d->counter[relative_addr] != 0)
-					d->hz[relative_addr] = (int) (
-					    I8253_TIMER_FREQ / (float)
-					    d->counter[relative_addr] + 0.5);
-				else
-					d->hz[relative_addr] = 0;
-				debug("[ 8253: counter %i set to %i (%i Hz) "
-				    "]\n", relative_addr, d->counter[
-				    relative_addr], d->hz[relative_addr]);
-				switch (relative_addr) {
-				case 0:	if (d->timer0 == NULL)
-						d->timer0 = timer_add(
-						    d->hz[0], timer0_tick, d);
-					else
-						timer_update_frequency(
-						    d->timer0, d->hz[0]);
-					break;
-				case 1:	fatal("TODO: DMA refresh?\n");
-					exit(1);
-				case 2:	/*  Speaker tone; not emulated.  */
-					debug("[ 8253: speaker tone %i Hz "
-					    "(not emulated) ]\n", d->hz[2]);
-					break;
-				}
+				d->counter[c] = (idata & 0xff) << 8;
+				pit_load(d, c);
 				break;
-			default:fatal("[ 8253: huh? writing to counter"
-				    " %i but neither from msb nor lsb? ]\n",
-				    relative_addr);
-				exit(1);
+			default:
+				if (!d->write_msb_next[c]) {
+					d->counter[c] = (d->counter[c] & 0xff00)
+					    | (idata & 0xff);
+					d->write_msb_next[c] = 1;
+				} else {
+					d->counter[c] = (d->counter[c] & 0x00ff)
+					    | ((idata & 0xff) << 8);
+					d->write_msb_next[c] = 0;
+					pit_load(d, c);
+				}
 			}
 		} else {
-			switch (d->mode_byte & 0x30) {
+			value = d->latched[c]? d->latch_value[c] :
+			    pit_count(d, c);
+			switch (d->rw_mode[c]) {
 			case I8253_TIMER_LSB:
-			case I8253_TIMER_16BIT:
-				odata = d->counter[relative_addr] & 0xff;
+				odata = value & 0xff;
+				d->latched[c] = 0;
 				break;
 			case I8253_TIMER_MSB:
-				odata = (d->counter[relative_addr] >> 8) & 0xff;
+				odata = (value >> 8) & 0xff;
+				d->latched[c] = 0;
 				break;
-			default:fatal("[ 8253: huh? reading from counter"
-				    " %i but neither from msb nor lsb? ]\n",
-				    relative_addr);
-				exit(1);
+			default:
+				if (!d->read_msb_next[c]) {
+					odata = value & 0xff;
+					d->read_msb_next[c] = 1;
+				} else {
+					odata = (value >> 8) & 0xff;
+					d->read_msb_next[c] = 0;
+					d->latched[c] = 0;
+				}
 			}
 		}
-
-		/*  Switch from LSB to MSB, if accessing as 16-bit word:  */
-		if ((d->mode_byte & 0x30) == I8253_TIMER_16BIT)
-			d->mode_byte &= ~I8253_TIMER_LSB;
-
 		break;
 
 	case I8253_TIMER_MODE:
-		if (writeflag == MEM_WRITE) {
-			d->mode_byte = idata;
-
-			d->counter_select = idata >> 6;
-			if (d->counter_select > 2) {
-				debug("[ 8253: attempt to select counter 3,"
-				    " which doesn't exist. ]\n");
-				d->counter_select = 0;
-			}
-
-			d->mode[d->counter_select] = idata & 0x0e;
-
-			debug("[ 8253: select=%i mode=0x%x ",
-			    d->counter_select, d->mode[d->counter_select]);
-			if (idata & 0x30) {
-				switch (idata & 0x30) {
-				case I8253_TIMER_LSB:
-					debug("LSB ");
-					break;
-				case I8253_TIMER_16BIT:
-					debug("LSB+");
-					// fall through
-				case I8253_TIMER_MSB:
-					debug("MSB ");
-				}
-			}
-			debug("]\n");
-
-			if (idata & I8253_TIMER_BCD) {
-				fatal("[ 8253: BCD not yet implemented ]\n");
-				exit(1);
-			}
-		} else {
+		if (writeflag == MEM_READ) {
 			debug("[ 8253: read; can this actually happen? ]\n");
-			odata = d->mode_byte;
+			break;
 		}
+
+		c = idata >> 6;
+		if (c == 3) {
+			/*  8254 read-back command: latch the counts of the
+			    selected counters (status latching is not
+			    emulated).  */
+			if (!(idata & 0x20))
+				for (c = 0; c < 3; c++)
+					if (idata & (2 << c))
+						pit_latch(d, c);
+			break;
+		}
+
+		if ((idata & 0x30) == 0) {
+			/*  Counter latch command:  */
+			pit_latch(d, c);
+			break;
+		}
+
+		d->rw_mode[c] = idata & 0x30;
+		d->mode[c] = idata & 0x0e;
+		d->write_msb_next[c] = d->read_msb_next[c] = 0;
+		d->latched[c] = 0;
+		debug("[ 8253: counter %i mode=0x%x access=0x%x ]\n", c,
+		    d->mode[c], d->rw_mode[c]);
+
+		if (idata & I8253_TIMER_BCD)
+			debug("[ 8253: BCD counting not emulated ]\n");
 		break;
 
 	default:if (writeflag == MEM_WRITE) {
@@ -245,6 +278,7 @@ DEVINIT(8253)
 	d->mode[0] = I8253_TIMER_RATEGEN;
 	d->mode[1] = I8253_TIMER_RATEGEN;
 	d->mode[2] = I8253_TIMER_RATEGEN;
+	d->rw_mode[0] = d->rw_mode[1] = d->rw_mode[2] = I8253_TIMER_16BIT;
 
 	devinit->machine->isa_pic_data.pending_timer_interrupts =
 	    &d->pending_interrupts_timer0;

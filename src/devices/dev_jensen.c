@@ -86,6 +86,8 @@
 #define	JENSEN_EISA_IO_BASE	0x300000000ULL
 #define	JENSEN_EISA_IO_SIZE	0x100000000ULL
 
+#define	JENSEN_QVISION_SLOT	2
+
 #define	JENSEN_ISA_PORTBASE	0x10000000000ULL
 #define	JENSEN_ISA_MEMBASE	0x10001000000ULL
 
@@ -829,11 +831,18 @@ struct jensen_data *dev_jensen_init(struct machine *machine,
 
 	/*
 	 *  Initialize standard PC peripherals on ISA/EISA bus:
-	 *  8259 PICs, 8254 PIT, DS1287 RTC, 8042 KBC, COM1, COM2, LPT, VGA.
+	 *  8259 PICs, 8254 PIT, DS1287 RTC, 8042 KBC, COM1, COM2, LPT.
 	 */
-	bus_isa_flags = BUS_ISA_VGA | BUS_ISA_LPTBASE_3BC | BUS_ISA_JENSEN_IRQS;
+	bus_isa_flags = BUS_ISA_LPTBASE_3BC | BUS_ISA_JENSEN_IRQS;
 	bus_isa_init(machine, jensen_irq_path, bus_isa_flags,
 	    JENSEN_ISA_PORTBASE, JENSEN_ISA_MEMBASE);
+
+	/*  With the display on, a Compaq QVision 1024/E in EISA slot 2,
+	    with the option ROM image given for that slot:  */
+	if (machine->display_md.in_use)
+		dev_qvision_init(machine, mem, JENSEN_ISA_PORTBASE,
+		    JENSEN_ISA_MEMBASE, JENSEN_QVISION_SLOT,
+		    machine->tc_rom_filename[JENSEN_QVISION_SLOT]);
 
 	/*  82357 ISP DMA controllers, and the 82077 floppy controller
 	    (IRQ 6, DMA channel 2):  */
