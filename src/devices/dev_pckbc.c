@@ -572,6 +572,155 @@ static void ascii_to_pc_scancodes_type3(int a, struct pckbc_data *d)
 }
 
 
+/*
+ *  Keys that the display sends as escape sequences (see display_key()):
+ *  the cursor and editing keys, and F1..F12.  Each has its scancode in
+ *  sets 1, 2 and 3; in sets 1 and 2, the cursor and editing keys are
+ *  extended keys (E0 prefix).
+ */
+struct pckbc_special_key {
+	const char	*seq;		/*  after ESC  */
+	uint8_t		set1, set2, set3;
+	uint8_t		extended;
+};
+
+static const struct pckbc_special_key pckbc_special_keys[] = {
+	{ "[A",   0x48, 0x75, 0x63, 1 },	/*  Up  */
+	{ "[B",   0x50, 0x72, 0x60, 1 },	/*  Down  */
+	{ "[C",   0x4d, 0x74, 0x6a, 1 },	/*  Right  */
+	{ "[D",   0x4b, 0x6b, 0x61, 1 },	/*  Left  */
+	{ "[H",   0x47, 0x6c, 0x6e, 1 },	/*  Home  */
+	{ "[F",   0x4f, 0x69, 0x65, 1 },	/*  End  */
+	{ "[1~",  0x47, 0x6c, 0x6e, 1 },	/*  Home  */
+	{ "[4~",  0x4f, 0x69, 0x65, 1 },	/*  End  */
+	{ "[2~",  0x52, 0x70, 0x67, 1 },	/*  Insert  */
+	{ "[3~",  0x53, 0x71, 0x64, 1 },	/*  Delete  */
+	{ "[5~",  0x49, 0x7d, 0x6f, 1 },	/*  Page Up  */
+	{ "[6~",  0x51, 0x7a, 0x6d, 1 },	/*  Page Down  */
+	{ "OP",   0x3b, 0x05, 0x07, 0 },	/*  F1  */
+	{ "OQ",   0x3c, 0x06, 0x0f, 0 },	/*  F2  */
+	{ "OR",   0x3d, 0x04, 0x17, 0 },	/*  F3  */
+	{ "OS",   0x3e, 0x0c, 0x1f, 0 },	/*  F4  */
+	{ "[15~", 0x3f, 0x03, 0x27, 0 },	/*  F5  */
+	{ "[17~", 0x40, 0x0b, 0x2f, 0 },	/*  F6  */
+	{ "[18~", 0x41, 0x83, 0x37, 0 },	/*  F7  */
+	{ "[19~", 0x42, 0x0a, 0x3f, 0 },	/*  F8  */
+	{ "[20~", 0x43, 0x01, 0x47, 0 },	/*  F9  */
+	{ "[21~", 0x44, 0x09, 0x4f, 0 },	/*  F10  */
+	{ "[23~", 0x57, 0x78, 0x56, 0 },	/*  F11  */
+	{ "[24~", 0x58, 0x07, 0x5e, 0 },	/*  F12  */
+	{ NULL, 0, 0, 0, 0 }
+};
+
+
+/*
+ *  pckbc_type_special_key():
+ *
+ *  Presses and releases a key of pckbc_special_keys[] in the current
+ *  scancode set.
+ */
+static void pckbc_type_special_key(struct pckbc_data *d,
+	const struct pckbc_special_key *k)
+{
+	int p = 0;
+
+	switch (d->translation_table) {
+	case 1:	if (k->extended)
+			pckbc_add_code(d, 0xe0, p);
+		pckbc_add_code(d, k->set1, p);
+		if (k->extended)
+			pckbc_add_code(d, 0xe0, p);
+		pckbc_add_code(d, k->set1 | 0x80, p);
+		break;
+	case 2:	if (k->extended)
+			pckbc_add_code(d, 0xe0, p);
+		pckbc_add_code(d, k->set2, p);
+		if (k->extended)
+			pckbc_add_code(d, 0xe0, p);
+		pckbc_add_code(d, 0xf0, p);
+		pckbc_add_code(d, k->set2, p);
+		break;
+	case 3:	pckbc_add_code(d, k->set3, p);
+		pckbc_add_code(d, 0xf0, p);
+		pckbc_add_code(d, k->set3, p);
+		break;
+	}
+}
+
+
+/*
+ *  pckbc_type_char():
+ *
+ *  Types an ASCII character in the current scancode set.
+ */
+static void pckbc_type_char(struct pckbc_data *d, int ch)
+{
+	switch (d->translation_table) {
+	case 1:	ascii_to_pc_scancodes_type1(ch, d);
+		break;
+	case 2:	ascii_to_pc_scancodes_type2(ch, d);
+		break;
+	case 3:	ascii_to_pc_scancodes_type3(ch, d);
+		break;
+	default:debugmsg(SUBSYS_DEVICE, "pckbc", VERBOSITY_WARNING,
+		    "unimplemented translation table type %i",
+		    d->translation_table);
+	}
+}
+
+
+/*
+ *  pckbc_type_escape():
+ *
+ *  Called after ESC was read from the console.  The display sends a key
+ *  such as Up as one escape sequence (ESC [ A) all at once, so if '[' or
+ *  'O' follows right away, the rest is read and typed as that key.
+ *  Otherwise, ESC was the Esc key, and what followed is typed as it is.
+ *  Unknown sequences (e.g. with modifiers) are dropped.
+ */
+static void pckbc_type_escape(struct pckbc_data *d)
+{
+	char seq[16];
+	int len = 0, ch;
+
+	if (!console_charavail(d->console_handle)) {
+		pckbc_type_char(d, 27);
+		return;
+	}
+
+	ch = console_readchar(d->console_handle);
+	if (ch != '[' && ch != 'O') {
+		pckbc_type_char(d, 27);
+		if (ch >= 0)
+			pckbc_type_char(d, ch);
+		return;
+	}
+
+	seq[len++] = ch;
+	while (len < (int) sizeof(seq) - 1 &&
+	    console_charavail(d->console_handle)) {
+		ch = console_readchar(d->console_handle);
+		if (ch < 0)
+			break;
+		seq[len++] = ch;
+		/*  Parameters are digits and ';', the final byte ends it:  */
+		if ((ch < '0' || ch > '9') && ch != ';')
+			break;
+	}
+	seq[len] = '\0';
+
+	for (const struct pckbc_special_key *k = pckbc_special_keys;
+	    k->seq != NULL; k++)
+		if (strcmp(k->seq, seq) == 0) {
+			pckbc_type_special_key(d, k);
+			return;
+		}
+
+	debugmsg(d->subsys, "pckbc", VERBOSITY_DEBUG,
+	    "unknown key sequence ESC %s", seq);
+}
+
+
 void pckbc_reassert_interrupts(struct pckbc_data *d)
 {
 	int ints_enabled = 1;
@@ -618,19 +767,10 @@ DEVICE_TICK(pckbc)
 	if (d->in_use) {
 		while (console_charavail(d->console_handle)) {
 			ch = console_readchar(d->console_handle);
-			if (ch >= 0) {
-				switch (d->translation_table) {
-				case 1:	ascii_to_pc_scancodes_type1(ch, d);
-					break;
-				case 2:	ascii_to_pc_scancodes_type2(ch, d);
-					break;
-				case 3:	ascii_to_pc_scancodes_type3(ch, d);
-					break;
-				default:debugmsg(SUBSYS_DEVICE, "pckbc", VERBOSITY_WARNING,
-					    "unimplemented translation table type %i",
-					    d->translation_table);
-				}
-			}
+			if (ch == 27)
+				pckbc_type_escape(d);
+			else if (ch >= 0)
+				pckbc_type_char(d, ch);
 		}
 	}
 
