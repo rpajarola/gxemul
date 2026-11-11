@@ -40,6 +40,7 @@
 
 #include "cpu.h"
 #include "device.h"
+#include "devices.h"
 #include "emul.h"
 #include "machine.h"
 #include "memory.h"
@@ -58,6 +59,8 @@ struct mk48txx_data {
 	uint8_t		ram[MK48TXX_LEN];
 	int64_t		offset;		/*  guest time - host time  */
 	char		*nvram_file;
+	struct machine	*machine;
+	time_t		boot_time;	/*  host time at power-up  */
 };
 
 static struct mk48txx_data *nvram_dev;
@@ -97,10 +100,22 @@ static void mk48txx_load(struct mk48txx_data *d)
 }
 
 
+/*  The host's time, or with an MVME187, the time at power-up plus the
+    board's emulated time:  */
+static time_t host_now(struct mk48txx_data *d)
+{
+	if (d->machine->md.mvme187 != NULL &&
+	    d->machine->machine_type == MACHINE_MVME88K)
+		return d->boot_time + (time_t) (dev_mvme187_time_us(
+		    d->machine->md.mvme187) / 1000000);
+	return time(NULL);
+}
+
+
 /*  Copies the current time into the clock registers:  */
 static void mk48txx_update_regs(struct mk48txx_data *d)
 {
-	time_t t = time(NULL) + d->offset;
+	time_t t = host_now(d) + d->offset;
 	struct tm *tmp = gmtime(&t);
 
 	d->ram[CLK + 1] = (d->ram[CLK + 1] & MK48TXX_SEC_STOP) |
@@ -128,7 +143,7 @@ static void mk48txx_set_time(struct mk48txx_data *d)
 	/*  Two-digit years: 70-99 are 19xx, the others 20xx.  */
 	tm.tm_year = year < 70 ? year + 100 : year;
 
-	d->offset = (int64_t) timegm(&tm) - (int64_t) time(NULL);
+	d->offset = (int64_t) timegm(&tm) - (int64_t) host_now(d);
 	mk48txx_save(d);
 }
 
@@ -186,6 +201,8 @@ DEVINIT(mk48txx)
 
 	CHECK_ALLOCATION(d = (struct mk48txx_data *) malloc(sizeof(struct mk48txx_data)));
 	memset(d, 0, sizeof(struct mk48txx_data));
+	d->machine = devinit->machine;
+	d->boot_time = time(NULL);
 
 	if (devinit->machine->nvram_filename != NULL &&
 	    devinit->machine->nvram_filename[0] && nvram_dev == NULL) {

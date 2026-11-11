@@ -194,6 +194,27 @@ static void update_irqs(struct clmpcc_data *d)
 
 
 /*
+ *  The stack register holds the current, previous and second previous
+ *  interrupt level (1 = modem, 2 = transmit, 3 = receive), with their high
+ *  bits in bits 7-5 and their low bits in bits 0-2: CL1 PL1 SL1 0 0 SL0
+ *  PL0 CL0.
+ */
+static uint8_t stk_push(uint8_t stk, int level)
+{
+	uint8_t hi = stk & 0xe0, lo = stk & 0x07;
+
+	hi = ((hi >> 1) & 0x60) | ((level & 2) << 6);
+	lo = ((lo << 1) & 0x06) | (level & 1);
+	return hi | lo;
+}
+
+static uint8_t stk_pop(uint8_t stk)
+{
+	return ((stk << 1) & 0xe0) | ((stk >> 1) & 0x03);
+}
+
+
+/*
  *  clmpcc_iack():
  *
  *  An interrupt acknowledge (type 1 = modem, 2 = transmit, 3 = receive)
@@ -202,12 +223,14 @@ static void update_irqs(struct clmpcc_data *d)
 static int clmpcc_iack(void *extra, int type)
 {
 	struct clmpcc_data *d = (struct clmpcc_data *) extra;
-	uint8_t livr = d->greg[CLMPCC_REG_LIVR] & ~CLMPCC_LIVR_TYPE_MASK;
+	uint8_t livr = d->greg[CLMPCC_REG_LIVR] & 0xf0;
 	int ch, ctxreg;
 	uint8_t en;
 
 	update_irqs(d);
 
+	/*  The vector is LIVR with the channel in bits 3-2 and the type
+	    in bits 1-0.  */
 	if (d->ctx[type] >= 0 || (ch = requesting_channel(d, type)) < 0)
 		return livr;
 
@@ -215,7 +238,7 @@ static int clmpcc_iack(void *extra, int type)
 	d->saved_car[type] = d->greg[CLMPCC_REG_CAR];
 	d->greg[CLMPCC_REG_CAR] = ch;
 	d->greg[CLMPCC_REG_LICR] = ch << 2;
-	d->greg[CLMPCC_REG_STK] = (d->greg[CLMPCC_REG_STK] << 2) | type;
+	d->greg[CLMPCC_REG_STK] = stk_push(d->greg[CLMPCC_REG_STK], type);
 
 	ctxreg = type == T_MODEM ? CLMPCC_REG_MIR : type == T_TX ?
 	    CLMPCC_REG_TIR : CLMPCC_REG_RIR;
@@ -231,7 +254,7 @@ static int clmpcc_iack(void *extra, int type)
 		    CLMPCC_TISR_TX_FIFO;
 
 	update_irqs(d);
-	return livr | type;
+	return livr | (ch << 2) | type;
 }
 
 static void end_of_interrupt(struct clmpcc_data *d, int type)
@@ -243,7 +266,7 @@ static void end_of_interrupt(struct clmpcc_data *d, int type)
 		return;
 	d->greg[CLMPCC_REG_CAR] = d->saved_car[type];
 	d->greg[ctxreg] = 0;
-	d->greg[CLMPCC_REG_STK] >>= 2;
+	d->greg[CLMPCC_REG_STK] = stk_pop(d->greg[CLMPCC_REG_STK]);
 	d->ctx[type] = -1;
 }
 
@@ -252,14 +275,43 @@ static void transmit(struct clmpcc_data *d, int ch, uint8_t c)
 {
 	struct channel *chan = &d->ch[ch];
 
+	/*  Local loopback: the receiver gets what is sent.  */
+	if (chan->reg[CLMPCC_REG_TCOR] & CLMPCC_TCOR_LOCAL_LOOP) {
+		if (chan->rx_n < FIFO_LEN &&
+		    (chan->reg[CLMPCC_REG_CSR] & CLMPCC_CSR_RX_ENABLED))
+			chan->rxfifo[chan->rx_n++] = c;
+		return;
+	}
+
 	if (chan->console_handle >= 0)
 		console_putchar(chan->console_handle, c);
+}
+
+static void reset_all(struct clmpcc_data *d)
+{
+	int i;
+
+	for (i = 0; i < N_CHANNELS; i++) {
+		int h = d->ch[i].console_handle;
+		memset(&d->ch[i], 0, sizeof(d->ch[i]));
+		d->ch[i].console_handle = h;
+	}
+	for (i = 0; i < 4; i++)
+		d->ctx[i] = -1;
+	memset(d->greg, 0, sizeof(d->greg));
+	d->greg[CLMPCC_REG_GFRCR] = GFRCR_VALUE;
+}
+
+static void clmpcc_reset(void *extra)
+{
+	struct clmpcc_data *d = (struct clmpcc_data *) extra;
+	reset_all(d);
+	update_irqs(d);
 }
 
 static void channel_command(struct clmpcc_data *d, int ch, uint8_t cmd)
 {
 	struct channel *c = &d->ch[ch];
-	int i;
 
 	if (cmd & 0x80) {
 		/*  Type 1: clear timers, clear receiver.  */
@@ -269,15 +321,7 @@ static void channel_command(struct clmpcc_data *d, int ch, uint8_t cmd)
 	}
 
 	if (cmd & CLMPCC_CCR_T0_RESET_ALL) {
-		for (i = 0; i < N_CHANNELS; i++) {
-			int h = d->ch[i].console_handle;
-			memset(&d->ch[i], 0, sizeof(d->ch[i]));
-			d->ch[i].console_handle = h;
-		}
-		for (i = 0; i < 4; i++)
-			d->ctx[i] = -1;
-		memset(d->greg, 0, sizeof(d->greg));
-		d->greg[CLMPCC_REG_GFRCR] = GFRCR_VALUE;
+		reset_all(d);
 		return;
 	}
 
@@ -477,7 +521,7 @@ DEVINIT(clmpcc)
 
 	if (devinit->machine->md.mvme187 != NULL)
 		dev_mvme187_set_scc(devinit->machine->md.mvme187,
-		    clmpcc_iack, d);
+		    clmpcc_iack, clmpcc_reset, d);
 
 	/*
 	 *  NOTE:  Ugly cast into a pointer, because this is a convenient way

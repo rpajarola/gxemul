@@ -40,6 +40,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <fenv.h>
+#include <math.h>
 
 #include "cpu.h"
 #include "float_emul.h"
@@ -598,19 +600,17 @@ void m88k_stcr(struct cpu *cpu, uint32_t value, int cr, int rte)
 void m88k_fstcr(struct cpu *cpu, uint32_t value, int fcr)
 {
 	switch (fcr) {
-
-	case 0:
-	case 62:
-	case 63:
-		// Don't warn for writes with the value zero for these, for now.
-		if (value == 0)
-			break;
-
-		// fall through
-	
-	default:debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_WARNING,
-		    "WARNING: fstcr: write 0x%08x to UNIMPLEMENTED fcr = 0x%02x (%s)",
-		    value, fcr, m88k_fcr_name(cpu, fcr));
+	case 62:	/*  FPSR: the accrued exception flags  */
+		value &= 0x1f;
+		break;
+	case 63:	/*  FPCR: rounding mode and exception enables  */
+		value &= 0xc01f;
+		break;
+	default:
+		if (fcr > 8) {
+			/*  Not implemented by the 88100.  */
+			value = 0;
+		}
 	}
 
 	cpu->cd.m88k.fcr[fcr] = value;
@@ -896,6 +896,44 @@ void m88k_exception(struct cpu *cpu, int vector, int is_trap)
 		}
 	}
 
+	m88k_pc_to_pointers(cpu);
+}
+
+
+/*
+ *  m88k_cpu_reset():
+ *
+ *  A hardware reset: the CPU starts at address 0 in supervisor mode with
+ *  interrupts disabled, and the CMMUs are back to their reset state
+ *  (translation off; the hardwired BATC entries remain).
+ */
+void m88k_cpu_reset(struct cpu *cpu)
+{
+	int i, j;
+
+	cpu->cd.m88k.cr[M88K_CR_PSR] = M88K_PSR_MODE | M88K_PSR_IND;
+	if (cpu->byte_order == EMUL_LITTLE_ENDIAN)
+		cpu->cd.m88k.cr[M88K_CR_PSR] |= M88K_PSR_BO;
+	cpu->cd.m88k.cr[M88K_CR_VBR] = 0;
+	cpu->cd.m88k.cr[M88K_CR_SSBR] = 0;
+	cpu->delay_slot = NOT_DELAYED;
+
+	for (i = 0; i < MAX_M8820X_CMMUS; i++) {
+		struct m8820x_cmmu *cmmu = cpu->cd.m88k.cmmu[i];
+		if (cmmu == NULL)
+			continue;
+		cmmu->reg[CMMU_SCTR] = 0;
+		cmmu->reg[CMMU_PFSR] = 0;
+		cmmu->reg[CMMU_SAPR] = 0;
+		cmmu->reg[CMMU_UAPR] = 0;
+		for (j = 0; j < 8; j++)
+			cmmu->batc[j] = 0;
+		for (j = 0; j < N_M88200_PATC_ENTRIES; j++)
+			cmmu->patc_v_and_control[j] = 0;
+	}
+
+	cpu->invalidate_translation_caches(cpu, 0, INVALIDATE_ALL);
+	cpu->pc = 0;
 	m88k_pc_to_pointers(cpu);
 }
 

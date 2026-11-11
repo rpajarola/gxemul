@@ -175,8 +175,9 @@ struct mvme187_data;
 struct mvme187_data *dev_mvme187_init(struct machine *machine);
 void dev_mvme187_set_rom(struct mvme187_data *d, const unsigned char *image,
 	size_t len);
+uint64_t dev_mvme187_time_us(struct mvme187_data *d);
 void dev_mvme187_set_scc(struct mvme187_data *d, int (*f)(void *, int),
-	void *extra);
+	void (*reset)(void *), void *extra);
 
 struct dec_ioasic_data *dev_dec_ioasic_init(struct cpu *cpu, struct memory *mem, uint64_t baseaddr, int rackmount_flag, struct interrupt* irq);
 

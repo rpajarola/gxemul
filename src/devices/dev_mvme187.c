@@ -91,8 +91,13 @@
 
 struct tick_timer {
 	uint32_t	count;
-	uint64_t	last_us;
 	int		overflows;
+};
+
+/*  A prescaler: makes the tick timers' clock from the bus clock.  */
+struct prescaler {
+	uint64_t	last_bclk;
+	uint64_t	frac;
 };
 
 struct mvme187_data {
@@ -111,28 +116,75 @@ struct mvme187_data {
 	uint8_t		gcsr[0x100];
 	uint32_t	vme_irqstat;
 	struct tick_timer vtimer[2];
+	struct prescaler vpre;
 
 	/*  PCCchip2:  */
 	uint8_t		pcc[0x40];
 	bool		pcc_vbr_written;
 	struct tick_timer ptimer[2];
+	struct prescaler ppre;
 	bool		ext_irq[N_PCC_SOURCES];	/*  device request lines  */
+	bool		pin_active[0x40];	/*  edge detectors, by ICR  */
 
-	/*  CD2401 interrupt acknowledge (type 1 = modem, 2 = tx, 3 = rx):  */
+	/*  CD2401 interrupt acknowledge (type 1 = modem, 2 = tx, 3 = rx),
+	    and reset:  */
 	int		(*scc_iack)(void *, int);
+	void		(*scc_reset)(void *);
 	void		*scc;
+
+	/*  A local reset (GCSR RST, or SYSRESET) is done at the next tick:  */
+	bool		reset_pending;
 
 	/*  MEMC040:  */
 	uint8_t		memc[2][0x20];
 	int		n_memc;
+
+	/*  82596CA MPU port (the two halves of a port command):  */
+	uint16_t	lan_port_first;
 };
 
 
-static uint64_t now_us(void)
+/*
+ *  Time: the bus clock (BCLK) runs at 33 MHz. Unless the machine has an
+ *  emulated_hz (then the host's clock is used), emulated time is the number
+ *  of instructions run, at one per BCLK cycle; the firmware calibrates its
+ *  delays from the tick timers and the RTC, so these must agree.
+ */
+#define	BCLK_HZ		33000000
+
+static uint64_t bclk(struct mvme187_data *d)
 {
 	struct timeval tv;
+	static struct timeval start;
+
+	if (d->machine->emulated_hz == 0)
+		return d->cpu->ninstrs + d->cpu->n_translated_instrs;
+
 	gettimeofday(&tv, NULL);
-	return (uint64_t) tv.tv_sec * 1000000 + tv.tv_usec;
+	if (start.tv_sec == 0 && start.tv_usec == 0)
+		start = tv;
+	return (uint64_t)(tv.tv_sec - start.tv_sec) * BCLK_HZ +
+	    (uint64_t)((tv.tv_usec - start.tv_usec) * (BCLK_HZ / 1000000));
+}
+
+/*  Emulated time since power-up, in microseconds (also for the RTC):  */
+uint64_t dev_mvme187_time_us(struct mvme187_data *d)
+{
+	return bclk(d) / (BCLK_HZ / 1000000);
+}
+
+/*  Number of tick timer clocks since the last call (the prescaler divides
+    BCLK by 256 - adjust):  */
+static uint64_t prescale(struct prescaler *p, uint64_t now, uint8_t adjust)
+{
+	uint64_t div = 256 - adjust, n;
+
+	if (now < p->last_bclk)
+		now = p->last_bclk;
+	n = now - p->last_bclk + p->frac;
+	p->last_bclk = now;
+	p->frac = n % div;
+	return n / div;
 }
 
 
@@ -142,16 +194,30 @@ static uint64_t now_us(void)
  *  of compare matches since the last update.
  */
 static int timer_advance(struct tick_timer *t, uint32_t cmp, int ctl,
-	uint64_t now)
+	uint64_t delta)
 {
-	uint64_t delta = now - t->last_us, c = t->count, end;
+	uint64_t c = t->count, end;
 	int hits = 0;
 
-	t->last_us = now;
 	if (!(ctl & PCC2_TCTL_CEN) || delta == 0)
 		return 0;
 
-	if ((ctl & PCC2_TCTL_COC) && cmp != 0 && c < cmp) {
+	if ((ctl & PCC2_TCTL_COC) && cmp == 0) {
+		/*  Every count matches, and clears the counter.  */
+		hits = delta > 15 ? 15 : delta;
+		c = 0;
+	} else if (ctl & PCC2_TCTL_COC) {
+		/*  Above the compare value: up to the wrap first.  */
+		if (c > cmp) {
+			uint64_t to_wrap = 0x100000000ULL - c;
+			if (delta < to_wrap) {
+				c += delta;
+				delta = 0;
+			} else {
+				delta -= to_wrap;
+				c = 0;
+			}
+		}
 		end = c + delta;
 		if (end >= cmp) {
 			hits = 1 + (end - cmp) / cmp;
@@ -284,6 +350,58 @@ static void update_irq(struct mvme187_data *d)
 
 
 /*
+ *  The GPIO, LAN and printer interrupt inputs are pins with a polarity
+ *  (PLTY) and edge or level (E/L*) sensitivity: the request is active
+ *  when the pin is high with PLTY set, or low with PLTY clear; an edge
+ *  sensitive one sets INT when the request becomes active (until ICLR),
+ *  a level sensitive one follows it. Unconnected pins are pulled high.
+ */
+static int pin_level(struct mvme187_data *d, int icr)
+{
+	switch (icr) {
+	case PCCTWO_GPIO_ICR:
+		/*  The GPIO pin is an output if GPOE is set.  */
+		if (d->pcc[PCCTWO_GPIO_PCR] & PCC2_GPIOCR_OE)
+			return d->pcc[PCCTWO_GPIO_PCR] & PCC2_GPIOCR_O;
+		return 1;
+	case PCCTWO_IEICR:
+		/*  The 82596CA's interrupt output (active low).  */
+		return !d->ext_irq[PCC2V_IE];
+	}
+	return 1;	/*  printer status inputs: nothing connected  */
+}
+
+static void pin_update(struct mvme187_data *d, int icr)
+{
+	uint8_t v = d->pcc[icr];
+	bool active = (v & 0x80) ? pin_level(d, icr) : !pin_level(d, icr);
+
+	if (v & 0x40) {
+		/*  Edge sensitive:  */
+		if (active && !d->pin_active[icr])
+			d->pcc[icr] |= PCC2_IRQ_INT;
+	} else {
+		if (active)
+			d->pcc[icr] |= PCC2_IRQ_INT;
+		else
+			d->pcc[icr] &= ~PCC2_IRQ_INT;
+	}
+	d->pin_active[icr] = active;
+}
+
+static void pins_update(struct mvme187_data *d)
+{
+	pin_update(d, PCCTWO_GPIO_ICR);
+	pin_update(d, PCCTWO_IEICR);
+	pin_update(d, PCCTWO_PRTICR);
+	pin_update(d, PCCTWO_PTRFICR);
+	pin_update(d, PCCTWO_PTRSICR);
+	pin_update(d, PCCTWO_PTRPICR);
+	pin_update(d, PCCTWO_PRTBICR);
+}
+
+
+/*
  *  Interrupt request lines from the CD2401, 82596CA and 53C710. The
  *  names are "<cpu>.pcc2.<n>", n = PCC2V_SCSI, PCC2V_IE, PCC2V_SCC_M,
  *  PCC2V_SCC_TX or PCC2V_SCC_RX.
@@ -306,11 +424,7 @@ static void pcc_line(struct interrupt *interrupt, int value)
 	off = pcc_icr_offset(src);
 
 	if (src == PCC2V_IE) {
-		/*  Edge or level sensitive; edge ones latch until ICLR:  */
-		if (value)
-			d->pcc[off] |= PCC2_IRQ_INT;
-		else if (!(d->pcc[off] & 0x40))
-			d->pcc[off] &= ~PCC2_IRQ_INT;
+		pin_update(d, off);
 	} else {
 		if (value)
 			d->pcc[off] |= PCC2_IRQ_INT;
@@ -402,7 +516,9 @@ static int iack(struct mvme187_data *d, int level)
 
 static void timers_update(struct mvme187_data *d)
 {
-	uint64_t now = now_us();
+	uint64_t now = bclk(d);
+	uint64_t pticks = prescale(&d->ppre, now, d->pcc[PCCTWO_PSCALEADJ]);
+	uint64_t vticks = prescale(&d->vpre, now, d->lcsr[VME2_TCR / 4]);
 	int i, hits;
 
 	for (i = 0; i < 2; i++) {
@@ -413,7 +529,7 @@ static void timers_update(struct mvme187_data *d)
 		uint32_t cmp = (d->pcc[cmpreg] << 24) | (d->pcc[cmpreg+1] << 16)
 		    | (d->pcc[cmpreg+2] << 8) | d->pcc[cmpreg+3];
 
-		hits = timer_advance(&d->ptimer[i], cmp, d->pcc[ctlreg], now);
+		hits = timer_advance(&d->ptimer[i], cmp, d->pcc[ctlreg], pticks);
 		if (hits > 0)
 			d->pcc[icr] |= PCC2_TTIRQ_INT;
 	}
@@ -423,7 +539,7 @@ static void timers_update(struct mvme187_data *d)
 		uint32_t cmp = d->lcsr[(i == 0 ? VME2_T1CMP : VME2_T2CMP) / 4];
 		int ctl = (d->lcsr[VME2_TCTL / 4] >> (8 * i)) & 0xff;
 
-		hits = timer_advance(&d->vtimer[i], cmp, ctl, now);
+		hits = timer_advance(&d->vtimer[i], cmp, ctl, vticks);
 		if (hits > 0)
 			d->vme_irqstat |= i == 0 ? VME2_IRQ_TIC1 : VME2_IRQ_TIC2;
 	}
@@ -432,9 +548,18 @@ static void timers_update(struct mvme187_data *d)
 }
 
 
+static void local_reset(struct mvme187_data *d);
+
 DEVICE_TICK(mvme187)
 {
 	struct mvme187_data *d = (struct mvme187_data *) extra;
+
+	if (d->reset_pending) {
+		d->reset_pending = false;
+		local_reset(d);
+		return;
+	}
+
 	timers_update(d);
 }
 
@@ -530,7 +655,8 @@ DEVICE_ACCESS(mvme187_lcsr)
 		    (d->vtimer[1].overflows << 12);
 		break;
 	case VME2_PRESCALE:
-		odata = (uint32_t) now_us();
+		odata = (uint32_t) (bclk(d) / (256 - (d->lcsr[VME2_TCR / 4]
+		    & 0xff)));
 		break;
 	case VME2_IRQSTAT:
 		odata = d->vme_irqstat;
@@ -579,8 +705,8 @@ DEVICE_ACCESS(mvme187_lcsr)
 		d->lcsr[reg / 4] &= ~(VME2_TCTL1_COVF | VME2_TCTL2_COVF |
 		    VME2_TCTL_WDCC | VME2_TCTL_WDCS | VME2_TCTL_CPURS);
 		if (idata & VME2_TCTL_SRST) {
-			fatal("[ mvme187: SYSRESET requested ]\n");
 			d->lcsr[reg / 4] &= ~VME2_TCTL_SRST;
+			d->reset_pending = true;
 		}
 		break;
 	case VME2_IRQSTAT:
@@ -616,9 +742,25 @@ DEVICE_ACCESS(mvme187_gcsr)
 	idata = memory_readmax64(cpu, data, len);
 	for (i = 0; i < len; i++) {
 		uint32_t a = (relative_addr + i) & 0xff;
-		/*  Chip ID and revision are read-only.  */
-		if (a >= 2)
-			d->gcsr[a] = idata >> ((len - 1 - i) * 8);
+		uint8_t v = idata >> ((len - 1 - i) * 8);
+
+		switch (a) {
+		case 0: case 1: case 2: case 3:
+			/*  Chip ID and revision are read-only.  */
+			break;
+		case 6:
+			/*  LM3-0 are read-only; SIG3-0 are set by writing 1.  */
+			d->gcsr[a] |= v & 0x0f;
+			break;
+		case 7:
+			/*  RST resets the board (local reset).  */
+			if (v & 0x80)
+				d->reset_pending = true;
+			d->gcsr[a] = v & 0x40;
+			break;
+		default:
+			d->gcsr[a] = v;
+		}
 	}
 	return 1;
 }
@@ -641,7 +783,7 @@ static uint8_t pcc_read(struct mvme187_data *d, uint32_t a)
 	case PCCTWO_T2COUNT+2: case PCCTWO_T2COUNT+3:
 		return d->ptimer[1].count >> ((3 - (a & 3)) * 8);
 	case PCCTWO_PSCALECNT:
-		return (uint8_t) now_us();
+		return (uint8_t) bclk(d);
 	case PCCTWO_T1CTL:
 		return (d->pcc[a] & 0x0b) | (d->ptimer[0].overflows << 4);
 	case PCCTWO_T2CTL:
@@ -659,8 +801,11 @@ static uint8_t pcc_read(struct mvme187_data *d, uint32_t a)
 	case PCCTWO_IPL:
 		return combined_level(d);
 	case PCCTWO_PRTSTATUS:
-		/*  No printer: everything idle.  */
-		return 0;
+		/*  No printer: all the status inputs are high.  */
+		return 0x1f;
+	case PCCTWO_GPIO_PCR:
+		/*  GPI: the pin's level.  */
+		return (d->pcc[a] & 3) | (pin_level(d, PCCTWO_GPIO_ICR) << 2);
 	}
 	return d->pcc[a];
 }
@@ -695,25 +840,29 @@ static void pcc_write(struct mvme187_data *d, uint32_t a, uint8_t v)
 	case PCCTWO_T1ICR:
 	case PCCTWO_T2ICR:
 	case PCCTWO_IEBERR:
-	case PCCTWO_PRTICR:
-	case PCCTWO_PTRFICR:
-	case PCCTWO_PTRSICR:
-	case PCCTWO_PTRPICR:
-	case PCCTWO_PRTBICR:
-	case PCCTWO_GPIO_ICR:
 		/*  INT is status; ICLR clears it.  */
 		d->pcc[a] = (d->pcc[a] & PCC2_IRQ_INT) | (v & ~(PCC2_IRQ_INT |
 		    PCC2_IRQ_ICLR));
 		if (v & PCC2_IRQ_ICLR)
 			d->pcc[a] &= ~PCC2_IRQ_INT;
 		return;
+	case PCCTWO_GPIO_ICR:
 	case PCCTWO_IEICR:
+	case PCCTWO_PRTICR:
+	case PCCTWO_PTRFICR:
+	case PCCTWO_PTRSICR:
+	case PCCTWO_PTRPICR:
+	case PCCTWO_PRTBICR:
+		/*  Pin inputs (see pin_update()); ICLR clears an edge.  */
 		d->pcc[a] = (d->pcc[a] & PCC2_IRQ_INT) | (v & ~(PCC2_IRQ_INT |
 		    PCC2_IRQ_ICLR));
-		if ((v & PCC2_IRQ_ICLR) && !d->ext_irq[PCC2V_IE])
+		if (v & PCC2_IRQ_ICLR)
 			d->pcc[a] &= ~PCC2_IRQ_INT;
-		if (!(v & 0x40) && !d->ext_irq[PCC2V_IE])
-			d->pcc[a] &= ~PCC2_IRQ_INT;
+		pin_update(d, a);
+		return;
+	case PCCTWO_GPIO_PCR:
+		d->pcc[a] = v & 3;
+		pin_update(d, PCCTWO_GPIO_ICR);
 		return;
 	case PCCTWO_SCCICR:
 	case PCCTWO_SCCTX:
@@ -796,10 +945,67 @@ DEVICE_ACCESS(mvme187_memc)
 			r[a + i] = data[i];
 			break;
 		case 0x1c:
-			/*  Bus clock: only set at power-up.  */
+			/*  Bus clock (not changed by a software reset).  */
+			r[a + i] = data[i];
 			break;
 		}
 	}
+	return 1;
+}
+
+
+/*****************************************************************************
+ *
+ *  82596CA LAN coprocessor: the MPU port and channel attention. (TODO: the
+ *  rest of the chip. For now it passes its self-test and does nothing.)
+ */
+
+static void lan_write32(struct mvme187_data *d, uint32_t addr, uint32_t v)
+{
+	unsigned char b[4] = { (unsigned char)(v >> 24), (unsigned char)(v >> 16),
+	    (unsigned char)(v >> 8), (unsigned char)v };
+	d->cpu->memory_rw(d->cpu, d->machine->memory, addr, b, 4, MEM_WRITE,
+	    PHYSICAL | NO_EXCEPTIONS);
+}
+
+DEVICE_ACCESS(mvme187_lan)
+{
+	struct mvme187_data *d = (struct mvme187_data *) extra;
+	uint32_t a = relative_addr & 0xfff, cmd;
+
+	/*  Channel attention: any access to $FFF46004.  */
+	if (a >= 4 && a < 8) {
+		if (writeflag == MEM_READ)
+			memset(data, 0, len);
+		return 1;
+	}
+
+	/*  The port only decodes writes, of two 16-bit halves.  */
+	if (writeflag == MEM_READ || a >= 4 || len != 2)
+		return 0;
+
+	if (a < 2) {
+		d->lan_port_first = memory_readmax64(cpu, data, len);
+		return 1;
+	}
+
+	cmd = ((uint32_t) memory_readmax64(cpu, data, len) << 16) |
+	    d->lan_port_first;
+
+	switch (cmd & 0xf) {
+	case 0:		/*  software reset  */
+		break;
+	case 1:		/*  self-test: ROM signature, then result (0 = pass)  */
+		lan_write32(d, (cmd & ~0xf), 0x00000000);
+		lan_write32(d, (cmd & ~0xf) + 4, 0x00000000);
+		break;
+	case 2:		/*  alternate SCP address  */
+		break;
+	case 3:		/*  dump: an empty dump, with the completion word  */
+		lan_write32(d, (cmd & ~0xf), 0x0000a006);
+		break;
+	}
+
 	return 1;
 }
 
@@ -827,6 +1033,35 @@ DEVICE_ACCESS(mvme187_iack)
 }
 
 
+/*
+ *  The VMEbus A16 (short I/O) window. There are no other boards; only the
+ *  board's own GCSR answers, at $XXY0-$XXYF (XX = GCSR group, Y = board),
+ *  when the short I/O decoder is enabled.
+ */
+DEVICE_ACCESS(mvme187_a16)
+{
+	struct mvme187_data *d = (struct mvme187_data *) extra;
+	uint32_t ctl = d->lcsr[VME2_GCSRCTL / 4];
+	uint32_t group = (ctl >> 24) & 0xff, board = (ctl >> 20) & 0xf;
+	uint32_t a = relative_addr & 0xffff;
+	size_t i;
+
+	if (!(ctl & VME2_GCSRCTL_I1EN) || (a >> 8) != group ||
+	    ((a >> 4) & 0xf) != board || (a & 0xf) + len > 0x10)
+		return 0;
+
+	/*  VMEbus offset o is local offset (o & ~1) * 2 + 2 + (o & 1):  */
+	for (i = 0; i < len; i++) {
+		uint32_t o = (a + i) & 0xf;
+		uint64_t local = ((o & ~1) * 2) + 2 + (o & 1);
+		if (dev_mvme187_gcsr_access(cpu, mem, local, data + i, 1,
+		    writeflag, extra) == 0)
+			return 0;
+	}
+	return 1;
+}
+
+
 DEVICE_ACCESS(mvme187_nodev)
 {
 	/*  No acknowledge: the cycle ends with TEA (a bus error).  */
@@ -840,6 +1075,64 @@ DEVICE_ACCESS(mvme187_ack)
 	if (writeflag == MEM_READ)
 		memset(data, 0xff, len);
 	return 1;
+}
+
+
+/*****************************************************************************
+ *
+ *  Reset
+ */
+
+/*  The reset state of the board's chips (power-up, or a local reset):  */
+static void board_reset(struct mvme187_data *d, bool power_up)
+{
+	int i;
+
+	memset(d->lcsr, 0, sizeof(d->lcsr));
+	d->lcsr[0x30 / 4] = VME2_ROM0;
+	d->lcsr[VME2_TCTL / 4] = VME2_TCTL_SCON |
+	    (power_up ? VME2_TCTL_PURS : 0);
+	d->lcsr[VME2_TCR / 4] = 256 - 33;	/*  prescaler adjust  */
+	d->vme_irqstat = 0;
+	memset(d->vtimer, 0, sizeof(d->vtimer));
+
+	/*  (Each 16-bit GCSR register is in the low half of a longword.)  */
+	memset(d->gcsr, 0, sizeof(d->gcsr));
+	d->gcsr[2] = 0x01;	/*  revision  */
+	d->gcsr[3] = 0x10;	/*  chip id  */
+	d->gcsr[6] = 0xf0;	/*  LM3-LM0  */
+
+	memset(d->pcc, 0, sizeof(d->pcc));
+	d->pcc[PCCTWO_CHIPID] = PCC2_ID;
+	d->pcc[PCCTWO_CHIPREV] = 0x00;
+	d->pcc_vbr_written = false;
+	memset(d->ptimer, 0, sizeof(d->ptimer));
+	for (i = 0; i < N_PCC_SOURCES; i++)
+		if (d->ext_irq[i] && pcc_icr_offset(i) >= 0)
+			d->pcc[pcc_icr_offset(i)] |= PCC2_IRQ_INT;
+
+	for (i = 0; i < 2; i++)
+		d->memc[i][0x10] = d->memc[i][0x14] = d->memc[i][0x18] = 0;
+
+	memset(d->pin_active, 0, sizeof(d->pin_active));
+	pins_update(d);
+}
+
+static void local_reset(struct mvme187_data *d)
+{
+	int i;
+
+	board_reset(d, false);
+	if (d->scc_reset != NULL)
+		d->scc_reset(d->scc);
+
+	d->rom0 = false;
+	set_rom0(d, true);
+
+	for (i = 0; i < d->machine->ncpus; i++)
+		m88k_cpu_reset(d->machine->cpus[i]);
+
+	update_irq(d);
 }
 
 
@@ -870,9 +1163,10 @@ void dev_mvme187_set_rom(struct mvme187_data *d, const unsigned char *image,
 
 
 void dev_mvme187_set_scc(struct mvme187_data *d, int (*f)(void *, int),
-	void *extra)
+	void (*reset)(void *), void *extra)
 {
 	d->scc_iack = f;
+	d->scc_reset = reset;
 	d->scc = extra;
 }
 
@@ -914,16 +1208,7 @@ struct mvme187_data *dev_mvme187_init(struct machine *machine)
 		interrupt_handler_register(&templ);
 	}
 
-	/*  VMEchip2 reset state:  */
-	d->lcsr[0x30 / 4] = VME2_ROM0;
-	d->lcsr[VME2_TCTL / 4] = VME2_TCTL_PURS | VME2_TCTL_SCON;
-	d->lcsr[VME2_TCR / 4] = 256 - 33;	/*  prescaler adjust  */
-	d->gcsr[0] = 0x10;	/*  chip id  */
-	d->gcsr[1] = 0x01;	/*  revision  */
-
-	/*  PCCchip2:  */
-	d->pcc[PCCTWO_CHIPID] = PCC2_ID;
-	d->pcc[PCCTWO_CHIPREV] = 0x00;
+	board_reset(d, true);
 
 	/*  MEMC040: one controller, sized for the whole memory.  */
 	for (msiz = 0; msiz < 5 && (4 << msiz) < ram_mb; msiz++)
@@ -935,7 +1220,7 @@ struct mvme187_data *dev_mvme187_init(struct machine *machine)
 	d->memc[0][0x00] = 0x80;	/*  chip id  */
 	d->memc[0][0x04] = 0x01;	/*  revision  */
 	d->memc[0][0x08] = 0x20 | 0x10 | msiz;	/*  FSTRD, EXTPEN  */
-	d->memc[0][0x1c] = 0x21;	/*  33 MHz  */
+	d->memc[0][0x1c] = 0x21;	/*  33 MHz (set at power-up only)  */
 
 	/*  ROM (not at 0 until there is an image) and SRAM:  */
 	memory_device_register(mem, "mvme187_rom", ROM_BASE, ROM_WINDOW,
@@ -957,6 +1242,8 @@ struct mvme187_data *dev_mvme187_init(struct machine *machine)
 	    dev_mvme187_pcc_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "memc040", MEMC_BASE, 0x1000,
 	    dev_mvme187_memc_access, d, DM_DEFAULT, NULL);
+	memory_device_register(mem, "i82596", 0xfff46000, 0x1000,
+	    dev_mvme187_lan_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "iack", IACK_BASE, 0x10000,
 	    dev_mvme187_iack_access, d, DM_DEFAULT, NULL);
 
@@ -984,7 +1271,7 @@ struct mvme187_data *dev_mvme187_init(struct machine *machine)
 	memory_device_register(mem, "reserved9", 0xfffd0000, 0x10000,
 	    dev_mvme187_nodev_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "vme_a16", 0xffff0000, 0x10000,
-	    dev_mvme187_nodev_access, d, DM_DEFAULT, NULL);
+	    dev_mvme187_a16_access, d, DM_DEFAULT, NULL);
 
 	/*  The CMMUs (MC88200, revision 9): code and data.  */
 	for (i = 0; i < 2; i++) {
