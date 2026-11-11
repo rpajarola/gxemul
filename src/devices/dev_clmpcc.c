@@ -94,7 +94,7 @@ struct clmpcc_data {
 static bool per_channel(int r)
 {
 	if (r < 0x80)
-		return r != CLMPCC_REG_LIVR;
+		return true;	/*  (also LIVR, the vector, per channel)  */
 	switch (r) {
 	case CLMPCC_REG_TCOR: case CLMPCC_REG_TBPR:
 	case CLMPCC_REG_RCOR: case CLMPCC_REG_RBPR:
@@ -223,16 +223,14 @@ static uint8_t stk_pop(uint8_t stk)
 static int clmpcc_iack(void *extra, int type)
 {
 	struct clmpcc_data *d = (struct clmpcc_data *) extra;
-	uint8_t livr = d->greg[CLMPCC_REG_LIVR] & 0xf0;
 	int ch, ctxreg;
 	uint8_t en;
 
 	update_irqs(d);
 
-	/*  The vector is LIVR with the channel in bits 3-2 and the type
-	    in bits 1-0.  */
+	/*  The vector is the channel's LIVR with the type in bits 1-0.  */
 	if (d->ctx[type] >= 0 || (ch = requesting_channel(d, type)) < 0)
-		return livr;
+		return d->ch[cur_channel(d, 0)].reg[CLMPCC_REG_LIVR] & 0xfc;
 
 	d->ctx[type] = ch;
 	d->saved_car[type] = d->greg[CLMPCC_REG_CAR];
@@ -254,7 +252,7 @@ static int clmpcc_iack(void *extra, int type)
 		    CLMPCC_TISR_TX_FIFO;
 
 	update_irqs(d);
-	return livr | (ch << 2) | type;
+	return (d->ch[ch].reg[CLMPCC_REG_LIVR] & 0xfc) | type;
 }
 
 static void end_of_interrupt(struct clmpcc_data *d, int type)
@@ -376,7 +374,6 @@ static uint8_t reg_read(struct clmpcc_data *d, int r)
 		    (c->reg[CLMPCC_REG_MSVR_RTS] & CLMPCC_MSVR_RTS);
 	case CLMPCC_REG_GFRCR:
 	case CLMPCC_REG_CAR:
-	case CLMPCC_REG_LIVR:
 	case CLMPCC_REG_LICR:
 	case CLMPCC_REG_STK:
 	case CLMPCC_REG_RIR:
@@ -437,7 +434,6 @@ static void reg_write(struct clmpcc_data *d, int r, uint8_t v)
 		/*  Read-only (or context) registers.  */
 		return;
 	case CLMPCC_REG_CAR:
-	case CLMPCC_REG_LIVR:
 	case CLMPCC_REG_STK:
 		d->greg[r] = v;
 		return;

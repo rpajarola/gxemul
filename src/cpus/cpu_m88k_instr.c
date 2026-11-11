@@ -806,6 +806,154 @@ X(subu_ci)
 
 
 /*
+ *  Signed add/sub with carry in/out: overflow causes an integer overflow
+ *  exception (and the destination and carry are not changed).
+ *
+ *  arg[0] = pointer to destination register
+ *  arg[1] = pointer to source register s1
+ *  arg[2] = pointer to source register s2
+ */
+static inline void m88k_add_signed(struct cpu *cpu, struct m88k_instr_call *ic,
+	bool sub, bool cin, bool cout)
+{
+	uint32_t a = reg(ic->arg[1]), b = reg(ic->arg[2]), c, res;
+	uint64_t full;
+
+	if (sub) {
+		b = ~b;
+		c = cin ? ((cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_C) ? 1 : 0)
+		    : 1;
+	} else
+		c = cin && (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_C) ? 1 : 0;
+
+	full = (uint64_t) a + b + c;
+	res = full;
+
+	/*  Signed overflow: the operands have the same sign, and the
+	    result has the other one.  */
+	if (!((a ^ b) & 0x80000000) && ((a ^ res) & 0x80000000)) {
+		SYNCH_PC;
+		m88k_exception(cpu, M88K_EXCEPTION_INTEGER_OVERFLOW, 0);
+		return;
+	}
+
+	if (cout) {
+		cpu->cd.m88k.cr[M88K_CR_PSR] &= ~M88K_PSR_C;
+		if (full >> 32)
+			cpu->cd.m88k.cr[M88K_CR_PSR] |= M88K_PSR_C;
+	}
+	reg(ic->arg[0]) = res;
+}
+X(add_co)	{ m88k_add_signed(cpu, ic, false, false, true); }
+X(add_ci)	{ m88k_add_signed(cpu, ic, false, true, false); }
+X(add_cio)	{ m88k_add_signed(cpu, ic, false, true, true); }
+X(sub)		{ m88k_add_signed(cpu, ic, true, false, false); }
+X(sub_co)	{ m88k_add_signed(cpu, ic, true, false, true); }
+X(sub_ci)	{ m88k_add_signed(cpu, ic, true, true, false); }
+X(sub_cio)	{ m88k_add_signed(cpu, ic, true, true, true); }
+
+
+/*
+ *  tbnd:  Trap (bounds check exception) if s1 > s2 or imm16 (unsigned)
+ *
+ *  arg[1] = pointer to register s1
+ *  arg[2] = pointer to register s2 (tbnd), or the immediate (tbnd_imm)
+ */
+X(tbnd)
+{
+	if ((uint32_t) reg(ic->arg[1]) > (uint32_t) reg(ic->arg[2])) {
+		SYNCH_PC;
+		m88k_exception(cpu, M88K_EXCEPTION_BOUNDS_CHECK_VIOLATION, 0);
+	}
+}
+X(tbnd_imm)
+{
+	if ((uint32_t) reg(ic->arg[1]) > (uint32_t) ic->arg[2]) {
+		SYNCH_PC;
+		m88k_exception(cpu, M88K_EXCEPTION_BOUNDS_CHECK_VIOLATION, 0);
+	}
+}
+
+
+/*
+ *  The bcnd/tcnd condition: the M5 field selects the classes of s1 that
+ *  pass: bit 0 greater than zero, bit 1 zero, bit 2 less than zero (but
+ *  not 0x80000000), bit 3 0x80000000.
+ */
+static inline bool m88k_cnd(uint32_t m5, uint32_t v)
+{
+	int bit;
+
+	if (v == 0x80000000)
+		bit = 8;
+	else if ((int32_t) v < 0)
+		bit = 4;
+	else if (v == 0)
+		bit = 2;
+	else
+		bit = 1;
+	return (m5 & bit) != 0;
+}
+
+
+/*
+ *  tcnd:  Trap on condition
+ *
+ *  arg[0] = the M5 condition mask
+ *  arg[1] = pointer to register s1
+ *  arg[2] = the vector
+ */
+X(tcnd)
+{
+	SYNCH_PC;
+
+	if (!(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE)
+	    && ic->arg[2] < M88K_EXCEPTION_USER_TRAPS_START) {
+		m88k_exception(cpu, M88K_EXCEPTION_PRIVILEGE_VIOLATION, 0);
+		return;
+	}
+
+	if (m88k_cnd(ic->arg[0], reg(ic->arg[1])))
+		m88k_exception(cpu, ic->arg[2], 1);
+}
+
+
+/*
+ *  bcnd_generic, bcnd_n_generic:  bcnd with any condition mask
+ *
+ *  arg[0] = pointer to register s1
+ *  arg[1] = the M5 condition mask
+ *  arg[2] = offset from the start of the page
+ */
+X(bcnd_generic)
+{
+	if (m88k_cnd(ic->arg[1], reg(ic->arg[0]))) {
+		cpu->pc = (cpu->pc & 0xfffff000) + (int32_t)ic->arg[2];
+		quick_pc_to_pointers(cpu);
+	}
+}
+X(bcnd_n_generic)
+{
+	bool cond = m88k_cnd(ic->arg[1], reg(ic->arg[0]));
+	SYNCH_PC;
+	if (cond) {
+		cpu->cd.m88k.delay_target = (cpu->pc & ~0xfff)
+		    + (int32_t)ic->arg[2];
+		cpu->delay_slot = TO_BE_DELAYED;
+	} else
+		cpu->delay_slot = NOT_DELAYED;
+	ic[1].f(cpu, ic+1);
+	cpu->n_translated_instrs ++;
+	if (cond && !(cpu->delay_slot & EXCEPTION_IN_DELAY_SLOT)) {
+		cpu->delay_slot = NOT_DELAYED;
+		cpu->pc = cpu->cd.m88k.delay_target;
+		quick_pc_to_pointers(cpu);
+	} else
+		cpu->delay_slot = NOT_DELAYED;
+}
+
+
+/*
  *  ldcr:   Load value from a control register, store in register d.
  *  fldcr:  Load value from a floating point control register, store in reg d.
  *
@@ -1122,6 +1270,30 @@ X(fpu)
 
 	cpu->cd.m88k.fcr[62] |= flags;
 	fpu_set(cpu, d, td, r);
+}
+
+
+/*
+ *  fxcr:  Exchange a floating point control register.
+ *
+ *  arg[0] = pointer to register d
+ *  arg[1] = pointer to register s1
+ *  arg[2] = 6-bit control register number
+ */
+X(fxcr)
+{
+	uint32_t tmp;
+
+	SYNCH_PC;
+
+	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE || ic->arg[2] >= 62) {
+		tmp = cpu->cd.m88k.fcr[ic->arg[2]];
+		m88k_fstcr(cpu, reg(ic->arg[1]), ic->arg[2]);
+		reg(ic->arg[0]) = tmp;
+	} else {
+		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = 0x20;	/*  FPRV  */
+		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
+	}
 }
 
 
@@ -1861,6 +2033,16 @@ X(to_be_translated)
 			ic->arg[2] = cr6;
 			if (s1 != s2)
 				goto bad;
+		} else if ((iword & 0x0000f800) == 0x0000c800) {
+			ic->f = instr(fxcr);
+			ic->arg[0] = (size_t) &cpu->cd.m88k.r[d];
+			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
+			ic->arg[2] = cr6;
+			if (d == M88K_ZERO_REG)
+				ic->arg[0] = (size_t)
+				    &cpu->cd.m88k.zero_scratch;
+			if (s1 != s2)
+				goto bad;
 		} else
 			goto bad;
 		break;
@@ -1958,13 +2140,18 @@ X(to_be_translated)
 		ic->f = m88k_bcnd[d + 32 * (op26 & 1)];
 		samepage_function = m88k_bcnd[64 + d + 32 * (op26 & 1)];
 
-		if (ic->f == NULL)
-			goto bad;
-
 		ic->arg[0] = (size_t) &cpu->cd.m88k.r[s1];
 
 		offset = (addr & 0xffc) + d16;
 		ic->arg[2] = offset;
+
+		if (ic->f == NULL) {
+			/*  An unusual condition mask:  */
+			ic->f = op26 & 1 ? instr(bcnd_n_generic) :
+			    instr(bcnd_generic);
+			ic->arg[1] = d;
+			break;
+		}
 
 		if (offset >= 0 && offset <= 0xffc &&
 		    samepage_function != NULL) {
@@ -2035,8 +2222,21 @@ X(to_be_translated)
 			}
 			break;
 
+		case 0x3a:	/*  tcnd  */
+			ic->arg[0] = d;
+			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
+			ic->arg[2] = iword & 0x1ff;
+			ic->f = instr(tcnd);
+			break;
+
 		default:goto bad;
 		}
+		break;
+
+	case 0x3e:	/*  tbnd (immediate)  */
+		ic->f = instr(tbnd_imm);
+		ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
+		ic->arg[2] = imm16;
 		break;
 
 	case 0x3d:
@@ -2088,10 +2288,8 @@ X(to_be_translated)
 			if (iword & 0x200)
 				scaled = 1;
 
-			if (wt) {
-				fatal("wt bit not yet implemented! TODO\n");
-				goto bad;
-			}
+			/*  Write-through (a cache hint): no cache here.  */
+			(void) wt;
 
 			/*  Scaling a byte access is the same as not scaling.  */
 			if (opsize == 0)
@@ -2157,6 +2355,13 @@ X(to_be_translated)
 		case 0x68:	/*  divu   */
 		case 0x6c:	/*  mul    */
 		case 0x70:	/*  add    */
+		case 0x71:	/*  add.co   */
+		case 0x72:	/*  add.ci   */
+		case 0x73:	/*  add.cio  */
+		case 0x74:	/*  sub    */
+		case 0x75:	/*  sub.co   */
+		case 0x76:	/*  sub.ci   */
+		case 0x77:	/*  sub.cio  */
 		case 0x78:	/*  div    */
 		case 0x7c:	/*  cmp    */
 		case 0x80:	/*  clr    */
@@ -2187,6 +2392,13 @@ X(to_be_translated)
 			case 0x68: ic->f = instr(divu);  break;
 			case 0x6c: ic->f = instr(mul);   break;
 			case 0x70: ic->f = instr(add);   break;
+			case 0x71: ic->f = instr(add_co); break;
+			case 0x72: ic->f = instr(add_ci); break;
+			case 0x73: ic->f = instr(add_cio); break;
+			case 0x74: ic->f = instr(sub);   break;
+			case 0x75: ic->f = instr(sub_co); break;
+			case 0x76: ic->f = instr(sub_ci); break;
+			case 0x77: ic->f = instr(sub_cio); break;
 			case 0x78: ic->f = instr(div);   break;
 			case 0x7c: ic->f = instr(cmp);   break;
 			case 0x80: ic->f = instr(clr);   break;
@@ -2220,7 +2432,9 @@ X(to_be_translated)
 				    opc != 0x75 /*  sub.co */ && opc != 0x77 /*  sub.cio */ &&
 				    opc != 0x68 /*  divu   */ && opc != 0x69 /* divu.d   */ &&
 				    opc != 0x6c /*  mul    */ && opc != 0x6d /* mulu.d   */ &&
-				    opc != 0x6e /*  muls   */ && opc != 0x78 /*  div     */)
+				    opc != 0x6e /*  muls   */ && opc != 0x78 /*  div     */ &&
+				    opc != 0x70 /*  add    */ && opc != 0x72 /*  add.ci  */ &&
+				    opc != 0x74 /*  sub    */ && opc != 0x76 /*  sub.ci  */)
 					ic->f = instr(nop);
 				else
 					ic->arg[0] = (size_t)
@@ -2276,6 +2490,11 @@ X(to_be_translated)
 
 			if (d == M88K_ZERO_REG)
 				ic->f = instr(nop);
+			break;
+		case 0xf8:	/*  tbnd  */
+			ic->f = instr(tbnd);
+			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
+			ic->arg[2] = (size_t) &cpu->cd.m88k.r[s2];
 			break;
 		case 0xfc:
 			switch (iword & 0xff) {

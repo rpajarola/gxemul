@@ -1199,11 +1199,8 @@ DEVICE_ACCESS(osiop)
 			reg_write(d, r, data[i]);
 	}
 
-	/*  Run SCRIPTS a little right away, so that short sequences
-	    (selection timeouts, quick commands) are fast:  */
-	if (writeflag == MEM_WRITE && d->running)
-		scripts_run(d, MAX_SCRIPTS_PER_TICK);
-
+	/*  (SCRIPTS run from the tick function: drivers expect the CPU to
+	    go on for a while after starting them.)  */
 	return 1;
 }
 

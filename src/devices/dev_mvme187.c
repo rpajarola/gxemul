@@ -1024,6 +1024,13 @@ DEVICE_ACCESS(mvme187_iack)
 		return 0;
 
 	vec = iack(d, level);
+	if (getenv("MVME187_IACK") != NULL && vec != 0x19 && vec != 0x15)
+		fprintf(stderr, "[ iack level %i: vector %i (0x%x); pcc %02x%02x"
+		    "%02x%02x %02x%02x%02x%02x; vme stat %08x en %08x vbr %08x"
+		    " ]\n", level, vec, vec, d->pcc[0x18], d->pcc[0x1a],
+		    d->pcc[0x1b], d->pcc[0x1d], d->pcc[0x1e], d->pcc[0x1f],
+		    d->pcc[0x2a], d->pcc[0x2f], d->vme_irqstat,
+		    d->lcsr[VME2_IRQEN / 4], d->lcsr[VME2_VBR / 4]);
 	if (vec < 0)
 		return 0;
 
