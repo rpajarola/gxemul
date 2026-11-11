@@ -453,6 +453,14 @@ static void qv_render_256(struct qv_data *d, int width, int lines,
 }
 
 
+/*  GC 40h bit 0: the QVision's packed-pixel mode (QV.SYS sets it for its
+    8-bit modes, without the VGA's 256-colour bit in GC 05h).  */
+static int qv_packed(struct qv_data *d)
+{
+	return (d->gc[0x40] & 0x01) && (d->attr[0x10] & 0x01);
+}
+
+
 static void qv_render(struct qv_data *d)
 {
 	int hde = d->crtc[0x01] + 1;
@@ -526,6 +534,15 @@ static void qv_render(struct qv_data *d)
 			vde = QV_MAX_YSIZE;
 		qv_resize(d, width, vde);
 		hde = width / charw;
+	} else if (qv_packed(d)) {
+		/*  QVision packed pixels: one byte per pixel, 8 pixels per
+		    character clock.  */
+		width = hde * 8;
+		if (width > QV_MAX_XSIZE)
+			width = QV_MAX_XSIZE;
+		if (vde > QV_MAX_YSIZE)
+			vde = QV_MAX_YSIZE;
+		qv_resize(d, width, vde);
 	} else if (d->gc[5] & 0x40) {
 		/*  256 colours, one byte per pixel:  */
 		width = hde * 8;
@@ -558,7 +575,7 @@ static void qv_render(struct qv_data *d)
 	if (!(d->attr[0x10] & 0x01))
 		qv_render_text(d, hde, vde, charw, maxscan * dblscan, start,
 		    offset * 2);
-	else if (d->gc[5] & 0x40)
+	else if (qv_packed(d) || (d->gc[5] & 0x40))
 		qv_render_256(d, width, vde, maxscan * dblscan, start * 4,
 		    offset * 8);
 	else
@@ -835,6 +852,44 @@ DEVICE_ACCESS(qvision_mem)
 }
 
 
+/*
+ *  The linear framebuffer ("high address video buffer"): 1 MB of video
+ *  memory at the EISA address in GC 48h (address bits 20..27) and GC 49h
+ *  (bits 28..31), as QV.SYS programs it. Video memory is laid out so that
+ *  a linear address is the byte offset (see the top of this file).
+ */
+#define	QV_LFB_START		0x100000
+#define	QV_LFB_END		0x10000000
+
+static uint32_t qv_lfb_base(struct qv_data *d)
+{
+	return (d->gc[0x48] << 20) | ((d->gc[0x49] & 0x0f) << 28);
+}
+
+DEVICE_ACCESS(qvision_lfb)
+{
+	struct qv_data *d = (struct qv_data *) extra;
+	uint32_t a = QV_LFB_START + relative_addr, base = qv_lfb_base(d);
+	size_t i;
+
+	if (base < QV_LFB_START || a < base || a + len > base + QV_VRAM_SIZE) {
+		if (writeflag == MEM_READ)
+			memset(data, 0xff, len);
+		return 1;
+	}
+
+	a -= base;
+	if (writeflag == MEM_WRITE) {
+		for (i = 0; i < len; i++)
+			d->vram[a + i] = data[i];
+		d->dirty = 1;
+	} else
+		for (i = 0; i < len; i++)
+			data[i] = d->vram[a + i];
+	return 1;
+}
+
+
 /*  The option ROM window at C0000: 32 KB of the 64 KB image, banked by
     zC85 bit 4 (1 = "Extended ROM").  */
 DEVICE_ACCESS(qvision_rom)
@@ -952,7 +1007,133 @@ DEVICE_ACCESS(qvision_dac2)
 }
 
 
-/*  BitBLT registers: 23C0h, 33C0h, 63C0h (16 bytes each; stored only).  */
+/*
+ *  The BitBLT engine, as Windows NT's QV.DLL uses it (worked out from what
+ *  it writes; no documentation):
+ *
+ *	23C2h, 23C4h	width and height, in pixels
+ *	23CAh bit 0	linear addressing: the source (63C0h) and destination
+ *			(63CCh) are 32-bit bit addresses; otherwise they are
+ *			X (63C0h, 63CCh) and Y (63C2h, 63CEh) pixel coordinates
+ *	GC 5Ah		operation, bits 0..3: 4 = copy, 5 = colour-expand a
+ *			1-bit source, 6 = fill; bit 4: transparent expansion
+ *			(0 bits leave the destination); bits 6..7: combine
+ *			with the destination by the ROP in 33C7h
+ *	GC 43h, 44h	foreground and background colour
+ *	33C7h		ROP2, a truth table: bit ((S << 1) | D) is the result
+ *	33CAh		pixel write mask
+ *	33CEh		write 1 to start; bit 0 reads as busy (never)
+ *
+ *  Lines of 8-bit pixels are 1024 pixels apart; the lines of a 1-bit
+ *  source are padded to 32 bits.
+ */
+#define	QV_BLT_PITCH		1024
+
+static uint32_t qv_le16(const uint8_t *p)
+{
+	return p[0] | (p[1] << 8);
+}
+
+static uint32_t qv_le32(const uint8_t *p)
+{
+	return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void qv_blt_put(struct qv_data *d, uint32_t daddr, uint8_t src,
+	int use_rop, uint8_t rop, uint8_t mask)
+{
+	uint8_t dst = d->vram[daddr], v = src;
+	int bit;
+
+	if (use_rop) {
+		v = 0;
+		for (bit = 0; bit < 8; bit++) {
+			int sb = (src >> bit) & 1, db = (dst >> bit) & 1;
+			v |= ((rop >> ((sb << 1) | db)) & 1) << bit;
+		}
+	}
+	d->vram[daddr] = (v & mask) | (dst & ~mask);
+}
+
+static void qv_blt_start(struct qv_data *d)
+{
+	uint8_t *b0 = d->blt[0], *b1 = d->blt[1], *b2 = d->blt[2];
+	int w = qv_le16(b0 + 2) & 0xfff, h = qv_le16(b0 + 4) & 0xfff;
+	int op = d->gc[0x5a] & 0x0f, transparent = d->gc[0x5a] & 0x10;
+	int use_rop = (d->gc[0x5a] & 0xc0) != 0;
+	uint8_t rop = b1[7] & 0x0f, mask = b1[0x0a];
+	uint8_t fg = d->gc[0x43], bg = d->gc[0x44];
+	uint32_t src, dst;	/*  in bits if linear, else in pixels  */
+	int linear = b0[0x0a] & 1, x, y, ystep = 1, xstep = 1, y0, x0;
+
+	if (linear) {
+		src = qv_le32(b2 + 0);
+		dst = qv_le32(b2 + 0x0c) / 8;
+	} else {
+		src = qv_le16(b2 + 2) * QV_BLT_PITCH + qv_le16(b2 + 0);
+		dst = qv_le16(b2 + 0x0e) * QV_BLT_PITCH + qv_le16(b2 + 0x0c);
+	}
+
+	debugmsg(d->subsys, "qvision", VERBOSITY_DEBUG,
+	    "BitBLT op 0x%02x %ix%i src 0x%x dst 0x%x%s fg 0x%02x bg 0x%02x "
+	    "rop 0x%x mask 0x%02x\n", d->gc[0x5a], w, h, src, dst,
+	    linear? " (linear)" : "", fg, bg, rop, mask);
+
+	if (w == 0 || h == 0)
+		return;
+
+	switch (op) {
+	case 4:	/*  Screen to screen copy (8-bit source).  */
+		if (linear)
+			src /= 8;
+		/*  Overlapping copies go the safe way:  */
+		y0 = 0; x0 = 0;
+		if (dst > src) {
+			y0 = h - 1; ystep = -1;
+			x0 = w - 1; xstep = -1;
+		}
+		for (y = y0; y >= 0 && y < h; y += ystep)
+			for (x = x0; x >= 0 && x < w; x += xstep)
+				qv_blt_put(d, (dst + y * QV_BLT_PITCH + x) &
+				    (QV_VRAM_SIZE - 1), d->vram[(src + y *
+				    QV_BLT_PITCH + x) & (QV_VRAM_SIZE - 1)],
+				    use_rop, rop, mask);
+		break;
+	case 5:	/*  Colour expansion of a 1-bit source, whose lines are
+		    padded to 32 bits (most significant bit first):  */
+		if (!linear)
+			src *= 8;
+		for (y = 0; y < h; y++)
+			for (x = 0; x < w; x++) {
+				uint32_t bitaddr = src + y * ((w + 31) & ~31)
+				    + x;
+				int on = (d->vram[(bitaddr >> 3) &
+				    (QV_VRAM_SIZE - 1)] >> (7 - (bitaddr & 7)))
+				    & 1;
+				if (!on && transparent)
+					continue;
+				qv_blt_put(d, (dst + y * QV_BLT_PITCH + x) &
+				    (QV_VRAM_SIZE - 1), on? fg : bg, use_rop,
+				    rop, mask);
+			}
+		break;
+	case 6:	/*  Solid fill.  */
+		for (y = 0; y < h; y++)
+			for (x = 0; x < w; x++)
+				qv_blt_put(d, (dst + y * QV_BLT_PITCH + x) &
+				    (QV_VRAM_SIZE - 1), fg, use_rop, rop, mask);
+		break;
+	default:
+		debugmsg(d->subsys, "qvision", VERBOSITY_WARNING,
+		    "unimplemented BitBLT operation 0x%02x\n", d->gc[0x5a]);
+		return;
+	}
+
+	d->dirty = 1;
+}
+
+
+/*  BitBLT registers: 23C0h, 33C0h, 63C0h (16 bytes each).  */
 static void qv_blt(struct qv_data *d, int group, uint64_t r,
 	unsigned char *data, size_t len, int writeflag)
 {
@@ -961,14 +1142,17 @@ static void qv_blt(struct qv_data *d, int group, uint64_t r,
 	for (i = 0; i < len && r + i < 16; i++) {
 		if (writeflag == MEM_WRITE) {
 			d->blt[group][r + i] = data[i];
-			debugmsg(d->subsys, "qvision", VERBOSITY_DEBUG,
-			    "BitBLT register %i.%i = 0x%02x\n", group,
-			    (int) (r + i), data[i]);
+			if (group == 1 && r + i == 0x0e && (data[i] & 1))
+				qv_blt_start(d);
 		} else {
 			data[i] = d->blt[group][r + i];
 			/*  63CAh: the busy bits are never set.  */
 			if (group == 2 && r + i == 0x0a)
 				data[i] &= ~0xc0;
+			/*  33CEh bit 0: busy (the driver waits for it to
+			    clear before it starts an operation).  */
+			if (group == 1 && r + i == 0x0e)
+				data[i] &= ~0x01;
 		}
 	}
 }
@@ -1090,6 +1274,10 @@ void dev_qvision_init(struct machine *machine, struct memory *mem,
 	    0x20000, dev_qvision_mem_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "qvision_rom", isa_membase + 0xc0000,
 	    QV_ROM_WINDOW, dev_qvision_rom_access, d, DM_DEFAULT, NULL);
+
+	memory_device_register(mem, "qvision_lfb", isa_membase + QV_LFB_START,
+	    QV_LFB_END - QV_LFB_START, dev_qvision_lfb_access, d, DM_DEFAULT,
+	    NULL);
 
 	memory_device_register(mem, "qvision_slot",
 	    isa_portbase + slot * 0x1000 + 0xc80, 6,
