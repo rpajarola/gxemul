@@ -1,13 +1,13 @@
 /*
- *  Copyright (C) 2008-2009  Anders Gavare.  All rights reserved.
+ *  Copyright (C) 2026  Rico Pajarola.
  *
  *  Redistribution and use in source and binary forms, with or without
  *  modification, are permitted provided that the following conditions are met:
  *
  *  1. Redistributions of source code must retain the above copyright
  *     notice, this list of conditions and the following disclaimer.
- *  2. Redistributions in binary form must reproduce the above copyright  
- *     notice, this list of conditions and the following disclaimer in the 
+ *  2. Redistributions in binary form must reproduce the above copyright
+ *     notice, this list of conditions and the following disclaimer in the
  *     documentation and/or other materials provided with the distribution.
  *  3. The name of the author may not be used to endorse or promote products
  *     derived from this software without specific prior written permission.
@@ -15,7 +15,7 @@
  *  THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  *  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  *  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- *  ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE   
+ *  ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  *  FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  *  DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  *  OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -23,30 +23,26 @@
  *  LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  *  OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  *  SUCH DAMAGE.
- *   
- *
- *  COMMENT: NCR 53C710 SCSI I/O Processor (SIOP)
- *
- *  Based on reverse-engineering OpenBSD's osiop.c, and a PDF manual:
- *  "Symbios SYM53C710 SCSI I/O Processor Technical Manual, version 3.1".
- *
- *  See e.g. openbsd/sys/dev/microcode/siop/osiop.ss for an example of what
- *  the SCRIPTS assembly language looks like (or osiop.out for the raw result).
  *
  *
- *  TODOs:
+ *  COMMENT: NCR 53C710 SCSI I/O Processor (initiator mode, SCRIPTS)
  *
- *  o)	Target mode. Right now, only Initiator mode is implemented.
- *  o)	Errors. Right now, the emulator aborts if there is a SCSI error.
- *  o)	Allow all phases to do partial transfers. Right now, only data in
- *	and data out support this (hackish).
+ *  The chip is in big-endian mode (as on the MVME187): the byte registers
+ *  are swapped within each longword compared to the data manual, and
+ *  longwords (DSA, DSP, ...) are big-endian. SCRIPTS register numbers are
+ *  the manual's (little-endian lane) addresses.
+ *
+ *  The SCSI bus and its targets are modelled by phases: after selection
+ *  the target asks for MSG OUT (with ATN) or COMMAND, then DATA IN/OUT,
+ *  STATUS and MSG IN (command complete), and then disconnects once the
+ *  initiator has released ACK. Targets never disconnect in between and do
+ *  not negotiate synchronous transfers (they reject SDTR).
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "console.h"
 #include "cpu.h"
 #include "device.h"
 #include "diskimage.h"
@@ -55,749 +51,976 @@
 #include "memory.h"
 #include "misc.h"
 
-#include "thirdparty/osiopreg.h"
 
+#define	OSIOP_LEN		0x40
+#define	OSIOP_TICK_SHIFT	14
+#define	MAX_SCRIPTS_PER_TICK	2000
+#define	CHIP_REVISION		2
 
-/*  #define debug fatal  */
-const int osiop_debug = 0;
+/*  Register offsets, as seen by the host in big-endian mode:  */
+#define	R_SIEN		0x00
+#define	R_SDID		0x01
+#define	R_SCNTL1	0x02
+#define	R_SCNTL0	0x03
+#define	R_SOCL		0x04
+#define	R_SODL		0x05
+#define	R_SXFER		0x06
+#define	R_SCID		0x07
+#define	R_SBCL		0x08
+#define	R_SBDL		0x09
+#define	R_SIDL		0x0a
+#define	R_SFBR		0x0b
+#define	R_SSTAT2	0x0c
+#define	R_SSTAT1	0x0d
+#define	R_SSTAT0	0x0e
+#define	R_DSTAT		0x0f
+#define	R_DSA		0x10
+#define	R_CTEST3	0x14
+#define	R_CTEST2	0x15
+#define	R_CTEST1	0x16
+#define	R_CTEST0	0x17
+#define	R_CTEST7	0x18
+#define	R_CTEST6	0x19
+#define	R_CTEST5	0x1a
+#define	R_CTEST4	0x1b
+#define	R_TEMP		0x1c
+#define	R_LCRC		0x20
+#define	R_CTEST8	0x21
+#define	R_ISTAT		0x22
+#define	R_DFIFO		0x23
+#define	R_DCMD		0x24
+#define	R_DBC		0x25	/*  24 bits  */
+#define	R_DNAD		0x28
+#define	R_DSP		0x2c
+#define	R_DSPS		0x30
+#define	R_SCRATCH	0x34
+#define	R_DCNTL		0x38
+#define	R_DWT		0x39
+#define	R_DIEN		0x3a
+#define	R_DMODE		0x3b
+#define	R_ADDER		0x3c
 
-static const char *phases[8] =
-	{ "DATA_OUT", "DATA_IN", "COMMAND", "STATUS",
-	  "RESERVED_OUT", "RESERVED_IN", "MSG_OUT", "MSG_IN" };
+/*  ISTAT  */
+#define	ISTAT_ABRT	0x80
+#define	ISTAT_RST	0x40
+#define	ISTAT_SIGP	0x20
+#define	ISTAT_CON	0x08
+#define	ISTAT_SIP	0x02
+#define	ISTAT_DIP	0x01
 
-#define	DEV_OSIOP_LENGTH	OSIOP_NREGS
-#define	OSIOP_CHIP_REVISION	2
+/*  DSTAT  */
+#define	DSTAT_DFE	0x80
+#define	DSTAT_BF	0x20
+#define	DSTAT_ABRT	0x10
+#define	DSTAT_SSI	0x08
+#define	DSTAT_SIR	0x04
+#define	DSTAT_WTD	0x02
+#define	DSTAT_IID	0x01
 
-#define	MAX_SCRIPTS_PER_CHUNK	256	/*  256 may be a reasonable value?  */
+/*  SSTAT0 / SIEN  */
+#define	SSTAT0_MA	0x80
+#define	SSTAT0_FCMP	0x40
+#define	SSTAT0_STO	0x20
+#define	SSTAT0_SEL	0x10
+#define	SSTAT0_SGE	0x08
+#define	SSTAT0_UDC	0x04
+#define	SSTAT0_RST	0x02
+#define	SSTAT0_PAR	0x01
 
-#define	OSIOP_TICK_SHIFT	17
+/*  SBCL / SOCL  */
+#define	SBCL_REQ	0x80
+#define	SBCL_ACK	0x40
+#define	SBCL_BSY	0x20
+#define	SBCL_SEL	0x10
+#define	SBCL_ATN	0x08
+#define	SBCL_MSG	0x04
+#define	SBCL_CD		0x02
+#define	SBCL_IO		0x01
+
+#define	SCNTL1_CON	0x10
+#define	SCNTL1_RST	0x08
+#define	DCNTL_SSM	0x10
+#define	DCNTL_STD	0x04
+#define	DMODE_MAN	0x01
+
+/*  SCSI phases (MSG, C/D, I/O):  */
+#define	PH_DATA_OUT	0
+#define	PH_DATA_IN	1
+#define	PH_COMMAND	2
+#define	PH_STATUS	3
+#define	PH_MSG_OUT	6
+#define	PH_MSG_IN	7
+#define	PH_BUS_FREE	(-1)
+
+static const char *phase_names[8] = { "DATA OUT", "DATA IN", "COMMAND",
+	"STATUS", "RESERVED OUT", "RESERVED IN", "MSG OUT", "MSG IN" };
 
 struct osiop_data {
+	struct machine		*machine;
+	uint32_t		base;		/*  of the registers  */
 	struct interrupt	irq;
-	int			asserted;
-	
-	int			scripts_running;
+	int			irq_asserted;
 
-	/*  Current transfer:  */
-	int			selected_id;
-	struct scsi_transfer	*xferp;
-	size_t			data_offset;
+	uint8_t			reg[OSIOP_LEN];
 
-	/*  Cached emulated physical RAM page lookup:  */
-	uint32_t		last_phys_page;
-	uint8_t			*last_host_page;
-
-	/*  ALU:  */
+	bool			running;	/*  SCRIPTS  */
+	bool			waiting_resel;	/*  in WAIT RESELECT  */
 	int			carry;
-	
-	/*
-	 *  Most of these are byte-addressed, but some are not. (Note: For
-	 *  convenience, 32-bit words are stored in host byte order!)
-	 */
-	uint8_t			reg[OSIOP_NREGS];
+
+	/*  The SCSI bus:  */
+	int			phase;		/*  or PH_BUS_FREE  */
+	int			target, lun;
+	bool			atn;
+	bool			msg_in_ack;	/*  ACK held after MSG IN  */
+	bool			disconnect_after_ack;
+
+	/*  The target's state for the current command:  */
+	uint8_t			msg_out[64];
+	int			msg_out_len;
+	uint8_t			cmd[16];
+	int			cmd_len, cmd_want;
+	uint8_t			*buf;		/*  data in or out  */
+	size_t			buf_len, buf_pos;
+	uint8_t			status;
+	uint8_t			msg_in[8];
+	int			msg_in_len, msg_in_pos;
+	struct scsi_transfer	*xfer;
+	bool			check_condition;	/*  bad lun  */
 };
 
 
-static void osiop_free_xfer(struct osiop_data *d)
+static uint32_t get32(struct osiop_data *d, int r)
 {
-	if (d->xferp != NULL)
-		scsi_transfer_free(d->xferp);
+	return ((uint32_t)d->reg[r] << 24) | (d->reg[r+1] << 16) |
+	    (d->reg[r+2] << 8) | d->reg[r+3];
+}
 
-	d->xferp = NULL;
+static void put32(struct osiop_data *d, int r, uint32_t v)
+{
+	d->reg[r] = v >> 24; d->reg[r+1] = v >> 16;
+	d->reg[r+2] = v >> 8; d->reg[r+3] = v;
+}
+
+static void put_dbc(struct osiop_data *d, uint32_t v)
+{
+	d->reg[R_DBC] = v >> 16; d->reg[R_DBC+1] = v >> 8;
+	d->reg[R_DBC+2] = v;
 }
 
 
-/*  Allocate memory for a new transfer.  */
-static void osiop_new_xfer(struct osiop_data *d, int target_scsi_id)
+/*****************************************************************************
+ *
+ *  Memory (the chip is a bus master)
+ */
+
+static uint8_t reg_read(struct osiop_data *d, int r);
+static void reg_write(struct osiop_data *d, int r, uint8_t v);
+
+/*  The chip's own registers (SCRIPTS move to and from them):  */
+static bool is_self(struct osiop_data *d, uint32_t addr, size_t len)
 {
-	if (d->xferp != NULL) {
-		fatal("WARNING! osiop_new_xfer(): freeing previous"
-		    " transfer\n");
-		osiop_free_xfer(d);
+	return addr >= d->base && addr + len <= d->base + 0x1000;
+}
+
+static bool mem_read(struct osiop_data *d, uint32_t addr, uint8_t *buf,
+	size_t len)
+{
+	struct cpu *cpu = d->machine->cpus[0];
+	size_t i;
+
+	if (is_self(d, addr, len)) {
+		for (i = 0; i < len; i++)
+			buf[i] = reg_read(d, (addr + i) & (OSIOP_LEN - 1));
+		return true;
 	}
-
-	d->selected_id = target_scsi_id;
-	d->xferp = scsi_transfer_alloc();
+	return cpu->memory_rw(cpu, cpu->mem, addr, buf, len, MEM_READ,
+	    PHYSICAL | NO_EXCEPTIONS) == MEMORY_ACCESS_OK;
 }
 
-
-static int osiop_get_scsi_phase(struct osiop_data *d)
+static bool mem_write(struct osiop_data *d, uint32_t addr, uint8_t *buf,
+	size_t len)
 {
-	return OSIOP_PHASE(d->reg[OSIOP_SOCL]);
+	struct cpu *cpu = d->machine->cpus[0];
+	size_t i;
+
+	if (is_self(d, addr, len)) {
+		for (i = 0; i < len; i++)
+			reg_write(d, (addr + i) & (OSIOP_LEN - 1), buf[i]);
+		return true;
+	}
+	return cpu->memory_rw(cpu, cpu->mem, addr, buf, len, MEM_WRITE,
+	    PHYSICAL | NO_EXCEPTIONS) == MEMORY_ACCESS_OK;
 }
 
-
-static void osiop_set_scsi_phase(struct osiop_data *d, int phase)
+static bool mem_read32(struct osiop_data *d, uint32_t addr, uint32_t *v)
 {
-	int mask = OSIOP_MSG | OSIOP_CD | OSIOP_IO;
-	d->reg[OSIOP_SOCL] &= ~mask;
-	d->reg[OSIOP_SOCL] |= (phase & mask);
+	uint8_t b[4];
+	if (!mem_read(d, addr, b, 4))
+		return false;
+	*v = ((uint32_t)b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3];
+	return true;
 }
 
 
-/*
- *  osiop_update_sip_and_dip():
+/*****************************************************************************
  *
- *  The SIP bit in ISTAT is basically a "summary" of whether there is
- *  a non-masked SCSI interrupt. Similarly for DIP, for DMA.
- *
- *  However, the SIP and DIP bits are set even if interrupts are
- *  masked away using DIEN and SIEN. (At least that is how I understood
- *  things from reading OpenBSD's osiop.c osiop_poll().) 
+ *  Interrupts
  */
-static int osiop_update_sip_and_dip(struct osiop_data *d)
+
+static void update_irq(struct osiop_data *d)
 {
 	int assert = 0;
 
-	/*  First, let's assume no interrupt assertions.  */
-	d->reg[OSIOP_ISTAT] &= ~(OSIOP_ISTAT_SIP | OSIOP_ISTAT_DIP);
-
-	/*  Any enabled SCSI interrupts?  */
-	if (d->reg[OSIOP_SSTAT0])
-		d->reg[OSIOP_ISTAT] |= OSIOP_ISTAT_SIP;
-	if (d->reg[OSIOP_SSTAT0] & d->reg[OSIOP_SIEN])
+	if ((d->reg[R_ISTAT] & ISTAT_DIP) &&
+	    (d->reg[R_DSTAT] & d->reg[R_DIEN] & 0x7f))
+		assert = 1;
+	if ((d->reg[R_ISTAT] & ISTAT_SIP) &&
+	    (d->reg[R_SSTAT0] & d->reg[R_SIEN]))
 		assert = 1;
 
-	/*  Or enabled DMA interrupts?  */
-	if (d->reg[OSIOP_DSTAT] & ~OSIOP_DIEN_RES)
-		d->reg[OSIOP_ISTAT] |= OSIOP_ISTAT_DIP;
-	if (d->reg[OSIOP_DSTAT] & d->reg[OSIOP_DIEN] & ~OSIOP_DIEN_RES)
-		assert = 1;
-
-	return assert;
-}
-
-
-/*
- *  osiop_reassert_interrupts():
- *
- *  Recalculate interrupt assertions; if either of the SIP or DIP bits
- *  in the ISTAT register is set, then we should cause an interrupt.
- *
- *  (The d->asserted stuff is to make sure we don't call INTERRUPT_DEASSERT
- *  etc. too often when not necessary. Just an optimization.)
- */
-static void osiop_reassert_interrupts(struct osiop_data *d)
-{
-	int assert = 0;
-
-	if (osiop_update_sip_and_dip(d))
-		assert = 1;
-
-	if (assert && !d->asserted)
+	if (assert && !d->irq_asserted)
 		INTERRUPT_ASSERT(d->irq);
-	if (!assert && d->asserted)
+	else if (!assert && d->irq_asserted)
 		INTERRUPT_DEASSERT(d->irq);
-
-	d->asserted = assert;
+	d->irq_asserted = assert;
 }
 
-
-/*  Helper: returns a word in host order, from emulated physical RAM.  */
-static uint32_t read_word(struct osiop_data *d, struct cpu *cpu, uint32_t addr)
+/*  A DMA (SCRIPTS) interrupt: halts the SCRIPTS processor.  */
+static void dma_int(struct osiop_data *d, uint8_t bits)
 {
-	uint32_t word;
-
-	if (d->last_host_page == NULL ||
-	    d->last_phys_page != (addr & 0xfffff000)) {
-		d->last_phys_page = addr & 0xfffff000;
-		d->last_host_page =
-		    memory_paddr_to_hostaddr(cpu->mem, d->last_phys_page, 0);
-	}
-
-	word = *((uint32_t *) (d->last_host_page + (addr & 0xffc)));
-
-	if (cpu->byte_order == EMUL_LITTLE_ENDIAN)
-		word = LE32_TO_HOST(word);
-	else
-		word = BE32_TO_HOST(word);
-
-	return word;
+	d->reg[R_DSTAT] |= bits | DSTAT_DFE;
+	d->reg[R_ISTAT] |= ISTAT_DIP;
+	d->running = false;
+	update_irq(d);
 }
 
-
-/*  Helper: reads/writes single bytes from emulated physical RAM.  */
-static uint8_t read_byte(struct osiop_data *d, struct cpu *cpu, uint32_t addr)
+/*  A SCSI interrupt: halts the SCRIPTS processor.  */
+static void scsi_int(struct osiop_data *d, uint8_t bits)
 {
-	if (d->last_host_page == NULL ||
-	    d->last_phys_page != (addr & 0xfffff000)) {
-		d->last_phys_page = addr & 0xfffff000;
-		d->last_host_page =
-		    memory_paddr_to_hostaddr(cpu->mem, d->last_phys_page, 0);
-	}
-
-	return d->last_host_page[addr & 0xfff];
-}
-static void write_byte(struct osiop_data *d, struct cpu *cpu, uint32_t addr, uint8_t byte)
-{
-	if (d->last_host_page == NULL ||
-	    d->last_phys_page != (addr & 0xfffff000)) {
-		d->last_phys_page = addr & 0xfffff000;
-		d->last_host_page =
-		    memory_paddr_to_hostaddr(cpu->mem, d->last_phys_page, 1);
-	}
-
-	d->last_host_page[addr & 0xfff] = byte;
+	d->reg[R_SSTAT0] |= bits;
+	d->reg[R_ISTAT] |= ISTAT_SIP;
+	d->running = false;
+	update_irq(d);
 }
 
 
-/*
- *  osiop_get_next_scripts_word():
+/*****************************************************************************
  *
- *  Reads a 32-bit word at physical memory location DSP, and returns it
- *  in host order. DSP is then advanced to point to the next instruction word.
- *
- *  (NOTE/TODO: This could be optimized to read from a host page directly,
- *  but then care must be taken when the instruction pointer (DSP) goes
- *  over a page boundary to the next page. At least the page lookup
- *  could be "cached"...)
+ *  The SCSI bus and the targets
  */
-uint32_t osiop_get_next_scripts_word(struct cpu *cpu, struct osiop_data *d)
+
+static void update_bus_regs(struct osiop_data *d)
 {
-	uint32_t *dspp = (uint32_t*) &d->reg[OSIOP_DSP];
-	uint32_t dsp = *dspp;
-	uint32_t instr;
+	uint8_t sbcl = 0;
 
-	if (dsp & 3) {
-		fatal("osiop_get_next_scripts_word: unaligned DSP 0x%08x\n",
-		    dsp);
-		exit(1);
+	if (d->phase != PH_BUS_FREE) {
+		sbcl = SBCL_BSY | (d->phase & 7);
+		if (!d->msg_in_ack)
+			sbcl |= SBCL_REQ;
+		else
+			sbcl |= SBCL_ACK;
+		d->reg[R_ISTAT] |= ISTAT_CON;
+		d->reg[R_SCNTL1] |= SCNTL1_CON;
+		d->reg[R_SSTAT2] = (d->reg[R_SSTAT2] & ~7) | (d->phase & 7);
+	} else {
+		d->reg[R_ISTAT] &= ~ISTAT_CON;
+		d->reg[R_SCNTL1] &= ~SCNTL1_CON;
 	}
-
-	instr = read_word(d, cpu, dsp);
-
-	dsp += sizeof(instr);
-	*dspp = dsp;
-
-	return instr;
+	if (d->atn)
+		sbcl |= SBCL_ATN;
+	d->reg[R_SBCL] = sbcl;
 }
 
-
-/*
- *  osiop_execute_scripts_instr():
- *
- *  Interprets a single SCRIPTS machine code instruction. Returns 1 if
- *  execution should continue, or 0 if there was an interrupt.
- *
- *  See "Symbios SYM53C710 SCSI I/O Processor Technical Manual, version 3.1"
- *  chapter 5 for details about the instruction set.
- */
-int osiop_execute_scripts_instr(struct cpu *cpu, struct osiop_data *d)
+static void free_transfer(struct osiop_data *d)
 {
-	uint32_t *dsap = (uint32_t*) &d->reg[OSIOP_DSA];
-	uint32_t *dnadp = (uint32_t*) &d->reg[OSIOP_DNAD];
-	uint32_t *dbcp = (uint32_t*) &d->reg[OSIOP_DBC];
-	uint32_t *dspsp = (uint32_t*) &d->reg[OSIOP_DSPS];
-	uint32_t *dspp = (uint32_t*) &d->reg[OSIOP_DSP];
-	uint32_t *tempp = (uint32_t*) &d->reg[OSIOP_TEMP];
+	if (d->xfer != NULL)
+		scsi_transfer_free(d->xfer);
+	d->xfer = NULL;
+	d->buf = NULL;
+	d->buf_len = d->buf_pos = 0;
+}
 
-	uint32_t dspOrig = *dspp;
-	uint32_t instr1 = osiop_get_next_scripts_word(cpu, d);
-	uint32_t instr2 = osiop_get_next_scripts_word(cpu, d);
-	uint32_t dbc, target_addr = 0;
-	uint8_t dcmd;
-	int32_t reladdr;
-	int opcode, phase, relative_addressing, table_indirect_addressing;
-	int select_with_atn, scsi_ids_to_select = -1, scsi_id_to_select;
-	int test_carry, compare_data, compare_phase;
-	int jump_if_true, wait_for_valid_phase;
-	int comparison = 0, interrupt_instead_of_branch = 0;
-	
-	/*
-	 *  According to the 53C710 manual, chapter 5 (introduction): the first
-	 *  32-bit word is always loaded into DCMD and DBC, the second into
-	 *  DSPS, the third (only used by memory move instructions) is loaded
-	 *  into the TEMP register.
-	 */
+static void bus_free(struct osiop_data *d)
+{
+	free_transfer(d);
+	d->phase = PH_BUS_FREE;
+	d->atn = false;
+	d->msg_in_ack = false;
+	d->disconnect_after_ack = false;
+	update_bus_regs(d);
+}
 
-	dcmd = d->reg[OSIOP_DCMD] = instr1 >> 24;
-	dbc = *dbcp = instr1 & 0x00ffffff;
-	*dspsp = instr2;
+static void go_status(struct osiop_data *d, uint8_t status)
+{
+	d->status = status;
+	d->phase = PH_STATUS;
+}
 
-	reladdr = (instr2 << 8);
-	reladdr >>= 8;
+/*  Message in: command complete, then disconnect.  */
+static void go_msg_in(struct osiop_data *d, const uint8_t *msg, int len,
+	bool disconnect)
+{
+	memcpy(d->msg_in, msg, len);
+	d->msg_in_len = len;
+	d->msg_in_pos = 0;
+	d->disconnect_after_ack = disconnect;
+	d->phase = PH_MSG_IN;
+}
 
-	opcode = (dcmd >> 3) & 7;
-	phase = dcmd & 7;
+/*  Length of a command, from its group code:  */
+static int cdb_length(uint8_t op)
+{
+	switch (op >> 5) {
+	case 0:	return 6;
+	case 1: case 2:	return 10;
+	case 4:	return 16;
+	case 5:	return 12;
+	}
+	return 6;
+}
 
-	if (osiop_debug)
-		debug("{ SCRIPTS @ 0x%08x:  0x%08x 0x%08x",
-		    (int) dspOrig, (int) instr1, (int) instr2);
+/*  A command for a missing logical unit:  */
+static void bad_lun_command(struct osiop_data *d)
+{
+	static uint8_t inq[36];
+	static uint8_t sense[18];
 
-	switch (dcmd & 0xc0) {
+	if (d->cmd[0] == 0x12) {		/*  INQUIRY  */
+		memset(inq, 0, sizeof(inq));
+		inq[0] = 0x7f;			/*  no device at this lun  */
+		inq[4] = 31;
+		d->buf = inq;
+		d->buf_len = d->cmd[4] < sizeof(inq) ? d->cmd[4] : sizeof(inq);
+		d->buf_pos = 0;
+		d->status = 0;
+		d->phase = d->buf_len > 0 ? PH_DATA_IN : PH_STATUS;
+		return;
+	}
+	if (d->cmd[0] == 0x03) {		/*  REQUEST SENSE  */
+		memset(sense, 0, sizeof(sense));
+		sense[0] = 0x70;
+		sense[2] = 0x05;		/*  illegal request  */
+		sense[7] = 10;
+		sense[12] = 0x25;		/*  lun not supported  */
+		d->buf = sense;
+		d->buf_len = d->cmd[4] < sizeof(sense) ? d->cmd[4] :
+		    sizeof(sense);
+		d->buf_pos = 0;
+		d->status = 0;
+		d->phase = d->buf_len > 0 ? PH_DATA_IN : PH_STATUS;
+		return;
+	}
+	go_status(d, 0x02);			/*  check condition  */
+}
 
-	case 0x00:
-		{
-			int ofs1 = instr1 & 0x00ffffff;
-			int ofs2 = instr2 & 0x00ffffff;
-			int indirect_addressing = dcmd & 0x20;
-			uint32_t dsa = *dsap;
-			uint32_t addr, xfer_byte_count, xfer_addr;
-			int32_t tmp = ofs2 << 8;
-			int res;
-			size_t i;
+/*  The command is complete: run it.  */
+static void run_command(struct osiop_data *d)
+{
+	struct cpu *cpu = d->machine->cpus[0];
+	int res;
 
-			tmp >>= 8;
-			table_indirect_addressing = dcmd & 0x10;
-			
-			opcode = (dcmd >> 3) & 1;
+	if (d->lun != 0) {
+		bad_lun_command(d);
+		return;
+	}
 
-			switch (opcode) {
-			case 0: if (osiop_debug)
-					debug(": CHMOV");
-				break;
-			case 1: if (osiop_debug)
-					debug(": MOVE");
-				break;
-			}
+	free_transfer(d);
+	d->xfer = scsi_transfer_alloc();
+	scsi_transfer_allocbuf(&d->xfer->cmd_len, &d->xfer->cmd,
+	    d->cmd_len, 0);
+	memcpy(d->xfer->cmd, d->cmd, d->cmd_len);
 
-			if (indirect_addressing) {
-				fatal("osiop: TODO: indirect_addressing move\n");
-				exit(1);
-			}
+	res = diskimage_scsicommand(cpu, d->target, DISKIMAGE_SCSI, d->xfer);
+	if (res == 2) {
+		/*  The target wants data out.  */
+		d->buf_len = d->xfer->data_out_len;
+		d->buf_pos = 0;
+		scsi_transfer_allocbuf(&d->xfer->data_out_len,
+		    &d->xfer->data_out, d->buf_len, 1);
+		d->buf = d->xfer->data_out;
+		d->phase = PH_DATA_OUT;
+		return;
+	}
 
-			if (!table_indirect_addressing) {
-				fatal("osiop: TODO: !table_indirect_addressing move\n");
-				exit(1);
-			}
-			
-			if (osiop_debug)
-				debug(" FROM %i", tmp);
-			
-			if (ofs1 != ofs2) {
-				fatal("osiop: TODO: move ofs1!=ofs2\n");
-				exit(1);
-			}
-			
-			if (phase != osiop_get_scsi_phase(d)) {
-				fatal("osiop: TODO: move: wait for phase. "
-				    "phase = %i, osiop_get_scsi_phase = %i\n",
-				    phase, osiop_get_scsi_phase(d));
-				exit(1);
-			}
+	if (d->xfer->data_in != NULL && d->xfer->data_in_len > 0) {
+		d->buf = d->xfer->data_in;
+		d->buf_len = d->xfer->data_in_len;
+		d->buf_pos = 0;
+		d->phase = PH_DATA_IN;
+		return;
+	}
 
-			if (osiop_debug)			
-				debug(" WHEN %s", phases[phase]);
+	go_status(d, d->xfer->status != NULL ? d->xfer->status[0] : 0x02);
+}
 
-			addr = dsa + tmp;
-			xfer_byte_count = read_word(d, cpu, addr) & 0x00ffffff;
-			xfer_addr = read_word(d, cpu, addr+4);
+/*  The data out phase is done: run the command again, with the data.  */
+static void data_out_done(struct osiop_data *d)
+{
+	struct cpu *cpu = d->machine->cpus[0];
 
-			switch (phase) {
+	d->xfer->data_out_offset = d->buf_len;
+	diskimage_scsicommand(cpu, d->target, DISKIMAGE_SCSI, d->xfer);
+	go_status(d, d->xfer->status != NULL ? d->xfer->status[0] : 0x02);
+}
 
-			case MSG_OUT_PHASE:
-				scsi_transfer_allocbuf(&d->xferp->msg_out_len,
-				    &d->xferp->msg_out, xfer_byte_count, 0);
+/*  Messages from the initiator:  */
+static void msg_out_done(struct osiop_data *d)
+{
+	int i = 0;
+	bool reject = false;
 
-				i = 0;
-				while (xfer_byte_count > 0) {
-					uint8_t byte = read_byte(d, cpu, xfer_addr);
-					/*  debug("  reading msg_out byte @ 0x%08x = 0x%02x\n",
-					    xfer_addr, byte);  */
-					d->xferp->msg_out[i++] = byte;
-					xfer_addr ++;
-					xfer_byte_count --;
-				}
-				
-				osiop_set_scsi_phase(d, COMMAND_PHASE);
-				break;
-
-			case COMMAND_PHASE:
-				scsi_transfer_allocbuf(&d->xferp->cmd_len,
-				    &d->xferp->cmd, xfer_byte_count, 0);
-
-				i = 0;
-				while (xfer_byte_count > 0) {
-					uint8_t byte = read_byte(d, cpu, xfer_addr);
-					/*  debug("  reading cmd byte @ 0x%08x = 0x%02x\n",
-					    xfer_addr, byte);  */
-					d->xferp->cmd[i++] = byte;
-					xfer_addr ++;
-					xfer_byte_count --;
-				}
-
-				res = diskimage_scsicommand(cpu,
-				    d->selected_id, DISKIMAGE_SCSI, d->xferp);
-				if (res == 0) {
-					fatal("osiop TODO: error\n");
-					exit(1);
-				}
-
-				d->data_offset = 0;
-				
-				if (res == 2)
-					osiop_set_scsi_phase(d, DATA_OUT_PHASE);
-				else if (d->xferp->data_in_len > 0)
-					osiop_set_scsi_phase(d, DATA_IN_PHASE);
-				else
-					osiop_set_scsi_phase(d, STATUS_PHASE);
-				break;
-
-			case DATA_OUT_PHASE:
-				if (d->xferp->data_out == NULL)
-					scsi_transfer_allocbuf(&d->xferp->data_out_len,
-					    &d->xferp->data_out, d->xferp->data_out_len, 0);
-
-				while (xfer_byte_count > 0) {
-					uint8_t byte = read_byte(d, cpu, xfer_addr);
-					/*  debug("  reading data_out byte @ 0x%08x = 0x%02x\n",
-					    xfer_addr, byte);  */
-					d->xferp->data_out[d->xferp->data_out_offset++] = byte;
-					xfer_addr ++;
-					xfer_byte_count --;
-				}
-
-				/*  Rerun the command to actually write out the data:  */
-				res = diskimage_scsicommand(cpu,
-				    d->selected_id, DISKIMAGE_SCSI, d->xferp);
-				if (res == 0) {
-					fatal("osiop TODO: error on rerun\n");
-					exit(1);
-				} else if (res == 2) {
-					/*  Stay at data out phase.  */
-				} else {
-					osiop_set_scsi_phase(d, STATUS_PHASE);
-				}
-				break;
-
-			case DATA_IN_PHASE:
-				i = 0;
-				while (xfer_byte_count > 0 && i + d->data_offset < d->xferp->data_in_len) {
-					uint8_t byte = d->xferp->data_in[i + d->data_offset];
-					i ++;
-					/*  debug("  writing data_in byte @ 0x%08x = 0x%02x\n",
-					    xfer_addr, byte);  */
-					write_byte(d, cpu, xfer_addr, byte);
-					xfer_addr ++;
-					xfer_byte_count --;
-				}
-
-				d->data_offset += i;
-				if (d->data_offset >= d->xferp->data_in_len)
-					osiop_set_scsi_phase(d, STATUS_PHASE);
-				break;
-
-			case STATUS_PHASE:
-				i = 0;
-				while (xfer_byte_count > 0 && i < d->xferp->status_len) {
-					uint8_t byte = d->xferp->status[i++];
-					/*  debug("  writing status byte @ 0x%08x = 0x%02x\n",
-					    xfer_addr, byte);  */
-					write_byte(d, cpu, xfer_addr, byte);
-					xfer_addr ++;
-					xfer_byte_count --;
-				}
-
-				osiop_set_scsi_phase(d, MSG_IN_PHASE);
-				break;
-
-			case MSG_IN_PHASE:
-				i = 0;
-				while (xfer_byte_count > 0 && i < d->xferp->msg_in_len) {
-					uint8_t byte = d->xferp->msg_in[i++];
-					/*  debug("  writing msg_in byte @ 0x%08x = 0x%02x\n",
-					    xfer_addr, byte);  */
-					write_byte(d, cpu, xfer_addr, byte);
-					xfer_addr ++;
-					xfer_byte_count --;
-				}
-
-				/*  Done.  */
-				osiop_free_xfer(d);
-				break;
-
-			default:fatal("osiop: TODO: unimplemented move, "
-				    "phase=%i\n", phase);
-				exit(1);
-			}
-
-			/*  Transfer complete.  */
-			*dnadp = xfer_addr;
-			*dbcp = xfer_byte_count;
-			
-			d->reg[OSIOP_DFIFO] = 0;	/*  TODO  */
-		}
-		break;
-
-	case 0x40:
-		/*  I/O or Read/Write  */
-		relative_addressing = dcmd & 4;
-		table_indirect_addressing = dcmd & 2;
-		select_with_atn = dcmd & 1;
-		scsi_ids_to_select = (dbc >> 16) & 0xff;
-
-		switch (opcode) {
-		case 0:	if (osiop_debug)
-				debug(": SELECT");
-			if (select_with_atn) {
-				if (osiop_debug)
-					debug(" ATN");
-				d->reg[OSIOP_SOCL] |= OSIOP_ATN;
-			}
-
-			if (table_indirect_addressing) {
-				uint32_t dsa = *dsap;
-				uint32_t addr, word;
-				int32_t tmp = dbc << 8;
-				tmp >>= 8;
-				addr = dsa + tmp;
-
-				if (osiop_debug)
-					debug(" FROM %i", dbc);
-
-				word = read_word(d, cpu, addr);
-				scsi_ids_to_select = (word >> 16) & 0xff;
-			}
-
-			if (scsi_ids_to_select == 0) {
-				fatal("osiop: TODO: scsi_ids_to_select = 0!\n");
-				exit(1);
-			}
-
-			scsi_id_to_select = 0;
-			while (!(scsi_ids_to_select & 1)) {
-				scsi_ids_to_select >>= 1;
-				scsi_id_to_select ++;
-			}
-
-			scsi_ids_to_select &= ~1;
-			if (scsi_ids_to_select != 0) {
-				fatal("osiop: TODO: multiselect?\n");
-				exit(1);
-			}		
-
-			if (osiop_debug)
-				debug(" [SCSI ID %i]", scsi_id_to_select);
-
-			if (relative_addressing) {
-				/*  Note: Relative to _current_ DSP value, not
-				    what the DSP was when the current
-				    instruction was read!  */
-				target_addr = reladdr + *dspp;
-				if (osiop_debug)
-					debug(" REL(%i)", reladdr);
-			} else {
-				target_addr = instr2;
-				if (osiop_debug)
-					debug(" 0x%08x", instr2);
-			}
-
-			if (diskimage_exist(cpu->machine,
-			    scsi_id_to_select, DISKIMAGE_SCSI)) {
-				osiop_new_xfer(d, scsi_id_to_select);
-
-				/*  TODO: Just a guess, so far:  */
-				osiop_set_scsi_phase(d, MSG_OUT_PHASE);
-			} else {
-				d->selected_id = -1;
-
-#if 1
-				/*  TODO: The scsi ID does not exist.
-				    Should we simply timeout:  */
-				d->scripts_running = 0;
-#else
-				/*  or branch to the reselect address?  */
-				*(uint32_t*) &d->reg[OSIOP_DSP] = target_addr;
-#endif
-			}
-
-			break;
-			
-		case 1:	if (osiop_debug)
-				debug(": WAIT DISCONNECT");
-			/*  TODO  */
-			break;
-		case 2:	if (osiop_debug)
-				debug(": WAIT RESELECT");
-			fatal("osiop: TODO: wait reselect\n");
-			exit(1);
-			break;
-	
-		case 3:	if (osiop_debug)
-				debug(": SET");
-			break;
-		case 4:	if (osiop_debug)
-				debug(": CLEAR");
-			break;
-
-		default:fatal(": UNIMPLEMENTED dcmd=0x%02x opcode=%i\n",
-			    dcmd, opcode);
-			exit(1);
-		}
-
-		/*  SET or CLEAR:  */
-		if (opcode == 3 || opcode == 4) {
-			int bit_atn = (dbc >> 3) & 1;
-			int bit_ack = (dbc >> 6) & 1;
-			int bit_target = (dbc >> 9) & 1;
-			int bit_carry = (dbc >> 10) & 1;
-
-			if (osiop_debug) {
-				if (bit_atn)
-					debug(" ATN");
-				if (bit_ack)
-					debug(" ACK");
-				if (bit_target)
-					debug(" TARGET");
-				if (bit_carry)
-					debug(" CARRY");
-			}
-					
-			if (opcode == 3) {
-				d->reg[OSIOP_SOCL] |= (bit_ack * OSIOP_ACK);
-				d->reg[OSIOP_SOCL] |= (bit_atn * OSIOP_ATN);
-				if (bit_carry)
-					d->carry = 1;
-				d->reg[OSIOP_SCNTL0] |=
-				    (bit_target * OSIOP_SCNTL0_TRG);
-			} else {
-				d->reg[OSIOP_SOCL] &= ~(bit_ack * OSIOP_ACK);
-				d->reg[OSIOP_SOCL] &= ~(bit_atn * OSIOP_ATN);
-				if (bit_carry)
-					d->carry = 0;
-				d->reg[OSIOP_SCNTL0] &=
-				    ~(bit_target * OSIOP_SCNTL0_TRG);
-			}
-		}
-
-		break;
-
-	case 0x80:
-		/*  Transfer Control  */
-		relative_addressing = (dbc >> 23) & 1;
-		test_carry = (dbc >> 21) & 1;
-		jump_if_true = (dbc >> 19) & 1;
-		compare_data = (dbc >> 18) & 1;
-		compare_phase = (dbc >> 17) & 1;
-		wait_for_valid_phase = (dbc >> 16) & 1;
-		
-		switch (opcode) {
-		case 0:	if (osiop_debug)
-				debug(": JUMP");
-			break;
-		case 1:	if (osiop_debug)
-				debug(": CALL");
-			break;
-		case 2:	if (osiop_debug)
-				debug(": RETURN");
-			break;
-		case 3:	if (osiop_debug)
-				debug(": INTERRUPT");
-			break;
-		default:fatal(": UNIMPLEMENTED dcmd=0x%02x opcode=%i\n",
-			    dcmd, opcode);
-			exit(1);
-		}
-
-		if (opcode == 0 || opcode == 1) {
-			if (relative_addressing) {
-				/*  Note: Relative to _current_ DSP value,
-				    not what it was when the current instruction
-				    was read!  */
-				target_addr = reladdr + *dspp;
-				if (osiop_debug)
-					debug(" REL(%i)", reladdr);
-			} else {
-				target_addr = instr2;
-				if (osiop_debug)
-					debug(" 0x%08x", instr2);
-			}
+	while (i < d->msg_out_len) {
+		uint8_t m = d->msg_out[i];
+		if (m & 0x80) {
+			d->lun = m & 7;			/*  IDENTIFY  */
+			i++;
+		} else if (m == 0x01) {
+			/*  Extended message (SDTR, WDTR): rejected.  */
+			if (i + 1 < d->msg_out_len)
+				i += 2 + d->msg_out[i+1];
+			else
+				i = d->msg_out_len;
+			reject = true;
+		} else if (m == 0x06 || m == 0x0c) {
+			/*  ABORT, BUS DEVICE RESET  */
+			bus_free(d);
+			return;
+		} else if (m >= 0x20 && m <= 0x2f) {
+			i += 2;				/*  two-byte message  */
 		} else {
-			if (opcode == 2) {
-				/*  Return:  */
-				target_addr = *tempp;
-			} else {
-				/*  Interrupt:  */
-				interrupt_instead_of_branch = 1;
-			}
+			i++;				/*  NOP and the like  */
 		}
+	}
+	d->msg_out_len = 0;
 
-		if (test_carry) {
-			if (compare_data || compare_phase) {
-				fatal("osiop: TODO: test_carry cannot be"
-				    " combined with other tests!\n");
-				exit(1);
-			}
-			
-			fatal("osiop: TODO: test_carry\n");
-			exit(1);
-		}
-
-		if (compare_data) {
-			fatal("osiop: TODO: compare_data\n");
-			exit(1);
-		}
-
-		if (compare_phase) {
-			int cur_phase;
-
-			if (osiop_debug)
-				debug(" %s %s%s",
-				    wait_for_valid_phase ? "WHEN" : "IF",
-				    jump_if_true? "" : "NOT ",
-				    phases[phase]);
-
-			/*  TODO: wait for valid phase!  */
-
-			cur_phase = osiop_get_scsi_phase(d);
-			
-			comparison = (phase == cur_phase);
-		}
-
-		if (!test_carry && !compare_data && !compare_phase)
-			jump_if_true = comparison = 1;
-
-		if ((jump_if_true && comparison) ||
-		    (!jump_if_true && !comparison)) {
-			/*  Perform the branch or interrupt.  */
-			if (interrupt_instead_of_branch) {
-				d->scripts_running = 0;
-				d->reg[OSIOP_DSTAT] |= OSIOP_DSTAT_SIR;
-			} else {
-				*dspp = target_addr;
-			}
-		}
-
-		break;
-
-	case 0xc0:
-		if (osiop_debug)
-			debug(": MEMORY MOVE");
-		/*  TODO: third instruction word!  */
-		fatal(": TODO\n");
-		exit(1);
-		break;
-
-	default:fatal(": UNIMPLEMENTED dcmd 0x%02x\n", dcmd);
-		exit(1);
+	if (reject) {
+		static const uint8_t rej[1] = { 0x07 };
+		go_msg_in(d, rej, 1, false);
+		return;
 	}
 
-	if (osiop_debug)
-		debug(" }\n");
+	/*  The command is still to come (or is in progress).  */
+	if (d->cmd_len < d->cmd_want || d->cmd_want == 0)
+		d->phase = PH_COMMAND;
+}
 
-	return 1;
+/*  After a byte (or more) of message in has been taken, and ACK released: */
+static void msg_in_ack_released(struct osiop_data *d)
+{
+	d->msg_in_ack = false;
+	if (d->msg_in_pos < d->msg_in_len)
+		return;
+
+	if (d->disconnect_after_ack) {
+		bus_free(d);
+		return;
+	}
+
+	/*  After a message reject: on with the command.  */
+	if (d->atn)
+		d->phase = PH_MSG_OUT;
+	else if (d->cmd_len < d->cmd_want || d->cmd_want == 0)
+		d->phase = PH_COMMAND;
+	else
+		d->phase = PH_STATUS;
+}
+
+/*
+ *  Transfers up to len bytes in the current phase between memory at addr
+ *  and the target. Returns the number of bytes moved, or -1 on a bus fault.
+ */
+static int bus_transfer(struct osiop_data *d, uint32_t addr, uint32_t len)
+{
+	uint32_t n = 0;
+	uint8_t b;
+
+	while (n < len) {
+		switch (d->phase) {
+
+		case PH_DATA_IN: {
+			size_t k = d->buf_len - d->buf_pos;
+			if (k > len - n)
+				k = len - n;
+			if (!mem_write(d, addr + n, d->buf + d->buf_pos, k))
+				return -1;
+			if (n == 0 && k > 0)
+				d->reg[R_SFBR] = d->buf[d->buf_pos];
+			d->buf_pos += k;
+			n += k;
+			if (d->buf_pos >= d->buf_len)
+				go_status(d, d->xfer != NULL && d->xfer->status
+				    != NULL ? d->xfer->status[0] : d->status);
+			return n;
+		}
+
+		case PH_DATA_OUT: {
+			size_t k = d->buf_len - d->buf_pos;
+			if (k > len - n)
+				k = len - n;
+			if (!mem_read(d, addr + n, d->buf + d->buf_pos, k))
+				return -1;
+			d->buf_pos += k;
+			n += k;
+			if (d->buf_pos >= d->buf_len)
+				data_out_done(d);
+			return n;
+		}
+
+		case PH_COMMAND:
+			if (!mem_read(d, addr + n, &b, 1))
+				return -1;
+			if (d->cmd_len == 0)
+				d->cmd_want = cdb_length(b);
+			if (d->cmd_len < (int) sizeof(d->cmd))
+				d->cmd[d->cmd_len++] = b;
+			n++;
+			if (d->cmd_len >= d->cmd_want) {
+				run_command(d);
+				return n;
+			}
+			break;
+
+		case PH_STATUS:
+			if (!mem_write(d, addr + n, &d->status, 1))
+				return -1;
+			d->reg[R_SFBR] = d->status;
+			n++;
+			{
+				static const uint8_t cc[1] = { 0x00 };
+				go_msg_in(d, cc, 1, true);
+			}
+			return n;
+
+		case PH_MSG_IN:
+			if (d->msg_in_ack)
+				return n;	/*  waiting for ACK release  */
+			b = d->msg_in[d->msg_in_pos++];
+			if (!mem_write(d, addr + n, &b, 1))
+				return -1;
+			if (n == 0)
+				d->reg[R_SFBR] = b;
+			n++;
+			/*  The last byte of a block move keeps ACK asserted,
+			    as do message bytes the target is waiting on.  */
+			if (n == len || d->msg_in_pos >= d->msg_in_len) {
+				d->msg_in_ack = true;
+				return n;
+			}
+			break;
+
+		case PH_MSG_OUT:
+			if (!mem_read(d, addr + n, &b, 1))
+				return -1;
+			if (d->msg_out_len < (int) sizeof(d->msg_out))
+				d->msg_out[d->msg_out_len++] = b;
+			n++;
+			if (n == len) {
+				/*  ATN is released before the last byte.  */
+				d->atn = false;
+				msg_out_done(d);
+				return n;
+			}
+			break;
+
+		default:
+			return n;
+		}
+	}
+	return n;
 }
 
 
-/*
- *  osiop_execute_scripts():
+/*****************************************************************************
  *
- *  Interprets SCRIPTS machine code by reading one instruction word at a time,
- *  and executing it.
+ *  SCRIPTS
  */
-void osiop_execute_scripts(struct cpu *cpu, struct osiop_data *d)
+
+/*  SCRIPTS register numbers are little-endian lane addresses:  */
+static int script_reg(int a)
 {
-	int n = 0;
+	return (a & ~3) | (3 - (a & 3));
+}
 
-	if (osiop_debug)
-		debug("{ SCRIPTS start }\n");
+static uint8_t read_reg_for_script(struct osiop_data *d, int a)
+{
+	int r = script_reg(a);
 
-	while (d->scripts_running && n < MAX_SCRIPTS_PER_CHUNK &&
-	    osiop_execute_scripts_instr(cpu, d))
-		n++;
+	/*  (Reading CTEST2 clears SIGP, also from SCRIPTS.)  */
+	if (r == R_CTEST2)
+		return reg_read(d, r);
+	return d->reg[r];
+}
 
-	if (osiop_debug)	
-		debug("{ SCRIPTS end }\n");
+static void write_reg_for_script(struct osiop_data *d, int a, uint8_t v)
+{
+	int r = script_reg(a);
+
+	/*  Read-only status registers are not written.  */
+	switch (r) {
+	case R_DSTAT: case R_SSTAT0: case R_SSTAT1: case R_SSTAT2:
+	case R_ISTAT:
+		return;
+	}
+	d->reg[r] = v;
+}
+
+static bool phase_ok(struct osiop_data *d, int phase)
+{
+	return d->phase != PH_BUS_FREE && !d->msg_in_ack &&
+	    d->phase == phase;
+}
+
+static void block_move(struct osiop_data *d, uint32_t w0, uint32_t w1)
+{
+	uint32_t count = w0 & 0xffffff, addr = w1;
+	int phase = (w0 >> 24) & 7, n;
+
+	if (w0 & 0x10000000) {
+		/*  Table indirect: count and address at DSA + offset.  */
+		uint32_t t = get32(d, R_DSA) + (((int32_t)(w1 << 8)) >> 8);
+		if (!mem_read32(d, t, &count) || !mem_read32(d, t + 4, &addr)) {
+			dma_int(d, DSTAT_BF);
+			return;
+		}
+		count &= 0xffffff;
+	} else if (w0 & 0x20000000) {
+		/*  Indirect addressing:  */
+		if (!mem_read32(d, w1, &addr)) {
+			dma_int(d, DSTAT_BF);
+			return;
+		}
+	}
+
+	put_dbc(d, count);
+	put32(d, R_DNAD, addr);
+
+	if (d->phase == PH_BUS_FREE) {
+		/*  Not connected.  */
+		scsi_int(d, SSTAT0_UDC);
+		return;
+	}
+
+	/*  The target releases its REQ only when ACK is released.  */
+	if (d->msg_in_ack) {
+		scsi_int(d, SSTAT0_MA);
+		return;
+	}
+
+	if (d->phase != phase) {
+		scsi_int(d, SSTAT0_MA);
+		return;
+	}
+
+	while (count > 0) {
+		n = bus_transfer(d, addr, count);
+		if (n < 0) {
+			dma_int(d, DSTAT_BF);
+			return;
+		}
+		count -= n;
+		addr += n;
+		put_dbc(d, count);
+		put32(d, R_DNAD, addr);
+		update_bus_regs(d);
+
+		if (count == 0)
+			break;
+		if (n == 0 || !phase_ok(d, phase)) {
+			/*  The target changed phase before the end.  */
+			scsi_int(d, SSTAT0_MA);
+			return;
+		}
+	}
+}
+
+static void select_target(struct osiop_data *d, uint32_t w0, uint32_t w1)
+{
+	uint8_t ids = (w0 >> 16) & 0xff;
+	int id;
+
+	if (w0 & 0x02000000) {
+		/*  Table indirect: the ID (and SXFER) at DSA + the offset in
+		    the first word.  */
+		uint32_t t = get32(d, R_DSA) + (((int32_t)(w0 << 8)) >> 8), v;
+		if (!mem_read32(d, t, &v)) {
+			dma_int(d, DSTAT_BF);
+			return;
+		}
+		ids = (v >> 16) & 0xff;
+		d->reg[R_SXFER] = v >> 8;
+	}
+
+	if (d->phase != PH_BUS_FREE) {
+		/*  Already connected.  */
+		dma_int(d, DSTAT_IID);
+		return;
+	}
+
+	d->reg[R_SDID] = ids;
+	for (id = 0; id < 8; id++)
+		if (ids & (1 << id))
+			break;
+
+	if (ids == 0 || (ids & ~(1 << id)) != 0 || id >= 8 ||
+	    (d->reg[R_SCID] & (1 << id)) ||
+	    !diskimage_exist(d->machine, id, DISKIMAGE_SCSI)) {
+		/*  Selection timeout.  */
+		scsi_int(d, SSTAT0_STO);
+		return;
+	}
+
+	d->target = id;
+	d->lun = 0;
+	d->atn = (w0 & 0x01000000) != 0;
+	d->msg_out_len = 0;
+	d->cmd_len = d->cmd_want = 0;
+	d->msg_in_ack = false;
+	d->disconnect_after_ack = false;
+	d->check_condition = false;
+	free_transfer(d);
+	d->phase = d->atn ? PH_MSG_OUT : PH_COMMAND;
+	update_bus_regs(d);
+}
+
+/*
+ *  Transfer control instructions (53C710 layout): bit 23 relative
+ *  addressing, bit 21 test carry, bit 19 jump if true, bit 18 compare
+ *  data, bit 17 compare phase, bit 16 wait for valid phase, bits 15-8 the
+ *  mask (1 = not compared), bits 7-0 the data.
+ */
+#define	TC_REL		0x00800000
+#define	TC_CARRY	0x00200000
+#define	TC_TRUE		0x00080000
+#define	TC_DATA		0x00040000
+#define	TC_PHASE	0x00020000
+#define	TC_WAIT		0x00010000
+
+static bool condition(struct osiop_data *d, uint32_t w0)
+{
+	bool result = true;
+
+	if (!(w0 & (TC_CARRY | TC_DATA | TC_PHASE)))
+		return (w0 & TC_TRUE) != 0;
+
+	if (w0 & TC_PHASE) {
+		int phase = (w0 >> 24) & 7;
+		if (!phase_ok(d, phase))
+			result = false;
+	}
+	if (w0 & TC_DATA) {
+		uint8_t mask = (w0 >> 8) & 0xff, data = w0 & 0xff;
+		if ((d->reg[R_SFBR] & ~mask) != (data & ~mask))
+			result = false;
+	}
+	if (w0 & TC_CARRY) {
+		if (!d->carry)
+			result = false;
+	}
+
+	return (w0 & TC_TRUE) ? result : !result;
+}
+
+/*  Runs one SCRIPTS instruction. Returns false when SCRIPTS stopped.  */
+static bool scripts_step(struct osiop_data *d)
+{
+	uint32_t dsp = get32(d, R_DSP), w0, w1, w2 = 0;
+	int op;
+
+	if (!mem_read32(d, dsp, &w0) || !mem_read32(d, dsp + 4, &w1)) {
+		dma_int(d, DSTAT_BF);
+		return false;
+	}
+
+	if (getenv("OSIOP_TRACE") != NULL)
+		fprintf(stderr, "[ osiop: %08x: %08x %08x  phase=%i sfbr=%02x"
+		    " istat=%02x ]\n", dsp, w0, w1, d->phase, d->reg[R_SFBR],
+		    d->reg[R_ISTAT]);
+
+	d->reg[R_DCMD] = w0 >> 24;
+	put_dbc(d, w0 & 0xffffff);
+	put32(d, R_DSPS, w1);
+	dsp += 8;
+
+	if ((w0 >> 30) == 3) {
+		if (!mem_read32(d, dsp, &w2)) {
+			dma_int(d, DSTAT_BF);
+			return false;
+		}
+		dsp += 4;
+	}
+	put32(d, R_DSP, dsp);
+
+	switch (w0 >> 30) {
+
+	case 0:		/*  Block move  */
+		block_move(d, w0, w1);
+		break;
+
+	case 1:		/*  I/O, read/write register  */
+		op = (w0 >> 27) & 7;
+		switch (op) {
+		case 0:		/*  SELECT  */
+			select_target(d, w0, w1);
+			break;
+		case 1:		/*  WAIT DISCONNECT  */
+			if (d->phase != PH_BUS_FREE) {
+				if (d->msg_in_ack && d->disconnect_after_ack &&
+				    d->msg_in_pos >= d->msg_in_len)
+					bus_free(d);
+				else {
+					/*  The target is not disconnecting.  */
+					scsi_int(d, SSTAT0_UDC);
+				}
+			}
+			break;
+		case 2:		/*  WAIT RESELECT  */
+			if (d->phase != PH_BUS_FREE) {
+				dma_int(d, DSTAT_IID);
+				break;
+			}
+			if (d->reg[R_ISTAT] & ISTAT_SIGP) {
+				put32(d, R_DSP, w1);
+				break;
+			}
+			/*  Nothing reselects: wait for SIGP.  */
+			d->waiting_resel = true;
+			put32(d, R_DSP, dsp - 8);
+			return false;
+		case 3:		/*  SET  */
+		case 4:		/*  CLEAR  */
+			if (w0 & 0x00000008) {
+				d->atn = op == 3;
+				/*  The target goes to MSG OUT.  */
+				if (d->atn && d->phase != PH_BUS_FREE &&
+				    !d->msg_in_ack && d->phase != PH_MSG_OUT)
+					d->phase = PH_MSG_OUT;
+			}
+			if (w0 & 0x00000040) {
+				if (op == 4 && d->msg_in_ack)
+					msg_in_ack_released(d);
+			}
+			if (w0 & 0x00000400)
+				d->carry = op == 3;
+			if (op == 3 && d->atn && d->msg_in_ack == false &&
+			    d->phase == PH_MSG_IN)
+				d->phase = PH_MSG_OUT;
+			update_bus_regs(d);
+			break;
+		case 5:		/*  MOVE SFBR (op) data TO register  */
+		case 6:		/*  MOVE register (op) data TO SFBR  */
+		case 7: {	/*  MOVE register (op) data TO register  */
+			int a = (w0 >> 16) & 0x3f, oper = (w0 >> 24) & 7;
+			uint8_t data = (w0 >> 8) & 0xff, src, res = 0;
+			unsigned int sum;
+
+			src = op == 5 ? d->reg[R_SFBR] :
+			    read_reg_for_script(d, a);
+			switch (oper) {
+			case 0:	/*  MOVE data TO reg, or a plain move  */
+				res = op == 7 ? data : src;
+				break;
+			case 1:	res = (src << 1) | d->carry;
+				d->carry = src >> 7;
+				break;
+			case 2:	res = src | data; break;
+			case 3:	res = src ^ data; break;
+			case 4:	res = src & data; break;
+			case 5:	res = (src >> 1) | (d->carry << 7);
+				d->carry = src & 1;
+				break;
+			case 6:	sum = src + data;
+				d->carry = sum >> 8;
+				res = sum;
+				break;
+			case 7:	sum = src + data + d->carry;
+				d->carry = sum >> 8;
+				res = sum;
+				break;
+			}
+			if (op == 6)
+				d->reg[R_SFBR] = res;
+			else
+				write_reg_for_script(d, a, res);
+			break;
+		}
+		}
+		break;
+
+	case 2:		/*  Transfer control  */
+		op = (w0 >> 27) & 7;
+		if (op > 3) {
+			dma_int(d, DSTAT_IID);
+			break;
+		}
+		if ((w0 & TC_WAIT) && (w0 & TC_PHASE) &&
+		    d->phase == PH_BUS_FREE) {
+			/*  Waiting for a phase with nobody connected.  */
+			scsi_int(d, SSTAT0_UDC);
+			break;
+		}
+		if (!condition(d, w0))
+			break;
+		if (w0 & TC_REL)
+			w1 = dsp + (((int32_t)(w1 << 8)) >> 8);
+		switch (op) {
+		case 0:		/*  JUMP  */
+			put32(d, R_DSP, w1);
+			break;
+		case 1:		/*  CALL  */
+			put32(d, R_TEMP, dsp);
+			put32(d, R_DSP, w1);
+			break;
+		case 2:		/*  RETURN  */
+			put32(d, R_DSP, get32(d, R_TEMP));
+			break;
+		case 3:		/*  INT  */
+			dma_int(d, DSTAT_SIR);
+			break;
+		}
+		break;
+
+	case 3: {	/*  Memory move  */
+		uint32_t count = w0 & 0xffffff, i;
+		uint8_t buf[256];
+		for (i = 0; i < count; ) {
+			uint32_t k = count - i > sizeof(buf) ? sizeof(buf) :
+			    count - i;
+			if (!mem_read(d, w1 + i, buf, k) ||
+			    !mem_write(d, w2 + i, buf, k)) {
+				dma_int(d, DSTAT_BF);
+				break;
+			}
+			i += k;
+		}
+		put32(d, R_DNAD, w2 + count);
+		put_dbc(d, 0);
+		break;
+	}
+	}
+
+	put32(d, R_ADDER, get32(d, R_DSP));
+
+	if (d->running && (d->reg[R_DCNTL] & DCNTL_SSM))
+		dma_int(d, DSTAT_SSI);
+
+	return d->running;
+}
+
+static void scripts_run(struct osiop_data *d, int max)
+{
+	int i;
+
+	for (i = 0; i < max && d->running; i++)
+		if (!scripts_step(d))
+			break;
+}
+
+static void scripts_start(struct osiop_data *d)
+{
+	if (d->reg[R_ISTAT] & (ISTAT_DIP | ISTAT_SIP))
+		return;		/*  (the host must clear interrupts first)  */
+	d->running = true;
+	d->waiting_resel = false;
 }
 
 
@@ -805,227 +1028,156 @@ DEVICE_TICK(osiop)
 {
 	struct osiop_data *d = (struct osiop_data *) extra;
 
-	if (d->scripts_running)
-		osiop_execute_scripts(cpu, d);
+	if (d->waiting_resel && (d->reg[R_ISTAT] & ISTAT_SIGP)) {
+		/*  WAIT RESELECT is left when SIGP is set.  */
+		uint32_t w1;
+		d->waiting_resel = false;
+		if (mem_read32(d, get32(d, R_DSP) + 4, &w1))
+			put32(d, R_DSP, w1);
+		d->running = true;
+	}
 
-	osiop_reassert_interrupts(d);
+	if (d->running)
+		scripts_run(d, MAX_SCRIPTS_PER_TICK);
+}
+
+
+/*****************************************************************************
+ *
+ *  Register access
+ */
+
+static void chip_reset(struct osiop_data *d)
+{
+	uint8_t scid = d->reg[R_SCID];
+
+	memset(d->reg, 0, sizeof(d->reg));
+	d->reg[R_SCID] = scid;
+	d->reg[R_DSTAT] = DSTAT_DFE;
+	d->reg[R_CTEST1] = 0xf0;	/*  DMA FIFO empty  */
+	d->reg[R_CTEST8] = CHIP_REVISION << 4;
+	d->running = false;
+	d->waiting_resel = false;
+	bus_free(d);
+	update_irq(d);
+}
+
+static void scsi_bus_reset(struct osiop_data *d)
+{
+	bus_free(d);
+	d->running = false;
+	d->waiting_resel = false;
+	scsi_int(d, SSTAT0_RST);
+}
+
+static uint8_t reg_read(struct osiop_data *d, int r)
+{
+	uint8_t v = d->reg[r];
+
+	switch (r) {
+	case R_DSTAT:
+		/*  Reading DSTAT clears it (and DIP).  */
+		d->reg[R_DSTAT] = DSTAT_DFE;
+		d->reg[R_ISTAT] &= ~ISTAT_DIP;
+		update_irq(d);
+		return v | DSTAT_DFE;
+	case R_SSTAT0:
+		d->reg[R_SSTAT0] = 0;
+		d->reg[R_ISTAT] &= ~ISTAT_SIP;
+		update_irq(d);
+		return v;
+	case R_CTEST2:
+		/*  Reading CTEST2 clears SIGP.  */
+		v = (d->reg[R_ISTAT] & ISTAT_SIGP) ? 0x40 : 0;
+		d->reg[R_ISTAT] &= ~ISTAT_SIGP;
+		return v;
+	case R_SSTAT1:
+		return 0;
+	case R_SSTAT2:
+		return d->reg[R_SSTAT2] & 0x0f;	/*  SCSI FIFO empty  */
+	case R_DFIFO:
+		return 0;
+	case R_CTEST1:
+		return 0xf0;
+	case R_CTEST8:
+		return (CHIP_REVISION << 4) | (d->reg[R_CTEST8] & 0x0f);
+	}
+	return v;
+}
+
+static void reg_write(struct osiop_data *d, int r, uint8_t v)
+{
+	switch (r) {
+	case R_DSTAT:
+	case R_SSTAT0:
+	case R_SSTAT1:
+	case R_SSTAT2:
+	case R_SFBR:
+	case R_SIDL:
+	case R_SBDL:
+	case R_CTEST0:
+	case R_CTEST1:
+	case R_CTEST2:
+	case R_CTEST3:
+	case R_ADDER: case R_ADDER+1: case R_ADDER+2: case R_ADDER+3:
+		return;
+
+	case R_ISTAT:
+		if (v & ISTAT_RST) {
+			chip_reset(d);
+			return;
+		}
+		if (v & ISTAT_ABRT) {
+			if (d->running || d->waiting_resel) {
+				d->waiting_resel = false;
+				dma_int(d, DSTAT_ABRT);
+			}
+		}
+		if (v & ISTAT_SIGP)
+			d->reg[R_ISTAT] |= ISTAT_SIGP;
+		return;
+
+	case R_SCNTL1:
+		if ((v & SCNTL1_RST) && !(d->reg[r] & SCNTL1_RST))
+			scsi_bus_reset(d);
+		d->reg[r] = (v & ~SCNTL1_CON) | (d->reg[r] & SCNTL1_CON);
+		return;
+
+	case R_DSP + 3:
+		/*  Writing the low byte of DSP starts SCRIPTS.  */
+		d->reg[r] = v;
+		if (!(d->reg[R_DMODE] & DMODE_MAN))
+			scripts_start(d);
+		return;
+
+	case R_DCNTL:
+		d->reg[r] = v & ~DCNTL_STD;
+		if (v & DCNTL_STD)
+			scripts_start(d);
+		return;
+	}
+
+	d->reg[r] = v;
 }
 
 
 DEVICE_ACCESS(osiop)
 {
-	uint64_t idata = 0, odata = 0;
-	uint8_t oldreg = 0;
 	struct osiop_data *d = (struct osiop_data *) extra;
-	int origofs = relative_addr;
-	int non1lenOk = 0;
+	size_t i;
 
-	idata = memory_readmax64(cpu, data, len);
-
-	/*  Make relative_addr suit addresses in osiopreg.h:  */
-	if (cpu->byte_order == EMUL_BIG_ENDIAN) {
-		relative_addr =
-		    (relative_addr & ~3) |
-		    (3 - (relative_addr & 3));
-	}
-
-	if (len == sizeof(uint32_t)) {
-		/*
-		 *  NOTE: These are stored in HOST byte order!
-		 */
-		switch (origofs) {
-		case OSIOP_DSA:
-		case OSIOP_TEMP:
-		case OSIOP_DBC:
-		case OSIOP_DNAD:
-		case OSIOP_DSP:
-		case OSIOP_DSPS:
-		case OSIOP_SCRATCH:
-		case OSIOP_ADDER:
-			relative_addr = origofs;
-			non1lenOk = 1;
-
-			uint32_t *p = (uint32_t*) &d->reg[origofs];
-
-			if (writeflag == MEM_WRITE)
-				*p = idata;
-			else
-				odata = *p;
-			
-			break;
-		}
-	} else {
-		/*  Byte access:  */
-		oldreg = d->reg[relative_addr];
-
-		if (writeflag == MEM_WRITE)
-			d->reg[relative_addr] = idata;
+	for (i = 0; i < len; i++) {
+		int r = (relative_addr + i) & (OSIOP_LEN - 1);
+		if (writeflag == MEM_READ)
+			data[i] = reg_read(d, r);
 		else
-			odata = oldreg;
+			reg_write(d, r, data[i]);
 	}
 
-	switch (relative_addr) {
-
-	case OSIOP_SCNTL0:
-	case OSIOP_SCNTL1:
-		break;
-
-	case OSIOP_SIEN:
-		/*  Used by OpenBSD/mvme88k during probing:  */
-		if (len == 4)
-			non1lenOk = 1;
-		if (writeflag == MEM_WRITE)
-			osiop_reassert_interrupts(d);
-		break;
-
-	case OSIOP_SCID:
-		if (idata != oldreg) {
-			fatal("osiop TODO: attempt to change SCID?\n");
-			exit(1);
-		}
-		break;
-
-	case OSIOP_SBDL:
-		if (writeflag == MEM_WRITE)
-			fatal("[ osiop: SBDL set to 0x%x, but should be "
-			    "read-only! ]\n", (int) idata);
-		break;
-
-	case OSIOP_SBCL:
-		if (writeflag == MEM_WRITE) {
-			if (osiop_debug)
-				debug("[ osiop: SBCL set to 0x%x ]\n", (int) idata);
-		}
-		break;
-
-	case OSIOP_DSTAT:
-		/*  Cleared when read. Most likely not writable.  */
-		odata = d->reg[OSIOP_DSTAT];
-		d->reg[OSIOP_DSTAT] = OSIOP_DSTAT_DFE;
-		osiop_reassert_interrupts(d);
-		break;
-
-	case OSIOP_SSTAT0:
-		/*  Cleared when read. Most likely not writable.  */
-		odata = d->reg[OSIOP_SSTAT0];
-		d->reg[OSIOP_SSTAT0] = 0;
-		osiop_reassert_interrupts(d);
-		break;
-
-	case OSIOP_SSTAT1:
-	case OSIOP_SSTAT2:
-		break;
-		
-	case OSIOP_DSA:
-		if (writeflag == MEM_WRITE) {
-			if (osiop_debug)
-				debug("[ osiop: DSA set to 0x%x ]\n", (int) idata);
-		}
-		break;
-
-	case OSIOP_CTEST0:
-	case OSIOP_CTEST1:
-	case OSIOP_CTEST2:
-	case OSIOP_CTEST3:
-	case OSIOP_CTEST4:
-	case OSIOP_CTEST5:
-	case OSIOP_CTEST6:
-	case OSIOP_CTEST7:
-		break;
-
-	case OSIOP_TEMP:
-		if (writeflag == MEM_WRITE) {
-			if (osiop_debug)
-				debug("[ osiop: TEMP set to 0x%x ]\n", (int) idata);
-		}
-		break;
-
-	case OSIOP_DFIFO:
-		break;
-
-	case OSIOP_ISTAT:
-		if (writeflag == MEM_WRITE) {
-			if ((idata & 0x3f) != 0x00) {
-				fatal("osiop TODO: istat 0x%x\n", (int) idata);
-				exit(1);
-			}
-
-			d->reg[relative_addr] = idata &
-			    ~(OSIOP_ISTAT_ABRT | OSIOP_ISTAT_RST);
-			osiop_reassert_interrupts(d);
-		}
-		break;
-
-	case OSIOP_CTEST8:
-		odata = (odata & 0xf) | (OSIOP_CHIP_REVISION << 4);
-		break;
-
-	case OSIOP_DBC:
-		break;
-
-	case OSIOP_DSP:
-		if (writeflag == MEM_WRITE) {
-			if (osiop_debug)
-				debug("[ osiop: DSP set to 0x%x ]\n", (int) idata);
-
-			d->scripts_running = 1;
-			osiop_execute_scripts(cpu, d);
-			osiop_reassert_interrupts(d);
-		}
-		break;
-
-	case OSIOP_DSPS:
-	case OSIOP_SCRATCH:
-		break;
-
-	case OSIOP_DMODE:
-		break;
-
-	case OSIOP_DIEN:
-		if (writeflag == MEM_WRITE)
-			osiop_reassert_interrupts(d);
-		break;
-
-	case OSIOP_DWT:
-		break;
-
-	case OSIOP_DCNTL:
-		if (writeflag == MEM_WRITE) {
-			if (idata & OSIOP_DCNTL_SSM) {
-				fatal("osiop TODO: SSM\n");
-				exit(1);
-			}
-			if (idata & OSIOP_DCNTL_LLM) {
-				fatal("osiop TODO: LLM\n");
-				exit(1);
-			}
-			if (idata & OSIOP_DCNTL_STD) {
-				fatal("osiop TODO: STD\n");
-				exit(1);
-			}
-		}
-		break;
-
-	default:
-		if (writeflag == MEM_READ) {
-			fatal("[ osiop: read from 0x%02lx ]\n",
-			    (long)relative_addr);
-		} else {
-			fatal("[ osiop: write to  0x%02lx: 0x%02x ]\n",
-			    (long)relative_addr, (int)idata);
-		}
-
-		exit(1);
-	}
-
-	if (len != 1 && !non1lenOk) {
-		fatal("[ osiop: TODO: len != 1, addr 0x%0x ]\n",
-		    (int)relative_addr);
-		exit(1);
-	}
-
-	if (writeflag == MEM_READ)
-		memory_writemax64(cpu, data, len, odata);
+	/*  Run SCRIPTS a little right away, so that short sequences
+	    (selection timeouts, quick commands) are fast:  */
+	if (writeflag == MEM_WRITE && d->running)
+		scripts_run(d, MAX_SCRIPTS_PER_TICK);
 
 	return 1;
 }
@@ -1037,22 +1189,23 @@ DEVINIT(osiop)
 
 	CHECK_ALLOCATION(d = (struct osiop_data *) malloc(sizeof(struct osiop_data)));
 	memset(d, 0, sizeof(struct osiop_data));
-
-	/*  Set up initial device register values:  */
-	d->reg[OSIOP_SCID] = OSIOP_SCID_VALUE(7);
-
-	/*  OpenBSD's osiop_checkintr needs this:  */
-	d->reg[OSIOP_CTEST1] = OSIOP_CTEST1_FMT;
+	d->machine = devinit->machine;
+	d->base = devinit->addr;
+	d->phase = PH_BUS_FREE;
+	d->reg[R_SCID] = 0x80;		/*  ID 7  */
 
 	INTERRUPT_CONNECT(devinit->interrupt_path, d->irq);
 
-	memory_device_register(devinit->machine->memory, "osiop",
-	    devinit->addr, DEV_OSIOP_LENGTH,
-	    dev_osiop_access, d, DM_DEFAULT, NULL);
+	chip_reset(d);
+
+	memory_device_register(devinit->machine->memory, devinit->name,
+	    devinit->addr, 0x1000, dev_osiop_access, (void *)d,
+	    DM_DEFAULT, NULL);
 
 	machine_add_tickfunction(devinit->machine,
 	    dev_osiop_tick, d, OSIOP_TICK_SHIFT);
 
+	(void) phase_names;
 	return 1;
 }
 

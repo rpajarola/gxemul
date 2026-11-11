@@ -528,12 +528,7 @@ void m88k_stcr(struct cpu *cpu, uint32_t value, int cr, int rte)
 			    "instruction only, according to the M88100 "
 			    "manual! Continuing anyway.");
 
-		if (value & M88K_PSR_MXM) {
-			debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-			    "stcr: TODO: MXM support");
-			cpu->running = false;
-			return;
-		}
+		/*  (MXM: misaligned accesses are truncated.)  */
 
 		if ((old & M88K_PSR_MODE) != (value & M88K_PSR_MODE))
 			cpu->invalidate_translation_caches(
@@ -664,98 +659,31 @@ static void m88k_memory_transaction_debug_dump(struct cpu *cpu, int n)
 void m88k_exception(struct cpu *cpu, int vector, int is_trap)
 {
 	bool update_shadow_regs = true;
-	bool implemented = false;
 
 	// TODO: Use a const char * instead or something like that, inside the switch...
 
 	switch (vector) {
-
 	case M88K_EXCEPTION_RESET:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "RESET", VERBOSITY_INFO, "");
-		implemented = true;
-		break;
-
 	case M88K_EXCEPTION_INTERRUPT:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "INTERRUPT", VERBOSITY_INFO, "");
-		implemented = true;
-		break;
-
 	case M88K_EXCEPTION_INSTRUCTION_ACCESS:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "INSTRUCTION_ACCESS", VERBOSITY_INFO, "");
-		implemented = true;
-		break;
-
 	case M88K_EXCEPTION_DATA_ACCESS:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "DATA_ACCESS", VERBOSITY_INFO, "");
-		implemented = true;
-		break;
-
 	case M88K_EXCEPTION_MISALIGNED_ACCESS:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "MISALIGNED_ACCESS", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_UNIMPLEMENTED_OPCODE:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "UNIMPLEMENTED_OPCODE", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_PRIVILEGE_VIOLATION:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "PRIVILEGE_VIOLATION", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_BOUNDS_CHECK_VIOLATION:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "BOUNDS_CHECK_VIOLATION", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_ILLEGAL_INTEGER_DIVIDE:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "ILLEGAL_INTEGER_DIVIDE", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_INTEGER_OVERFLOW:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "INTEGER_OVERFLOW", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_ERROR:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "ERROR", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_SFU1_PRECISE:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "SFU1_PRECISE", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_SFU1_IMPRECISE:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "SFU1_IMPRECISE", VERBOSITY_ERROR, "");
+		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "exception",
+		    VERBOSITY_DEBUG, "vector %i, pc=0x%08x", vector,
+		    (int) cpu->pc);
 		break;
-
-	case 0x80:	/*  up to OpenBSD 5.2  */
-	case 0x1c2:	/*  from OpenBSD 5.3 and forward...  */
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "syscall", VERBOSITY_INFO,
-		    "r13=%i", cpu->cd.m88k.r[13]);
-#if 0
-		fatal("[ syscall %i(", cpu->cd.m88k.r[13]);
-		m88k_cpu_functioncall_trace(cpu, 8);
-		fatal(") ]\n");
-#endif
-		break;
-
-	case MVMEPROM_VECTOR:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "MVMEPROM_VECTOR", VERBOSITY_INFO, "");
-		break;
-
 	default:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "unknown vector",
-		    vector < M88K_EXCEPTION_USER_TRAPS_START ? VERBOSITY_ERROR
-		    : VERBOSITY_INFO, "0x%03x", vector);
-	}
-
-	if (vector < M88K_EXCEPTION_USER_TRAPS_START && !implemented) {
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "unimplemented",
-		    VERBOSITY_ERROR, "vector=0x%03x pc=0x%08x",
-			vector,
-			(int)cpu->pc);
-		for (int j = 0; j < cpu->machine->ncpus; ++j)
-			cpu->machine->cpus[j]->running = false;
-		m88k_pc_to_pointers(cpu);
-		return;
+		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "exception",
+		    VERBOSITY_DEBUG, "vector 0x%03x, pc=0x%08x", vector,
+		    (int) cpu->pc);
 	}
 
 	/*  Stuff common for all exceptions:  */
@@ -890,9 +818,11 @@ void m88k_exception(struct cpu *cpu, int vector, int is_trap)
 			break;
 #endif
 
-		default:debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "m88k",
-			    VERBOSITY_ERROR, "internal error");
-			cpu->running = false;
+		default:
+			/*  The faulting instruction is not completed; rte
+			    continues at SNIP (the handler emulates or skips
+			    it).  */
+			break;
 		}
 	}
 

@@ -166,6 +166,11 @@ void LS_GENERIC_N(struct cpu *cpu, struct m88k_instr_call *ic)
 
 #ifndef LS_1
 	/*  Check alignment:  */
+	if ((addr & (LS_SIZE - 1)) &&
+	    (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MXM)) {
+		/*  Misaligned accesses masked: the low bits are ignored.  */
+		addr &= ~(LS_SIZE - 1);
+	}
 	if (addr & (LS_SIZE - 1)) {
 #if 1
 		/*  Cause an address alignment exception:  */
