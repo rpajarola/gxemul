@@ -290,6 +290,7 @@ void m88k_ldcr(struct cpu *cpu, uint32_t *r32ptr, int cr);
 void m88k_stcr(struct cpu *cpu, uint32_t value, int cr, int rte);
 void m88k_fstcr(struct cpu *cpu, uint32_t value, int fcr);
 void m88k_exception(struct cpu *cpu, int vector, int is_trap);
+void m88k_bus_error(struct cpu *cpu, int instr, uint32_t paddr);
 
 /*  memory_m88k.c:  */
 int m88k_translate_v2p(struct cpu *cpu, uint64_t vaddr,

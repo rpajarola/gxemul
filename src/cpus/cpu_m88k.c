@@ -51,6 +51,7 @@
 #include "symbol.h"
 
 #include "thirdparty/m8820x_pte.h"
+#include "thirdparty/m8820x.h"
 #include "thirdparty/m88k_dmt.h"
 #include "thirdparty/mvmeprom.h"
 
@@ -896,6 +897,30 @@ void m88k_exception(struct cpu *cpu, int vector, int is_trap)
 	}
 
 	m88k_pc_to_pointers(cpu);
+}
+
+
+/*
+ *  m88k_bus_error():
+ *
+ *  A local bus cycle ended with TEA (nothing answered, or a device refused
+ *  it). The CMMU of the access reports a bus error, with the physical
+ *  address, and the CPU takes an instruction or data access exception.
+ */
+void m88k_bus_error(struct cpu *cpu, int instr, uint32_t paddr)
+{
+	struct m8820x_cmmu *cmmu = cpu->cd.m88k.cmmu[instr? 0 : 1];
+	struct m8820x_cmmu *other = cpu->cd.m88k.cmmu[instr? 1 : 0];
+
+	if (cmmu != NULL) {
+		cmmu->reg[CMMU_PFSR] = CMMU_PFSR_BERROR << 16;
+		cmmu->reg[CMMU_PFAR] = paddr;
+	}
+	if (other != NULL)
+		other->reg[CMMU_PFSR] = CMMU_PFSR_SUCCESS << 16;
+
+	m88k_exception(cpu, instr ? M88K_EXCEPTION_INSTRUCTION_ACCESS
+	    : M88K_EXCEPTION_DATA_ACCESS, 0);
 }
 
 

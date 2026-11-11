@@ -51,6 +51,33 @@
 
 
 /*
+ *  Page table accesses (physical, big-endian words; the tables may be in
+ *  any memory, not only RAM):
+ */
+static uint32_t table_read(struct cpu *cpu, uint32_t paddr)
+{
+	unsigned char b[4];
+	cpu->memory_rw(cpu, cpu->mem, paddr, b, 4, MEM_READ,
+	    PHYSICAL | NO_EXCEPTIONS);
+	if (cpu->byte_order == EMUL_LITTLE_ENDIAN)
+		return b[0] | (b[1] << 8) | (b[2] << 16) | ((uint32_t)b[3] << 24);
+	return ((uint32_t)b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3];
+}
+
+static void table_write(struct cpu *cpu, uint32_t paddr, uint32_t v)
+{
+	unsigned char b[4];
+	if (cpu->byte_order == EMUL_LITTLE_ENDIAN) {
+		b[0] = v; b[1] = v >> 8; b[2] = v >> 16; b[3] = v >> 24;
+	} else {
+		b[0] = v >> 24; b[1] = v >> 16; b[2] = v >> 8; b[3] = v;
+	}
+	cpu->memory_rw(cpu, cpu->mem, paddr, b, 4, MEM_WRITE,
+	    PHYSICAL | NO_EXCEPTIONS);
+}
+
+
+/*
  *  m8820x_mark_page_as_modified():
  *
  *  Helper function which traverses the page table structure in emulated
@@ -60,37 +87,58 @@ void m8820x_mark_page_as_modified(struct cpu *cpu,
 	struct m8820x_cmmu *cmmu, uint32_t apr, uint32_t vaddr)
 {
 	int seg_nr = vaddr >> 22, page_nr = (vaddr >> 12) & 0x3ff;
-	uint32_t *seg_base, *page_base;
-	sdt_entry_t seg_descriptor;
-	pt_entry_t page_descriptor;
+	uint32_t sd, pd_addr;
 
-	/*  Read the segment descriptor from memory:  */
-	seg_base = (uint32_t *) memory_paddr_to_hostaddr(
-	    cpu->mem, apr & 0xfffff000, 1);
-	seg_descriptor = seg_base[seg_nr];
-	if (cpu->byte_order == EMUL_LITTLE_ENDIAN)
-		seg_descriptor = LE32_TO_HOST(seg_descriptor);
-	else
-		seg_descriptor = BE32_TO_HOST(seg_descriptor);
+	sd = table_read(cpu, (apr & 0xfffff000) + seg_nr * 4);
+	pd_addr = (sd & 0xfffff000) + page_nr * 4;
+	table_write(cpu, pd_addr, table_read(cpu, pd_addr) | PG_M | PG_U);
+}
 
-	/*  ... and the page descriptor:  */
-	page_base = (uint32_t *) memory_paddr_to_hostaddr(
-	    cpu->mem, seg_descriptor & 0xfffff000, 1);
-	page_descriptor = page_base[page_nr];
-	if (cpu->byte_order == EMUL_LITTLE_ENDIAN)
-		page_descriptor = LE32_TO_HOST(page_descriptor);
-	else
-		page_descriptor = BE32_TO_HOST(page_descriptor);
 
-	/*  ... set the Modified and Used bits:  */
-	page_descriptor |= PG_M | PG_U;
+/*
+ *  m8820x_probe():
+ *
+ *  The CMMU probe command: looks up a virtual address in the BATC, PATC
+ *  and the page tables without changing anything. Returns the System
+ *  Status Register value; *paddr is the physical address if valid.
+ */
+uint32_t m8820x_probe(struct cpu *cpu, struct m8820x_cmmu *cmmu,
+	uint32_t vaddr, int supervisor, uint32_t *paddr)
+{
+	uint32_t apr = supervisor ? cmmu->reg[CMMU_SAPR] : cmmu->reg[CMMU_UAPR];
+	uint32_t sd, pd;
+	int i;
 
-	/*  ... and write it back:  */
-	if (cpu->byte_order == EMUL_LITTLE_ENDIAN)
-		page_descriptor = LE32_TO_HOST(page_descriptor);
-	else
-		page_descriptor = BE32_TO_HOST(page_descriptor);
-	page_base[page_nr] = page_descriptor;
+	*paddr = vaddr;
+
+	for (i = 0; i < N_M88200_BATC_REGS; i++) {
+		uint32_t batc = cmmu->batc[i];
+		if (!(batc & BATC_V) || (vaddr & 0xfff80000) !=
+		    (batc & 0xfff80000))
+			continue;
+		if (!supervisor != !(batc & BATC_SO))
+			continue;
+		*paddr = ((batc & 0x0007ffc0) << 13) | (vaddr & 0x0007ffff);
+		return CMMU_SSR_V | CMMU_SSR_BH |
+		    (batc & BATC_PROT ? CMMU_SSR_PROT : 0) |
+		    (batc & BATC_SO ? CMMU_SSR_SO : 0);
+	}
+
+	if (!(apr & APR_V))
+		return 0;
+
+	sd = table_read(cpu, (apr & 0xfffff000) + (vaddr >> 22) * 4);
+	if (!(sd & SG_V))
+		return 0;
+	pd = table_read(cpu, (sd & 0xfffff000) + ((vaddr >> 12) & 0x3ff) * 4);
+	if (!(pd & PG_V))
+		return 0;
+
+	*paddr = (pd & 0xfffff000) | (vaddr & 0xfff);
+	return CMMU_SSR_V | ((sd | pd) & SG_PROT ? CMMU_SSR_PROT : 0) |
+	    ((sd | pd) & SG_SO ? CMMU_SSR_SO : 0) |
+	    (pd & PG_M ? CMMU_SSR_M : 0) | (pd & PG_U ? CMMU_SSR_U : 0) |
+	    (pd & (CACHE_WT | CACHE_GLOBAL | CACHE_INH));
 }
 
 
@@ -112,7 +160,6 @@ int m88k_translate_v2p(struct cpu *cpu, uint64_t vaddr64,
 	struct m8820x_cmmu *cmmu = cpu->cd.m88k.cmmu[instr? 0 : 1];
 	uint32_t vaddr = vaddr64;
 	uint32_t apr;
-	uint32_t *seg_base, *page_base;
 	sdt_entry_t seg_descriptor;
 	pt_entry_t page_descriptor;
 	int pfsr_status = CMMU_PFSR_SUCCESS;
@@ -240,24 +287,7 @@ int m88k_translate_v2p(struct cpu *cpu, uint64_t vaddr64,
 	/*
 	 *  Attempt a search through page tables, to refill the PATC:
 	 */
-	seg_base = (uint32_t *) memory_paddr_to_hostaddr(
-	    cpu->mem, apr & 0xfffff000, 1);
-
-	seg_descriptor = seg_base[seg_nr];
-	if (cpu->byte_order == EMUL_LITTLE_ENDIAN)
-		seg_descriptor = LE32_TO_HOST(seg_descriptor);
-	else
-		seg_descriptor = BE32_TO_HOST(seg_descriptor);
-
-#ifdef M8820X_TABLE_SEARCH_DEBUG
-	printf("+---   M8820x page table search debug:\n");
-	printf("| vaddr     0x%08"PRIx32"\n", vaddr);
-	printf("| apr       0x%08"PRIx32"\n", apr);
-	printf("| seg_base  %p (on the host)\n", seg_base);
-	printf("| seg_nr    0x%03x\n", seg_nr);
-	printf("| page_nr   0x%03x\n", page_nr);
-	printf("| sd        0x%08"PRIx32"\n", seg_descriptor);
-#endif
+	seg_descriptor = table_read(cpu, (apr & 0xfffff000) + seg_nr * 4);
 
 	/*  Segment descriptor invalid? Then cause a segfault exception.  */
 	if (!(seg_descriptor & SG_V)) {
@@ -277,19 +307,8 @@ int m88k_translate_v2p(struct cpu *cpu, uint64_t vaddr64,
 
 	accumulated_flags = seg_descriptor & SG_RO;
 
-	page_base = (uint32_t *) memory_paddr_to_hostaddr(
-	    cpu->mem, seg_descriptor & 0xfffff000, 1);
-
-	page_descriptor = page_base[page_nr];
-	if (cpu->byte_order == EMUL_LITTLE_ENDIAN)
-		page_descriptor = LE32_TO_HOST(page_descriptor);
-	else
-		page_descriptor = BE32_TO_HOST(page_descriptor);
-
-#ifdef M8820X_TABLE_SEARCH_DEBUG
-	printf("| page_base %p (on the host)\n", page_base);
-	printf("| pd        0x%08"PRIx32"\n", page_descriptor);
-#endif
+	page_descriptor = table_read(cpu, (seg_descriptor & 0xfffff000)
+	    + page_nr * 4);
 
 	/*  Page descriptor invalid? Then cause a page fault exception.  */
 	if (!(page_descriptor & PG_V)) {
@@ -356,13 +375,9 @@ int m88k_translate_v2p(struct cpu *cpu, uint64_t vaddr64,
 		tmp = page_descriptor | PG_U;
 		if (writeflag)
 			tmp |= PG_M;
-
-		if (cpu->byte_order == EMUL_LITTLE_ENDIAN)
-			tmp = LE32_TO_HOST(tmp);
-		else
-			tmp = BE32_TO_HOST(tmp);
-
-		page_base[page_nr] = tmp;
+		if (tmp != page_descriptor)
+			table_write(cpu, (seg_descriptor & 0xfffff000)
+			    + page_nr * 4, tmp);
 	}
 
 	/*  Now finally return with the translated page address:  */

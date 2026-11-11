@@ -382,14 +382,8 @@ not just the device in question.
 					}
 #endif
 #ifdef MEM_M88K
-					/*  TODO: This is enough for
-					    OpenBSD/mvme88k's badaddr()
-					    implementation... but the
-					    faulting address should probably
-					    be included somewhere too!  */
-					m88k_exception(cpu, cache == CACHE_INSTRUCTION
-					    ? M88K_EXCEPTION_INSTRUCTION_ACCESS
-					    : M88K_EXCEPTION_DATA_ACCESS, 0);
+					m88k_bus_error(cpu, cache ==
+					    CACHE_INSTRUCTION, orig_paddr);
 #endif
 					return MEMORY_ACCESS_FAILED;
 				}
@@ -450,6 +444,19 @@ not just the device in question.
 				if (writeflag == MEM_READ)
 					memset(data, 0xff, len);
 				goto do_return_ok;
+			}
+#endif
+#ifdef MEM_M88K
+			/*  Nothing answers: the CMMU reports a bus error.  */
+			if (cpu->cd.m88k.cmmu[0] != NULL) {
+				if (no_exceptions) {
+					if (writeflag == MEM_READ)
+						memset(data, 0xff, len);
+					goto do_return_ok;
+				}
+				m88k_bus_error(cpu, cache == CACHE_INSTRUCTION,
+				    paddr);
+				return MEMORY_ACCESS_FAILED;
 			}
 #endif
 			if (paddr >= mem->physical_max && !no_exceptions)

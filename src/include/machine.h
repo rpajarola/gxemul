@@ -201,6 +201,7 @@ struct machine {
 		struct of_data		*of_data;
 		struct dec3000_data	*dec3000;
 		struct jensen_data	*jensen;
+		struct mvme187_data	*mvme187;
 	} md;
 
 	/*  Bus-specific interrupt data:  */
@@ -429,6 +430,9 @@ int dec3000_load_rom(struct machine *machine, const char *filename,
 	uint64_t *entrypointp);
 /*  machine_jensen.c:  */
 int jensen_load_rom(struct machine *machine, const char *filename,
+	uint64_t *entrypointp);
+/*  machine_mvme88k.c:  */
+int mvme187_load_rom(struct machine *machine, const char *filename,
 	uint64_t *entrypointp);
 
 void machine_entry_add_subtype(struct machine_entry *me, const char *name,

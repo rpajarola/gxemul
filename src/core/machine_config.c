@@ -1798,6 +1798,7 @@ uint64_t machine_config_rom_address(const char *type)
 	case MACHINE_PMAX:	return 0xbfc00000ULL;
 	case MACHINE_DEC3000:	return 0x1e0000000ULL;	/*  (the FEPROM)  */
 	case MACHINE_JENSEN:	return 0x180000000ULL;	/*  (Flash ROM window 0)  */
+	case MACHINE_MVME88K:	return 0xff800000ULL;	/*  (the EPROM)  */
 	}
 	return 0;
 }
@@ -3172,7 +3173,8 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 	if (machine_config_uses_rom(c)) {
 		char *f = rom_to_load(c, c->rom);
 		if (machine_config_machine_type(c->type) == MACHINE_DEC3000 ||
-		    machine_config_machine_type(c->type) == MACHINE_JENSEN)
+		    machine_config_machine_type(c->type) == MACHINE_JENSEN ||
+		    machine_config_machine_type(c->type) == MACHINE_MVME88K)
 			/*  A firmware update file, or ROM images, which the
 			    machine's serial ROM emulation takes apart:  */
 			s = xstrdup(f);
