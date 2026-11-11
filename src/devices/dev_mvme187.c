@@ -101,6 +101,7 @@ struct prescaler {
 };
 
 struct mvme187_data {
+	int		subsys;		/*  for debugmsg  */
 	struct machine	*machine;
 	struct cpu	*cpu;
 	struct interrupt cpu_irq;
@@ -139,8 +140,6 @@ struct mvme187_data {
 	uint8_t		memc[2][0x20];
 	int		n_memc;
 
-	/*  82596CA MPU port (the two halves of a port command):  */
-	uint16_t	lan_port_first;
 };
 
 
@@ -166,6 +165,53 @@ static uint64_t bclk(struct mvme187_data *d)
 	return (uint64_t)(tv.tv_sec - start.tv_sec) * BCLK_HZ +
 	    (uint64_t)((tv.tv_usec - start.tv_usec) * (BCLK_HZ / 1000000));
 }
+
+/*
+ *  The board configuration in the BBRAM (at $FFFC1EF8, shown and set by
+ *  187Bug's CNFG command), as programmed at the factory. 187Bug only
+ *  enables the LAN controller with an Ethernet address there, and it uses
+ *  the board identifier to tell which devices are on the board. A blank
+ *  area is filled in.
+ */
+void dev_mvme187_brdid_defaults(struct machine *machine, uint8_t *nvram)
+{
+	uint8_t *p = nvram + 0x1ef8, mac[6];
+	int i, sum;
+
+	for (i = 0; i < 0x66; i++)
+		if (p[i] != 0x00 && p[i] != 0xff)
+			return;
+
+	if (machine->nic_mac_set) {
+		memcpy(mac, machine->nic_mac, 6);
+	} else {
+		/*  Motorola's, 08003E2xxxxx:  */
+		mac[0] = 0x08; mac[1] = 0x00; mac[2] = 0x3e;
+		mac[3] = 0x20 | (random() & 0x0f);
+		mac[4] = random(); mac[5] = random();
+	}
+
+	memset(p, ' ', 0x66);
+	memcpy(p + 0x00, "0100", 4);			/*  version  */
+	memcpy(p + 0x04, "000000000001", 12);		/*  serial number  */
+	memcpy(p + 0x10, "MVME187-03", 10);		/*  board id  */
+	memcpy(p + 0x20, "01-W3827B03A", 12);		/*  artwork  */
+	snprintf((char *) p + 0x30, 5, "%02i00", BCLK_HZ / 1000000);
+	memcpy(p + 0x34, mac, 6);			/*  Ethernet address  */
+	p[0x3a] = p[0x3b] = 0;
+	memcpy(p + 0x3c, "07", 2);			/*  SCSI id  */
+	memset(p + 0x3e, 0, 8);				/*  system id  */
+
+	/*  The checksum: the 8-bit sum with end-around carry of the
+	    bytes up to it, at $FFFC1FF7.  */
+	for (i = 0, sum = 0; i < 0xff; i++) {
+		sum += p[i];
+		if (sum > 0xff)
+			sum = (sum + 1) & 0xff;
+	}
+	p[0xff] = sum;
+}
+
 
 /*  Emulated time since power-up, in microseconds (also for the RTC):  */
 uint64_t dev_mvme187_time_us(struct mvme187_data *d)
@@ -661,8 +707,15 @@ DEVICE_ACCESS(mvme187_lcsr)
 		    (d->vtimer[1].overflows << 12);
 		break;
 	case VME2_PRESCALE:
-		odata = (uint32_t) (bclk(d) / (256 - (d->lcsr[VME2_TCR / 4]
-		    & 0xff)));
+		/*  The low 8 bits count from the adjust value to 0xff at the
+		    bus clock rate; the upper 24 bits count their reloads
+		    (microseconds, with the adjust value set right).  */
+		{
+			uint8_t adj = d->lcsr[VME2_TCR / 4] & 0xff;
+			uint64_t b = bclk(d);
+			odata = (uint32_t) ((b / (256 - adj)) << 8) |
+			    (adj + (b % (256 - adj)));
+		}
 		break;
 	case VME2_IRQSTAT:
 		odata = d->vme_irqstat;
@@ -789,7 +842,11 @@ static uint8_t pcc_read(struct mvme187_data *d, uint32_t a)
 	case PCCTWO_T2COUNT+2: case PCCTWO_T2COUNT+3:
 		return d->ptimer[1].count >> ((3 - (a & 3)) * 8);
 	case PCCTWO_PSCALECNT:
-		return (uint8_t) bclk(d);
+		/*  Counts from the adjust value to 0xff at BCLK:  */
+		{
+			uint8_t adj = d->pcc[PCCTWO_PSCALEADJ];
+			return adj + bclk(d) % (256 - adj);
+		}
 	case PCCTWO_T1CTL:
 		return (d->pcc[a] & 0x0b) | (d->ptimer[0].overflows << 4);
 	case PCCTWO_T2CTL:
@@ -962,62 +1019,6 @@ DEVICE_ACCESS(mvme187_memc)
 
 /*****************************************************************************
  *
- *  82596CA LAN coprocessor: the MPU port and channel attention. (TODO: the
- *  rest of the chip. For now it passes its self-test and does nothing.)
- */
-
-static void lan_write32(struct mvme187_data *d, uint32_t addr, uint32_t v)
-{
-	unsigned char b[4] = { (unsigned char)(v >> 24), (unsigned char)(v >> 16),
-	    (unsigned char)(v >> 8), (unsigned char)v };
-	d->cpu->memory_rw(d->cpu, d->machine->memory, addr, b, 4, MEM_WRITE,
-	    PHYSICAL | NO_EXCEPTIONS);
-}
-
-DEVICE_ACCESS(mvme187_lan)
-{
-	struct mvme187_data *d = (struct mvme187_data *) extra;
-	uint32_t a = relative_addr & 0xfff, cmd;
-
-	/*  Channel attention: any access to $FFF46004.  */
-	if (a >= 4 && a < 8) {
-		if (writeflag == MEM_READ)
-			memset(data, 0, len);
-		return 1;
-	}
-
-	/*  The port only decodes writes, of two 16-bit halves.  */
-	if (writeflag == MEM_READ || a >= 4 || len != 2)
-		return 0;
-
-	if (a < 2) {
-		d->lan_port_first = memory_readmax64(cpu, data, len);
-		return 1;
-	}
-
-	cmd = ((uint32_t) memory_readmax64(cpu, data, len) << 16) |
-	    d->lan_port_first;
-
-	switch (cmd & 0xf) {
-	case 0:		/*  software reset  */
-		break;
-	case 1:		/*  self-test: ROM signature, then result (0 = pass)  */
-		lan_write32(d, (cmd & ~0xf), 0x00000000);
-		lan_write32(d, (cmd & ~0xf) + 4, 0x00000000);
-		break;
-	case 2:		/*  alternate SCP address  */
-		break;
-	case 3:		/*  dump: an empty dump, with the completion word  */
-		lan_write32(d, (cmd & ~0xf), 0x0000a006);
-		break;
-	}
-
-	return 1;
-}
-
-
-/*****************************************************************************
- *
  *  Interrupt acknowledge space, and areas that do not respond.
  */
 
@@ -1030,10 +1031,9 @@ DEVICE_ACCESS(mvme187_iack)
 		return 0;
 
 	vec = iack(d, level);
-	if (getenv("MVME187_IACK") != NULL && vec != 0x19 && vec != 0x15)
-		fprintf(stderr, "[ iack level %i: vector %i (0x%x); pcc %02x%02x"
-		    "%02x%02x %02x%02x%02x%02x; vme stat %08x en %08x vbr %08x"
-		    " ]\n", level, vec, vec, d->pcc[0x18], d->pcc[0x1a],
+	debugmsg(d->subsys, "iack", VERBOSITY_DEBUG,
+	    "level %i: vector %i (0x%x); pcc %02x%02x%02x%02x %02x%02x%02x%02x;"
+	    " vme stat %08x en %08x vbr %08x", level, vec, vec, d->pcc[0x18], d->pcc[0x1a],
 		    d->pcc[0x1b], d->pcc[0x1d], d->pcc[0x1e], d->pcc[0x1f],
 		    d->pcc[0x2a], d->pcc[0x2f], d->vme_irqstat,
 		    d->lcsr[VME2_IRQEN / 4], d->lcsr[VME2_VBR / 4]);
@@ -1199,6 +1199,7 @@ struct mvme187_data *dev_mvme187_init(struct machine *machine)
 	memset(d, 0, sizeof(*d));
 	d->machine = machine;
 	d->cpu = machine->cpus[machine->bootstrap_cpu];
+	d->subsys = debugmsg_register_subsystem("mvme187");
 
 	CHECK_ALLOCATION(d->rom = (uint8_t *) malloc(ROM_WINDOW));
 	memset(d->rom, 0xff, ROM_WINDOW);
@@ -1258,8 +1259,6 @@ struct mvme187_data *dev_mvme187_init(struct machine *machine)
 	    dev_mvme187_pcc_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "memc040", MEMC_BASE, 0x1000,
 	    dev_mvme187_memc_access, d, DM_DEFAULT, NULL);
-	memory_device_register(mem, "i82596", 0xfff46000, 0x1000,
-	    dev_mvme187_lan_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "iack", IACK_BASE, 0x10000,
 	    dev_mvme187_iack_access, d, DM_DEFAULT, NULL);
 

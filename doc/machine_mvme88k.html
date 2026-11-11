@@ -54,8 +54,8 @@ Motorola's <b>UNIX SYSTEM V/88 Release 4</b> (R40V4.4). Emulated are the
 88100 CPU with its two MC88200 CMMUs, the VMEchip2 and PCCchip2 (timers,
 interrupt prioritizer, reset), MEMC040, the Cirrus Logic CD2401 serial
 controller (console on its channel 0), the NCR 53C710 SCSI controller
-(running SCRIPTS) and the MK48T08 clock and NVRAM. The 82596CA Ethernet
-answers its self-test only; there is no network yet.
+(running SCRIPTS), the Intel 82596CA Ethernet controller and the MK48T08
+clock and NVRAM.
 
 
 
@@ -75,6 +75,13 @@ disk image with SYSTEM V/88 installed. A configuration file:
 }
 </pre>
 
+<p>A new NVRAM gets the board configuration that is programmed at the
+factory on a real board (shown by 187Bug's <tt>cnfg</tt> command): board
+MVME187-03, 33 MHz, SCSI id 7 and an Ethernet address (the configured
+<tt>"mac"</tt> of the network section, if any). 187Bug uses the board
+identifier to tell which devices are on the board, and only uses the
+Ethernet controller with an Ethernet address there.
+
 <p>With an empty NVRAM, 187Bug reports a configuration data failure.
 Set up its environment once (it is kept in <tt>nvram.bin</tt>):
 <pre>
@@ -82,8 +89,8 @@ Set up its environment once (it is kept in <tt>nvram.bin</tt>):
 187-Bug&gt; <b>env</b>                   (answer b for "Bug or System", then
                                  . to end, y to update, y to reset)
 </pre>
-<p>"System" mode would run the power-up self-test, which stops at the
-CD2401 DMA test (no serial DMA yet). After the reset, 187Bug shows its
+<p>"System" mode would run the power-up self-test, which fails the
+CD2401 DMA and the CMMU cache tests, and stops at the cache code test. After the reset, 187Bug shows its
 field service menu; <tt>3</tt> enters the debugger. Boot from the disk with
 <pre>
 187-Bug&gt; <b>bo 0</b>
@@ -91,6 +98,24 @@ field service menu; <tt>3</tt> enters the debugger. Boot from the disk with
 <p>The first boot on an emulated board relinks the kernel for the devices
 it found and reboots. The board's reset (by 187Bug or by the kernel)
 restarts 187Bug as on real hardware.
+
+<p>The network is GXemul's simulated one (10.0.0.0/8, with a gateway and
+nameserver at 10.0.0.254, which forwards TCP and UDP to the outside
+world). In 187Bug, <tt>niot</tt> sets the addresses for network booting
+and <tt>nping 0 0 10.0.0.1 10.0.0.254</tt> pings the gateway. SYSTEM V/88
+configures its <tt>e1x70</tt> interface with the address of its host name
+in <tt>/etc/hosts</tt>; to use the simulated network, as root:
+<pre>
+# <b>ifconfig e1x70 10.0.0.1 netmask 255.255.255.0 broadcast 10.0.0.255 up</b>
+# <b>route add default 10.0.0.254 1</b>
+</pre>
+(or change the address in <tt>/etc/hosts</tt>, and
+<tt>/etc/resolv.conf</tt> to use the nameserver 10.0.0.254). The
+interrupt character is DEL, not ^C.
+
+<p>Debug messages of the board's devices can be turned on per subsystem
+(<tt>mvme187</tt>, <tt>clmpcc</tt>, <tt>osiop</tt>, <tt>i82596</tt>), e.g.
+with the control socket's <tt>log_set</tt> command.
 
 <p>Time on the board (tick timers, the clock) runs at 33 MHz by the
 number of instructions run, so that 187Bug's calibration of the CPU
@@ -330,8 +355,8 @@ boot from the harddisk image:
 
 <p>When asked about root disk, enter <tt><b>sd0</b></tt>.
 
-<p>No NIC has been implemented yet for mvme187, so there is no network connectivity
-from within the guest OS.
+<p>OpenBSD's ie(4) driver for the 82596CA has not been tried with the
+emulated controller.
 
 
 

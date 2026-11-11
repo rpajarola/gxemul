@@ -76,6 +76,7 @@ struct channel {
 };
 
 struct clmpcc_data {
+	int		subsys;		/*  for debugmsg  */
 	uint8_t		greg[0x100];	/*  global registers  */
 	struct channel	ch[N_CHANNELS];
 
@@ -127,15 +128,14 @@ static void rx_poll(struct clmpcc_data *d)
 			int ch = console_readchar(c->console_handle);
 			if (ch < 0)
 				break;
-			if (getenv("CLMPCC_DEBUG") != NULL)
-				fprintf(stderr, "[ clmpcc: rx '%c' ch%i csr=%02x"
-				    " ier=%02x cor4=%02x ctx=%i/%i/%i stk=%02x"
-				    " car=%02x irq=%i/%i/%i ]\n", ch, i,
-				    c->reg[CLMPCC_REG_CSR], c->reg[CLMPCC_REG_IER],
-				    c->reg[CLMPCC_REG_COR4], d->ctx[1], d->ctx[2],
-				    d->ctx[3], d->greg[CLMPCC_REG_STK],
-				    d->greg[CLMPCC_REG_CAR], d->irq_state[1],
-				    d->irq_state[2], d->irq_state[3]);
+			debugmsg(d->subsys, "rx", VERBOSITY_DEBUG,
+			    "'%c' ch%i csr=%02x ier=%02x cor4=%02x ctx=%i/%i/%i"
+			    " stk=%02x car=%02x irq=%i/%i/%i", ch, i,
+			    c->reg[CLMPCC_REG_CSR], c->reg[CLMPCC_REG_IER],
+			    c->reg[CLMPCC_REG_COR4], d->ctx[1], d->ctx[2],
+			    d->ctx[3], d->greg[CLMPCC_REG_STK],
+			    d->greg[CLMPCC_REG_CAR], d->irq_state[1],
+			    d->irq_state[2], d->irq_state[3]);
 			if (!(c->reg[CLMPCC_REG_CSR] & CLMPCC_CSR_RX_ENABLED))
 				continue;
 			c->rxfifo[c->rx_n++] = ch;
@@ -492,6 +492,7 @@ DEVINIT(clmpcc)
 
 	CHECK_ALLOCATION(d = (struct clmpcc_data *) malloc(sizeof(struct clmpcc_data)));
 	memset(d, 0, sizeof(struct clmpcc_data));
+	d->subsys = debugmsg_register_subsystem("clmpcc");
 
 	for (i = 0; i < 4; i++)
 		d->ctx[i] = -1;

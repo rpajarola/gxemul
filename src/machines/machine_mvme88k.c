@@ -93,6 +93,12 @@ MACHINE_SETUP(mvme88k)
 		machine->main_console_handle =
 		    (size_t) device_add(machine, tmpstr);
 
+		/*  82596CA Ethernet at 0xfff46000:  */
+		snprintf(tmpstr, sizeof(tmpstr), "i82596 irq=%s.cpu[%i].pcc2.%i "
+		    "addr=0x%08x", machine->path,
+		    machine->bootstrap_cpu, PCC2V_IE, 0xfff46000);
+		device_add(machine, tmpstr);
+
 		/*  53C710 SCSI at 0xfff47000:  */
 		snprintf(tmpstr, sizeof(tmpstr), "osiop irq=%s.cpu[%i].pcc2.%i "
 		    "addr=0x%08x", machine->path,

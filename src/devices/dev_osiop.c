@@ -156,6 +156,7 @@ static const char *phase_names[8] = { "DATA OUT", "DATA IN", "COMMAND",
 	"STATUS", "RESERVED OUT", "RESERVED IN", "MSG OUT", "MSG IN" };
 
 struct osiop_data {
+	int			subsys;		/*  for debugmsg  */
 	struct machine		*machine;
 	uint32_t		base;		/*  of the registers  */
 	struct interrupt	irq;
@@ -447,12 +448,14 @@ static void run_command(struct osiop_data *d)
 	    d->cmd_len, 0);
 	memcpy(d->xfer->cmd, d->cmd, d->cmd_len);
 
-	if (getenv("OSIOP_CMDS") != NULL) {
+	if (DEBUGMSG_ENABLED(d->subsys, VERBOSITY_INFO)) {
+		char buf[3 * 16 + 1];
 		int i;
-		fprintf(stderr, "[ osiop: id %i cmd", d->target);
-		for (i = 0; i < d->cmd_len; i++)
-			fprintf(stderr, " %02x", d->cmd[i]);
-		fprintf(stderr, " ]\n");
+		for (i = 0; i < d->cmd_len && i < 16; i++)
+			snprintf(buf + 3 * i, 4, " %02x", d->cmd[i]);
+		buf[3 * i] = '\0';
+		debugmsg(d->subsys, "command", VERBOSITY_INFO, "id %i:%s",
+		    d->target, buf);
 	}
 
 	res = diskimage_scsicommand(cpu, d->target, DISKIMAGE_SCSI, d->xfer);
@@ -856,10 +859,9 @@ static bool scripts_step(struct osiop_data *d)
 		return false;
 	}
 
-	if (getenv("OSIOP_TRACE") != NULL)
-		fprintf(stderr, "[ osiop: %08x: %08x %08x  phase=%i sfbr=%02x"
-		    " istat=%02x ]\n", dsp, w0, w1, d->phase, d->reg[R_SFBR],
-		    d->reg[R_ISTAT]);
+	debugmsg(d->subsys, "SCRIPTS", VERBOSITY_DEBUG,
+	    "%08x: %08x %08x  phase=%i sfbr=%02x istat=%02x", dsp, w0, w1,
+	    d->phase, d->reg[R_SFBR], d->reg[R_ISTAT]);
 
 	d->reg[R_DCMD] = w0 >> 24;
 	put_dbc(d, w0 & 0xffffff);
@@ -1213,6 +1215,7 @@ DEVINIT(osiop)
 	memset(d, 0, sizeof(struct osiop_data));
 	d->machine = devinit->machine;
 	d->base = devinit->addr;
+	d->subsys = debugmsg_register_subsystem("osiop");
 	d->phase = PH_BUS_FREE;
 	d->reg[R_SCID] = 0x80;		/*  ID 7  */
 

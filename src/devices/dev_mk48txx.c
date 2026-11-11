@@ -212,6 +212,11 @@ DEVINIT(mk48txx)
 		atexit(mk48txx_save_atexit);
 	}
 
+	/*  The MVME187's board configuration, if blank:  */
+	if (devinit->machine->machine_type == MACHINE_MVME88K &&
+	    devinit->machine->machine_subtype == MACHINE_MVME88K_187)
+		dev_mvme187_brdid_defaults(devinit->machine, d->ram);
+
 	d->ram[CLK] = 0;
 	mk48txx_update_regs(d);
 
