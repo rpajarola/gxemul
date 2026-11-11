@@ -485,6 +485,28 @@ void memory_device_remove(struct memory *mem, int i)
 
 
 /*
+ *  memory_page_has_device():
+ *
+ *  True if a memory mapped device covers any part of a physical page.
+ */
+bool memory_page_has_device(struct memory *mem, uint64_t paddr,
+	uint64_t pagesize)
+{
+	int i;
+
+	paddr &= ~(pagesize - 1);
+	if (paddr + pagesize <= mem->mmap_dev_minaddr ||
+	    paddr >= mem->mmap_dev_maxaddr)
+		return false;
+	for (i = 0; i < mem->n_mmapped_devices; i++)
+		if (mem->devices[i].baseaddr < paddr + pagesize &&
+		    mem->devices[i].endaddr > paddr)
+			return true;
+	return false;
+}
+
+
+/*
  *  memory_paddr_to_hostaddr():
  *
  *  Translate a physical address into a host address. The usual way to call

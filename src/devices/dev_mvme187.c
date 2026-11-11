@@ -592,9 +592,15 @@ static void set_rom0(struct mvme187_data *d, bool on)
 			}
 	}
 
-	for (i = 0; i < d->machine->ncpus; i++)
-		d->machine->cpus[i]->invalidate_translation_caches(
-		    d->machine->cpus[i], 0, INVALIDATE_ALL);
+	/*  Code translated from the pages that now change meaning (RAM or
+	    EPROM) must be translated again:  */
+	for (i = 0; i < d->machine->ncpus; i++) {
+		struct cpu *c = d->machine->cpus[i];
+		uint32_t a;
+		for (a = 0; a < ROM_WINDOW; a += 0x1000)
+			c->invalidate_code_translation(c, a, INVALIDATE_PADDR);
+		c->invalidate_translation_caches(c, 0, INVALIDATE_ALL);
+	}
 }
 
 
@@ -1133,11 +1139,14 @@ static void local_reset(struct mvme187_data *d)
 	if (d->scc_reset != NULL)
 		d->scc_reset(d->scc);
 
-	d->rom0 = false;
 	set_rom0(d, true);
 
-	for (i = 0; i < d->machine->ncpus; i++)
+	/*  (No instruction is running at a tick: all translated code can
+	    be thrown away.)  */
+	for (i = 0; i < d->machine->ncpus; i++) {
+		cpu_create_or_reset_tc(d->machine->cpus[i]);
 		m88k_cpu_reset(d->machine->cpus[i]);
+	}
 
 	update_irq(d);
 }

@@ -750,8 +750,14 @@ void DYNTRANS_PC_TO_POINTERS_GENERIC(struct cpu *cpu)
 	if (l3->host_load[x3] == NULL) {
 #endif
 		int q = DYNTRANS_PAGESIZE - 1;
-		unsigned char *host_page = memory_paddr_to_hostaddr(cpu->mem,
-		    physaddr, MEM_READ);
+		unsigned char *host_page = NULL;
+
+		/*  (Only RAM: a device over the page, such as a ROM mapped
+		    over RAM, is reached through memory_rw instead.)  */
+		if (!memory_page_has_device(cpu->mem, physaddr,
+		    DYNTRANS_PAGESIZE))
+			host_page = memory_paddr_to_hostaddr(cpu->mem,
+			    physaddr, MEM_READ);
 		if (host_page != NULL) {
 			cpu->update_translation_table(cpu, cached_pc & ~q,
 			    host_page, 0, physaddr);

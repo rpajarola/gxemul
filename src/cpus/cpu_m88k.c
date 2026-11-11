@@ -862,7 +862,17 @@ void m88k_cpu_reset(struct cpu *cpu)
 			cmmu->patc_v_and_control[j] = 0;
 	}
 
+	/*  Forget every virtual page mapping, also untracked ones:  */
 	cpu->invalidate_translation_caches(cpu, 0, INVALIDATE_ALL);
+	memset(cpu->cd.m88k.host_load, 0, sizeof(cpu->cd.m88k.host_load));
+	memset(cpu->cd.m88k.host_store, 0, sizeof(cpu->cd.m88k.host_store));
+	memset(cpu->cd.m88k.phys_addr, 0, sizeof(cpu->cd.m88k.phys_addr));
+	memset(cpu->cd.m88k.phys_page, 0, sizeof(cpu->cd.m88k.phys_page));
+	memset(cpu->cd.m88k.vaddr_to_tlbindex, 0,
+	    sizeof(cpu->cd.m88k.vaddr_to_tlbindex));
+	for (i = 0; i < M88K_MAX_VPH_TLB_ENTRIES; i++)
+		cpu->cd.m88k.vph_tlb_entry[i].valid = 0;
+
 	cpu->pc = 0;
 	m88k_pc_to_pointers(cpu);
 }
