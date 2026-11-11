@@ -49,6 +49,64 @@ Note that these were based on
 <a href="https://en.wikipedia.org/wiki/Motorola_88000">Motorola 88000</a>
 processors, not 68000.
 
+<p>The MVME187 runs its real firmware, <b>187Bug</b>, and from it
+Motorola's <b>UNIX SYSTEM V/88 Release 4</b> (R40V4.4). Emulated are the
+88100 CPU with its two MC88200 CMMUs, the VMEchip2 and PCCchip2 (timers,
+interrupt prioritizer, reset), MEMC040, the Cirrus Logic CD2401 serial
+controller (console on its channel 0), the NCR 53C710 SCSI controller
+(running SCRIPTS) and the MK48T08 clock and NVRAM. The 82596CA Ethernet
+answers its self-test only; there is no network yet.
+
+
+
+<p><br>
+<a name="sysv88"></a>
+<h3>187Bug and UNIX SYSTEM V/88:</h3>
+
+<p>You need a 187Bug EPROM image (e.g. <tt>187bug2.2.bin</tt>, 1 MB) and a
+disk image with SYSTEM V/88 installed. A configuration file:
+<pre>
+{
+ "gxemul": 1,
+ "machine": { "type": "mvme88k", "model": "mvme187", "memory_mb": 64 },
+ "boot": { "prom_emulation": false, "rom": "187bug2.2.bin",
+           "nvram": "nvram.bin" },
+ "drives": [ { "file": "sysv.img", "kind": "disk", "id": 0 } ]
+}
+</pre>
+
+<p>With an empty NVRAM, 187Bug reports a configuration data failure.
+Set up its environment once (it is kept in <tt>nvram.bin</tt>):
+<pre>
+187-Bug&gt; <b>env;d</b>                 (defaults: answer y, and n to the reset)
+187-Bug&gt; <b>env</b>                   (answer b for "Bug or System", then
+                                 . to end, y to update, y to reset)
+</pre>
+<p>"System" mode would run the power-up self-test, which stops at the
+CD2401 DMA test (no serial DMA yet). After the reset, 187Bug shows its
+field service menu; <tt>3</tt> enters the debugger. Boot from the disk with
+<pre>
+187-Bug&gt; <b>bo 0</b>
+</pre>
+<p>The first boot on an emulated board relinks the kernel for the devices
+it found and reboots. The board's reset (by 187Bug or by the kernel)
+restarts 187Bug as on real hardware.
+
+<p>Time on the board (tick timers, the clock) runs at 33 MHz by the
+number of instructions run, so that 187Bug's calibration of the CPU
+speed works; with <tt>"emulated_hz"</tt> in the machine section, the host's
+clock is used instead.
+
+<p>A SYSTEM V/88 disk installed on another board (e.g. an MVME197) names
+its disk devices after that board in <tt>/etc/vfstab</tt>
+(<tt>m197_c0d0s3</tt> instead of <tt>m187_c0d0s3</tt>), and comes up in
+single user mode without <tt>/usr</tt>. In the maintenance shell:
+<pre>
+# <b>/sbin/mount -F ufs /dev/dsk/m187_c0d0s3 /usr</b>
+# <b>cp /etc/vfstab /etc/vfstab.m197</b>
+# <b>sed s/m197_/m187_/g /etc/vfstab.m197 &gt; /etc/vfstab</b>
+</pre>
+
 
 
 
