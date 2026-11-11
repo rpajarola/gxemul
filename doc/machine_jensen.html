@@ -340,6 +340,21 @@ board ID (<tt>CPQ3011</tt>, from <tt>ACPQ3011.CFG</tt> on the Digital ECU
 diskettes). With an <tt>nvram</tt> file, the configuration is kept. The ARC
 console uses the card either way.</p>
 
+<p>For Windows NT, configure the card from the ARC console instead
+(<i>Supplementary menu &rarr; Set up the system &rarr; Run EISA configuration
+utility from floppy</i>), with the <b>Windows NT</b> ECU diskette:</p>
+<ul>
+	<li>Only an ECU run from ARC adds the display controller (identifier
+	    <tt>CPQ3011</tt>) to the ARC configuration tree, which is how NT
+	    Setup recognizes the QVision. Run from SRM, the ECU only updates the
+	    EISA configuration.</li>
+	<li>The OpenVMS/Digital UNIX ECU places the card's 1 MB "high address
+	    video buffer" at 1 MB. ARC then reserves host memory 1&ndash;2 MB,
+	    where the NT 3.1 kernel has to be loaded, and OSLOADER fails with
+	    <i>Image can't be relocated, no fixup information</i> and <i>ntoskrnl.exe
+	    is missing or corrupt</i>. The Windows NT ECU places it at 4 MB.</li>
+</ul>
+
 <p>What is not emulated yet: the BitBLT engine, the linear framebuffer (the
 "high address video buffer"), the hardware cursor, the packed 4-, 15- and
 24-bit modes, and the video interrupt (IRQ 9). The Windows NT driver
