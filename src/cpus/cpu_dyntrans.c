@@ -1874,7 +1874,12 @@ cpu->cd.DYNTRANS_ARCH.vph_tlb_entry[r].valid);
 		goto bad;
 	}
 	if (ic->f == NULL) {
+#ifdef DYNTRANS_M88K
+		fatal("INTERNAL ERROR: ic->f == NULL! (iword 0x%08x at 0x%08x)\n",
+		    (int) iword, (int) addr);
+#else
 		fatal("INTERNAL ERROR: ic->f == NULL!\n");
+#endif
 		goto bad;
 	}
 
@@ -1953,6 +1958,15 @@ cpu->cd.DYNTRANS_ARCH.vph_tlb_entry[r].valid);
 bad:	/*
 	 *  Nothing was translated. (Unimplemented or illegal instruction.)
 	 */
+
+#ifdef DYNTRANS_M88K
+	/*  The 88100 takes an unimplemented opcode exception.  */
+	ic->f = instr(illegal);
+	if (cpu->translation_readahead)
+		return;
+	ic->f(cpu, ic);
+	return;
+#endif
 
 	/*  Clear the translation, in case it was "half-way" done:  */
 	ic->f = TO_BE_TRANSLATED;

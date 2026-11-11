@@ -50,6 +50,24 @@
 /*
  *  nop:  Do nothing.
  */
+/*
+ *  illegal:  An instruction that is not implemented (or not valid): the
+ *  unimplemented opcode exception.
+ */
+X(illegal)
+{
+	uint32_t iword = 0;
+	unsigned char ib[4];
+
+	SYNCH_PC;
+	if (cpu->memory_rw(cpu, cpu->mem, cpu->pc, ib, 4, MEM_READ,
+	    CACHE_INSTRUCTION | NO_EXCEPTIONS))
+		iword = (ib[0] << 24) | (ib[1] << 16) | (ib[2] << 8) | ib[3];
+	debugmsg_cpu(cpu, SUBSYS_CPU, "", VERBOSITY_ERROR,
+	    "unimplemented opcode 0x%08x at 0x%08x", iword, (int) cpu->pc);
+	m88k_exception(cpu, M88K_EXCEPTION_UNIMPLEMENTED_OPCODE, 0);
+}
+
 X(nop)
 {
 }
@@ -1147,89 +1165,42 @@ X(rte)
 
 	m88k_stcr(cpu, cpu->cd.m88k.cr[M88K_CR_EPSR], M88K_CR_PSR, 1);
 
-	if (cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_E) {
-		debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-		    "rte: NIP: TODO: single-step support");
-		goto abort_dump;
-	}
+	/*
+	 *  The pipeline is reloaded from SNIP and SFIP: the instruction at
+	 *  NIP (if valid) runs first, then the one at FIP (if valid), and
+	 *  execution goes on after FIP. NIP and FIP are normally
+	 *  consecutive; if not, NIP is in the delay slot of a branch to FIP.
+	 *  (The E bits are not used; software clears them.)
+	 */
+	{
+		uint32_t snip = cpu->cd.m88k.cr[M88K_CR_SNIP];
+		uint32_t sfip = cpu->cd.m88k.cr[M88K_CR_SFIP];
+		uint32_t nip = snip & M88K_NIP_ADDR, fip = sfip & M88K_FIP_ADDR;
+		bool nv = (snip & M88K_NIP_V) != 0, fv = (sfip & M88K_FIP_V) != 0;
+		struct m88k_instr_call *nic;
 
-	if (cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_E) {
-		debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-		    "rte: TODO: FIP single-step support");
-		goto abort_dump;
-	}
-
-	/*  First try the NIP, if it is Valid:  */
-	cpu->pc = cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_ADDR;
-
-	/*  If the NIP is not valid, then try the FIP:  */
-	if (!(cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_V)) {
-		/*  Neither the NIP nor the FIP valid?  */
-		if (!(cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_V)) {
-			if ((cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_ADDR)
-			    != (cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_ADDR) + 4) {
-				debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-		    		    "rte: TODO: Neither FIP nor NIP has the "
-				    "Valid bit set?!");
-				goto abort_dump;
-			}
-
-			/*  For now, continue anyway, using NIP.  */
-		} else {
-			cpu->pc = cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_ADDR;
-		}
-	} else if (cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_V &&
-	    cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_V &&
-	    (cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_ADDR)
-	    != (cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_ADDR) + 4) {
-		/*
-		 *  The NIP instruction should first be executed (this
-		 *  is the one the exception handler choose to return to),
-		 *  and then the FIP instruction should run (the target
-		 *  of a delayed branch).
-		 */
-
-		uint32_t nip = cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_ADDR;
-		uint32_t fip = cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_ADDR;
-
-		cpu->pc = nip;
 		cpu->delay_slot = NOT_DELAYED;
-		quick_pc_to_pointers(cpu);
 
-		if (cpu->pc != nip) {
-			debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-			    "NIP execution caused exception?! TODO");
-			goto abort_dump;
+		if (nv && fv && fip != nip + 4) {
+			cpu->pc = nip;
+			quick_pc_to_pointers(cpu);
+			cpu->cd.m88k.delay_target = fip;
+			cpu->delay_slot = TO_BE_DELAYED;
+			nic = cpu->cd.m88k.next_ic;
+			nic->f(cpu, nic);
+			cpu->n_translated_instrs ++;
+			if (!(cpu->delay_slot & EXCEPTION_IN_DELAY_SLOT)) {
+				cpu->delay_slot = NOT_DELAYED;
+				cpu->pc = fip;
+				quick_pc_to_pointers(cpu);
+			} else
+				cpu->delay_slot = NOT_DELAYED;
+			return;
 		}
 
-		instr(to_be_translated)(cpu, cpu->cd.m88k.next_ic);
-
-		if ((cpu->pc & 0xfffff000) != (nip & 0xfffff000)) {
-			debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-			    "instruction in delay slot when returning via"
-			    " rte caused an exception?! nip=0x%08x, but pc "
-			    "changed to 0x%08x! TODO", nip, (int)cpu->pc);
-			goto abort_dump;
-		}
-
-		cpu->pc = fip;
-		cpu->delay_slot = NOT_DELAYED;
+		cpu->pc = nv ? nip : fip;
 		quick_pc_to_pointers(cpu);
-		return;
 	}
-
-	/*  fatal("RTE: NIP=0x%08" PRIx32", FIP=0x%08" PRIx32"\n",
-	    cpu->cd.m88k.cr[M88K_CR_SNIP], cpu->cd.m88k.cr[M88K_CR_SFIP]);  */
-
-	quick_pc_to_pointers(cpu);
-	return;
-
-abort_dump:
-	debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-	    "rte failed. NIP=0x%08" PRIx32", FIP=0x%08" PRIx32,
-	    cpu->cd.m88k.cr[M88K_CR_SNIP], cpu->cd.m88k.cr[M88K_CR_SFIP]);
-
-	ABORT_EXECUTION;
 }
 
 
@@ -1270,6 +1241,8 @@ X(xmem_slow)
 		size = (iword >> 26) & 1;
 		user = 0;
 	}
+	if (!size)
+		scaled = 0;	/*  (a scaled byte is not scaled)  */
 
 	tmp = cpu->cd.m88k.r[d];
 
@@ -1687,8 +1660,10 @@ X(to_be_translated)
 		/*  fatal("TRANSLATION MISS!\n");  */
 		if (!cpu->memory_rw(cpu, cpu->mem, addr, ib,
 		    sizeof(ib), MEM_READ, CACHE_INSTRUCTION)) {
-			fatal("to_be_translated(): read failed: TODO\n");
-			goto bad;
+			/*  An instruction access exception (or a bus
+			    error) has been taken.  */
+			ic->f = TO_BE_TRANSLATED;
+			return;
 		}
 	}
 
@@ -1738,12 +1713,10 @@ X(to_be_translated)
 
 	case 0x00:
 	case 0x01:
+		/*  (Also with r0, and also the all-zero word: these still
+		    access memory.)  */
 		ic->f = instr(xmem_slow);
 		ic->arg[0] = iword;
-		if (d == M88K_ZERO_REG)
-			ic->f = instr(nop);
-		if (iword == 0)
-			goto bad;
 		break;
 
 	case 0x02:	/*  ld.hu  */
@@ -2120,6 +2093,10 @@ X(to_be_translated)
 				goto bad;
 			}
 
+			/*  Scaling a byte access is the same as not scaling.  */
+			if (opsize == 0)
+				scaled = 0;
+
 			ic->arg[0] = (size_t) &cpu->cd.m88k.r[d];
 			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
 			ic->arg[2] = (size_t) &cpu->cd.m88k.r[s2];
@@ -2161,8 +2138,6 @@ X(to_be_translated)
 				/*  xmem:  */
 				ic->f = instr(xmem_slow);
 				ic->arg[0] = iword;
-				if (d == M88K_ZERO_REG)
-					ic->f = instr(nop);
 			}
 		} else switch ((iword >> 8) & 0xff) {
 		case 0x40:	/*  and    */

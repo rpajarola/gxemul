@@ -233,8 +233,17 @@ static bool mem_read(struct osiop_data *d, uint32_t addr, uint8_t *buf,
 			buf[i] = reg_read(d, (addr + i) & (OSIOP_LEN - 1));
 		return true;
 	}
-	return cpu->memory_rw(cpu, cpu->mem, addr, buf, len, MEM_READ,
-	    PHYSICAL | NO_EXCEPTIONS) == MEMORY_ACCESS_OK;
+	/*  (In pieces that do not cross pages.)  */
+	while (len > 0) {
+		size_t k = 0x1000 - (addr & 0xfff);
+		if (k > len)
+			k = len;
+		if (cpu->memory_rw(cpu, cpu->mem, addr, buf, k, MEM_READ,
+		    PHYSICAL | NO_EXCEPTIONS) != MEMORY_ACCESS_OK)
+			return false;
+		addr += k; buf += k; len -= k;
+	}
+	return true;
 }
 
 static bool mem_write(struct osiop_data *d, uint32_t addr, uint8_t *buf,
@@ -248,8 +257,16 @@ static bool mem_write(struct osiop_data *d, uint32_t addr, uint8_t *buf,
 			reg_write(d, (addr + i) & (OSIOP_LEN - 1), buf[i]);
 		return true;
 	}
-	return cpu->memory_rw(cpu, cpu->mem, addr, buf, len, MEM_WRITE,
-	    PHYSICAL | NO_EXCEPTIONS) == MEMORY_ACCESS_OK;
+	while (len > 0) {
+		size_t k = 0x1000 - (addr & 0xfff);
+		if (k > len)
+			k = len;
+		if (cpu->memory_rw(cpu, cpu->mem, addr, buf, k, MEM_WRITE,
+		    PHYSICAL | NO_EXCEPTIONS) != MEMORY_ACCESS_OK)
+			return false;
+		addr += k; buf += k; len -= k;
+	}
+	return true;
 }
 
 static bool mem_read32(struct osiop_data *d, uint32_t addr, uint32_t *v)
@@ -429,6 +446,14 @@ static void run_command(struct osiop_data *d)
 	scsi_transfer_allocbuf(&d->xfer->cmd_len, &d->xfer->cmd,
 	    d->cmd_len, 0);
 	memcpy(d->xfer->cmd, d->cmd, d->cmd_len);
+
+	if (getenv("OSIOP_CMDS") != NULL) {
+		int i;
+		fprintf(stderr, "[ osiop: id %i cmd", d->target);
+		for (i = 0; i < d->cmd_len; i++)
+			fprintf(stderr, " %02x", d->cmd[i]);
+		fprintf(stderr, " ]\n");
+	}
 
 	res = diskimage_scsicommand(cpu, d->target, DISKIMAGE_SCSI, d->xfer);
 	if (res == 2) {
