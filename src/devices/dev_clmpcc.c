@@ -127,6 +127,15 @@ static void rx_poll(struct clmpcc_data *d)
 			int ch = console_readchar(c->console_handle);
 			if (ch < 0)
 				break;
+			if (getenv("CLMPCC_DEBUG") != NULL)
+				fprintf(stderr, "[ clmpcc: rx '%c' ch%i csr=%02x"
+				    " ier=%02x cor4=%02x ctx=%i/%i/%i stk=%02x"
+				    " car=%02x irq=%i/%i/%i ]\n", ch, i,
+				    c->reg[CLMPCC_REG_CSR], c->reg[CLMPCC_REG_IER],
+				    c->reg[CLMPCC_REG_COR4], d->ctx[1], d->ctx[2],
+				    d->ctx[3], d->greg[CLMPCC_REG_STK],
+				    d->greg[CLMPCC_REG_CAR], d->irq_state[1],
+				    d->irq_state[2], d->irq_state[3]);
 			if (!(c->reg[CLMPCC_REG_CSR] & CLMPCC_CSR_RX_ENABLED))
 				continue;
 			c->rxfifo[c->rx_n++] = ch;
