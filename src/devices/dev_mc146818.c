@@ -64,6 +64,7 @@
 #define	N_REGISTERS	1024
 struct mc_data {
 	int		access_style;
+	bool		fixed_32khz;	/*  timebase is always 32.768 kHz  */
 	int		last_addr;
 
 	int		register_choice;
@@ -686,6 +687,8 @@ DEVICE_ACCESS(mc146818)
 				d->timebase_hz = 1000000;
 			if ((data[0] & MC_REGA_DVMASK) == MC_BASE_4_MHz)
 				d->timebase_hz = 4000000;
+			if (d->fixed_32khz)
+				d->timebase_hz = 32000;
 			switch (data[0] & MC_REGA_RSMASK) {
 			case MC_RATE_NONE:
 				d->interrupt_hz = 0;
@@ -919,6 +922,15 @@ void dev_mc146818_init(struct machine *machine, struct memory *mem,
 	    on the DEC 3000 (OSF/1's kn15aa_readtodr() rejects anything else
 	    as a "lost battery backup clock").  */
 	d->dec_year = machine->machine_type == MACHINE_DEC3000? 70 : 72;
+
+	/*
+	 *  The Jensen's RTC (in the VL82C106 combo chip) runs from its own
+	 *  32.768 kHz crystal; the divider bits don't select another time
+	 *  base. NT's HAL writes register A = 0x02 (divider 000, rate 2) and
+	 *  expects 128 Hz; a 4 MHz time base would make that 16384 Hz, and
+	 *  NT's clock would run 128 times too fast.
+	 */
+	d->fixed_32khz = machine->machine_type == MACHINE_JENSEN;
 
 	if (machine->machine_type != MACHINE_PREP) {
 		/*  NetBSD/prep has a really ugly clock detection code;

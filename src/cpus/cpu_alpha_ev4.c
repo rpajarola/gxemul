@@ -440,6 +440,23 @@ static void dstream_fault(struct cpu *cpu, uint64_t va, int write,
 		iword = ib[0] | (ib[1] << 8) | (ib[2] << 16) |
 		    ((uint32_t)ib[3] << 24);
 
+	/*
+	 *  LDQ_U and STQ_U access the aligned quadword, but the VA register
+	 *  holds the effective address before its low three bits are
+	 *  cleared. NT's loader depends on it: it writes forwarded imports
+	 *  into a read-only IAT a byte at a time with STQ_U, and its
+	 *  exception filter makes the page writable only if the fault
+	 *  address (with bits 1..0 cleared) is the IAT entry it writes.
+	 *  (Rb still holds its value: the fault comes before any write.)
+	 */
+	if ((iword >> 26) == 0x0b || (iword >> 26) == 0x0f) {
+		int rb = (iword >> 16) & 31;
+		uint64_t ea = (rb == 31? 0 : cpu->cd.alpha.r[rb]) +
+		    (int64_t)(int16_t)(iword & 0xffff);
+		if ((ea & ~7ULL) == (va & ~7ULL))
+			va = ea;
+	}
+
 	cpu->cd.alpha.va = va;
 	cpu->cd.alpha.mm_csr = (bits | (write? EV4_MMCSR_WR : 0)) |
 	    (((iword >> 21) & 31) << 4) | ((uint64_t)(iword >> 26) << 9);

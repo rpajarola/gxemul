@@ -148,8 +148,22 @@ Fixed on the way:
 ### Next
 
 1. **Video for GUI-mode Setup** (now the blocker): text-mode Setup completes and
-   reboots into the installed NT 3.1, which runs autochk on C: and D: and then
-   idles, presumably waiting for the QVision display driver. A Compaq QVision
+   the installed NT 3.1 boots past autochk: smss starts csrss and winlogon,
+   and the QVision display driver sets a 640x480 graphics mode (shown as
+   garbage until the QVision 256-colour mode is emulated). With the QVision
+   configured by the NT ECU from ARC (`CPQ3011` display node, HMA at 4 MB),
+   `QV.SYS` finds the card (chip ID, `CPQ3011` at zC80, controller number in
+   83C4/zC85). The earlier idle after autochk had two causes, both fixed:
+   - csrss died at once with an access violation: ntdll writes forwarded
+     imports into a read-only IAT with `STQ_U` and its exception filter
+     unprotects the page only if the fault VA is the IAT entry; the EV4
+     emulation reported the quadword-aligned address instead of the
+     effective address. smss then waited forever for csrss to connect.
+   - The RTC ran NT's clock 128 times too fast: the HAL writes register A =
+     0x02 (divider 000), and the RTC took that as a 4 MHz time base; the
+     Jensen's RTC always runs from 32.768 kHz.
+
+   A Compaq QVision
    1024/E (`CPQ3011`, `dev_qvision.c`) is in slot 2 with the display on: the
    SRM and ARC consoles and the ECU run on it (ARC runs the card's x86 BIOS
    from its option ROM, `"slots": { "2": "qvision.rom" }`). Still missing for
