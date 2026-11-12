@@ -1209,3 +1209,59 @@ const uint8_t *dev_le_dma_init(struct machine *machine, struct memory *mem,
 	return d->rom;
 }
 
+
+
+/*
+ *  dev_le_ext_init():
+ *
+ *  A LANCE for another device to drive (e.g. the DE422, dev_de422.c): its
+ *  interrupt goes to irq_path, its memory is SRAM (returned in *sram,
+ *  128 KB, LANCE addresses modulo its size), and its station address ROM
+ *  (32 bytes) is returned in *rom. The registers are accessed with
+ *  dev_le_reg_access().
+ */
+struct le_data *dev_le_ext_init(struct machine *machine,
+	const char *irq_path, unsigned char **sram, const uint8_t **rom)
+{
+	struct le_data *d = le_new(machine, irq_path);
+
+	/*  (The buffer memory of an EISA or ISA card is little-endian.)  */
+	d->is_bigendian = 0;
+
+	CHECK_ALLOCATION(d->sram = (unsigned char *) malloc(SRAM_SIZE));
+	memset(d->sram, 0, SRAM_SIZE);
+
+	machine_add_tickfunction(machine, dev_le_tick, d, LE_TICK_SHIFT);
+
+	*sram = d->sram;
+	*rom = d->rom;
+	return d;
+}
+
+
+/*
+ *  dev_le_reg_access():
+ *
+ *  Reads or writes the register data port (RDP, rap = 0) or the register
+ *  address port (RAP, rap = 1) of a LANCE from dev_le_ext_init().
+ */
+uint16_t dev_le_reg_access(struct cpu *cpu, struct le_data *d, int rap,
+	int writeflag, uint16_t value)
+{
+	uint16_t result = 0;
+
+	if (rap) {
+		if (writeflag == MEM_WRITE)
+			d->reg_select = value & (N_REGISTERS - 1);
+		else
+			result = d->reg_select;
+	} else {
+		if (writeflag == MEM_WRITE)
+			le_register_write(d, d->reg_select, value);
+		else
+			result = d->reg[d->reg_select];
+	}
+
+	dev_le_tick(cpu, d);
+	return result;
+}

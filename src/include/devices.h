@@ -369,6 +369,16 @@ void dev_le_ioasic_init(struct machine *machine, struct memory *mem,
 const uint8_t *dev_le_dma_init(struct machine *machine, struct memory *mem,
 	uint64_t baseaddr, const char *irq_path, struct cpu *cpu,
 	uint64_t (*dma_base)(void *), void *dma);
+struct le_data;
+struct le_data *dev_le_ext_init(struct machine *machine,
+	const char *irq_path, unsigned char **sram, const uint8_t **rom);
+uint16_t dev_le_reg_access(struct cpu *cpu, struct le_data *d, int rap,
+	int writeflag, uint16_t value);
+
+/*  dev_de422.c:  */
+void dev_de422_init(struct machine *machine, struct memory *mem,
+	uint64_t isa_portbase, uint64_t isa_membase, int slot,
+	const char *isa_irq_path);
 
 /*  dev_mc146818.c:  */
 #define	DEV_MC146818_LENGTH		0x0000000000000100

@@ -181,7 +181,11 @@ Fixed on the way:
 3. **Year shows as 2006** in the ARC clock (RTC year convention).
 4. **Video:** NT 3.1 Alpha only supports Compaq QVision and S3 (911/924, 928)
    displays; there is no plain VGA option. The QVision works (item 1).
-5. DEC OSF/1 AXP; DE422 NIC; the mouse; newer NT/VMS.
+5. DEC OSF/1 AXP; the mouse; newer NT/VMS.
+6. **DE422 Ethernet** (done): `dev_de422.c` in EISA slot 3 with networking on,
+   on the LANCE core of `dev_le.c`; SRM's NI test passes, and NT 3.1's
+   lance.sys works (TCP/IP through the simulated network). The factory NVRAM
+   has a second capture that includes it. Not tried: OpenVMS (ER?) and OSF/1.
 
 ### Not emulated
 
