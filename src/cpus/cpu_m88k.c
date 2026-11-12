@@ -496,6 +496,12 @@ void m88k_ldcr(struct cpu *cpu, uint32_t *r32ptr, int cr)
 }
 
 
+/*  PSR bits which exist (on the 88100 or the 88110); the others are
+    reserved, and read as zero.  */
+#define	M88K_PSR_IMPLEMENTED	(M88K_PSR_MODE | M88K_PSR_BO | M88K_PSR_SER \
+	| M88K_PSR_C | M88K_PSR_SGN | M88K_PSR_SRM | M88K_PSR_TRACE | 0x3ff)
+
+
 /*
  *  m88k_stcr():
  *
@@ -534,11 +540,14 @@ void m88k_stcr(struct cpu *cpu, uint32_t value, int cr, int rte)
 			cpu->invalidate_translation_caches(
 			    cpu, 0, INVALIDATE_ALL);
 
-		cpu->cd.m88k.cr[cr] = value;
+		/*  Reserved bits read as zero. (UNIX SYSTEM V/88 keeps
+		    the interrupt level in bits 12-10 of a saved PSR, and
+		    relies on this.)  */
+		cpu->cd.m88k.cr[cr] = value & M88K_PSR_IMPLEMENTED;
 		break;
 
 	case M88K_CR_EPSR:
-		cpu->cd.m88k.cr[cr] = value;
+		cpu->cd.m88k.cr[cr] = value & M88K_PSR_IMPLEMENTED;
 		break;
 
 	case M88K_CR_SXIP:

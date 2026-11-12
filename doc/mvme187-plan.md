@@ -53,6 +53,4 @@ gateway).
 - CD2401: synchronous modes, interrupt-mode transmit timing (characters
   go out at once), modem signals, break.
 - MCECC (ECC memory controller variant), a second MEMC040.
-- WARNING: "pid 11(bcheckrc): trap type 3 return at spl7" on the first
-  boot: look at the data access exception return path.
 - Instruction timing: one instruction per bus clock is optimistic.
