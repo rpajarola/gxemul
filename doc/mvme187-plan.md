@@ -50,9 +50,13 @@ gateway).
 
 ## 187Bug self-test failures left
 
-- CMMU cache tests (CCHSD, CCHLR, CCHBYP, CCHSDWT, CCHBUR, ...): the
-  cache contents are not emulated; CCHCODE ends the self-test with an
-  unimplemented opcode exception.
+- CMMU cache tests (CCHSD, CCHUD, CCHSC, CCHUC, CCHSDWT, CCHUDWT,
+  CCHBUR, CCHST, CCHWHIT, CCHLDS, CCHLR, CCHBYP): the cache contents
+  are not emulated. "skip_failing_tests" patches them to pass.
+- VME2 TMRC-TMRK (VMEchip2 prescaler adjust, tick timers, watchdog),
+  SWIB and SWIC (software interrupts): not looked at yet (these tests
+  only run since CCHCODE no longer stops the self-test).
+- NCR SFIFO, DFIFO, LPBK, SCRIPTS, IRQ (53C710 diagnostics): likewise.
 
 ## To do
 

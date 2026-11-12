@@ -2861,34 +2861,57 @@ void machine_config_export_free(struct mc_export *e)
  *	    read the Bt459's signature registers, which aren't computed.
  *	PMAGB-BA V1.1 (HX frame buffer option ROM):  the Signature Analysis
  *	    and Line Signature Mode parts of 0/patt and 0/line, likewise.
+ *	187Bug 2.2 (MVME187 firmware, 01/14/94):  the CMMU cache tests which
+ *	    check what is in the 88200's caches (stale data, copyback and
+ *	    write-through, line states, burst fills, write hits, line disable,
+ *	    replacement, bypass), as no cache contents are emulated.
  *
  *  With "skip_failing_tests", a copy of such a ROM image is loaded instead,
- *  in which the first two instructions of these tests' functions are
- *  "jr ra; move v0,zero" (or "li v0,1", where 1 means passed), so that they
- *  pass at once.  A ROM is recognized by its name and version strings, and
- *  the tests' first instructions (other versions are left alone).
+ *  in which the first two instructions of these tests' functions return
+ *  "passed" at once: "jr ra; move v0,zero" (or "li v0,1", where 1 means
+ *  passed) on MIPS, "jmp.n r1; or r2,r0,r0" on the 88k (187Bug counts
+ *  failures in the test's context, not in the return value).  A ROM is
+ *  recognized by its name and version strings, and the tests' first
+ *  instructions (other versions are left alone).
  */
 struct rom_test {
 	uint32_t	addr;		/*  where the ROM runs the function  */
 	uint32_t	first;		/*  its first instruction  */
 };
+#define	MAX_ROM_TESTS	12
 static const struct {
 	const char	*name, *version;
-	uint32_t	base;		/*  ROM offset of the code at 0xa0020000  */
-	uint32_t	passed;		/*  what a test returns if it passed  */
-	struct rom_test	tests[4];
+	uint32_t	origin;		/*  an address in the code...  */
+	uint32_t	base;		/*  ... and its offset in the ROM  */
+	bool		big_endian;
+	uint32_t	ret[2];		/*  instructions which return "passed"  */
+	struct rom_test	tests[MAX_ROM_TESTS];
 } failing_tests[] = {
-	{ "KN02-BA", "V5.7j", 0x194a4, 0, { { 0xa00212a0, 0x27bdffb8 },
-	    { 0xa0021650, 0x27bdffd8 }, { 0xa0021ef0, 0x27bdffc8 } } },
-	{ "PMAG-BA", "V5.3a", 0x1594, 0, { { 0xa00204c0, 0x3c0ea002 },
-	    { 0xa0021b80, 0x3c02a002 } } },
-	{ "PMAGB-BA", "V1.1", 0xcfc4, 1, { { 0xa0023f88, 0x27bdff80 },
-	    { 0xa00283e0, 0x27bdff80 } } },
+	{ "KN02-BA", "V5.7j", 0xa0020000, 0x194a4, false,
+	    { 0x03e00008, 0x00001021 },		/*  jr ra; move v0,zero  */
+	    { { 0xa00212a0, 0x27bdffb8 }, { 0xa0021650, 0x27bdffd8 },
+	    { 0xa0021ef0, 0x27bdffc8 } } },
+	{ "PMAG-BA", "V5.3a", 0xa0020000, 0x1594, false,
+	    { 0x03e00008, 0x00001021 },
+	    { { 0xa00204c0, 0x3c0ea002 }, { 0xa0021b80, 0x3c02a002 } } },
+	{ "PMAGB-BA", "V1.1", 0xa0020000, 0xcfc4, false,
+	    { 0x03e00008, 0x24020001 },		/*  jr ra; li v0,1  */
+	    { { 0xa0023f88, 0x27bdff80 }, { 0xa00283e0, 0x27bdff80 } } },
+	{ "187-Diag>", "01/14/94", 0xff800000, 0, true,
+	    { 0xf400c401, 0xf4405800 },		/*  jmp.n r1; or r2,r0,r0  */
+	    { { 0xff84aff0, 0x67ff0048 },	/*  CCHSD  */
+	    { 0xff848420, 0x67ff0150 },		/*  CCHUD  */
+	    { 0xff84b540, 0x67ff0050 },		/*  CCHSC  */
+	    { 0xff848560, 0x67ff0150 },		/*  CCHUC  */
+	    { 0xff84aa30, 0x67ff0050 },		/*  CCHSDWT  */
+	    { 0xff8482e0, 0x67ff0150 },		/*  CCHUDWT  */
+	    { 0xff84c8b0, 0x67ff0088 },		/*  CCHBUR  */
+	    { 0xff848d10, 0x67ff0090 },		/*  CCHST  */
+	    { 0xff848070, 0x67ff0068 },		/*  CCHWHIT  */
+	    { 0xff84bb40, 0x67ff00a8 },		/*  CCHLDS  */
+	    { 0xff84b7a0, 0x67ff00b8 },		/*  CCHLR  */
+	    { 0xff84c590, 0x67ff0048 } } },	/*  CCHBYP  */
 };
-
-#define	JR_RA		0x03e00008
-#define	MOVE_V0_ZERO	0x00001021
-#define	LI_V0		0x24020000	/*  addiu v0,zero,imm  */
 
 static bool contains(const unsigned char *buf, size_t len, const char *s)
 {
@@ -2900,14 +2923,21 @@ static bool contains(const unsigned char *buf, size_t len, const char *s)
 	return false;
 }
 
-static uint32_t get_le32(const unsigned char *p)
+static uint32_t get32(const unsigned char *p, bool be)
 {
+	if (be)
+		return ((uint32_t) p[0] << 24) | (p[1] << 16) | (p[2] << 8) |
+		    p[3];
 	return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t) p[3] << 24);
 }
 
-static void put_le32(unsigned char *p, uint32_t v)
+static void put32(unsigned char *p, uint32_t v, bool be)
 {
-	p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24;
+	if (be) {
+		p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v;
+	} else {
+		p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24;
+	}
 }
 
 /*
@@ -2946,23 +2976,24 @@ static char *rom_without_failing_tests(const char *path)
 		if (!contains(buf, len, failing_tests[r].name) ||
 		    !contains(buf, len, failing_tests[r].version))
 			continue;
-		for (t = 0; t < 4 && failing_tests[r].tests[t].addr; t++) {
+		bool be = failing_tests[r].big_endian;
+		for (t = 0; t < MAX_ROM_TESTS &&
+		    failing_tests[r].tests[t].addr; t++) {
 			size_t off = failing_tests[r].base +
-			    failing_tests[r].tests[t].addr - 0xa0020000;
+			    failing_tests[r].tests[t].addr -
+			    failing_tests[r].origin;
 			uint32_t w;
 			if (off + 8 > len)
 				break;
-			w = get_le32(buf + off);
+			w = get32(buf + off, be);
 			if (w == failing_tests[r].tests[t].first) {
-				put_le32(buf + off, JR_RA);
-				put_le32(buf + off + 4, failing_tests[r].passed?
-				    LI_V0 | failing_tests[r].passed :
-				    MOVE_V0_ZERO);
+				put32(buf + off, failing_tests[r].ret[0], be);
+				put32(buf + off + 4, failing_tests[r].ret[1], be);
 				patched ++;
-			} else if (w != JR_RA)
+			} else if (w != failing_tests[r].ret[0])
 				break;		/*  another version  */
 		}
-		if (t < 4 && failing_tests[r].tests[t].addr) {
+		if (t < MAX_ROM_TESTS && failing_tests[r].tests[t].addr) {
 			/*  (Undo a partial patch of another version.)  */
 			patched = 0;
 		}

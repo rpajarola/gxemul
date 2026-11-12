@@ -89,8 +89,12 @@ Set up its environment once (it is kept in <tt>nvram.bin</tt>):
 187-Bug&gt; <b>env</b>                   (answer b for "Bug or System", then
                                  . to end, y to update, y to reset)
 </pre>
-<p>"System" mode would run the power-up self-test, which fails the
-CMMU cache tests, and stops at the cache code test. After the reset, 187Bug shows its
+<p>"System" mode runs the power-up self-test. Twelve CMMU cache tests
+check what is in the 88200's caches, which are not emulated, and fail;
+with <tt>"skip_failing_tests": true</tt> in the configuration's
+<tt>"boot"</tt> section, a copy of 187Bug 2.2 in which these tests pass
+at once is loaded. Some VMEchip2 timer and 53C710 tests still fail (see
+<tt>doc/mvme187-plan.md</tt>). After the reset, 187Bug shows its
 field service menu; <tt>3</tt> enters the debugger. Boot from the disk with
 <pre>
 187-Bug&gt; <b>bo 0</b>
