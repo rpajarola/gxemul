@@ -273,12 +273,23 @@ void dev_mvme187_at_ns(struct mvme187_data *d, uint64_t ns,
 	at_bclk(d, (ns * (BCLK_HZ / 1000000) + 999) / 1000, f, extra);
 }
 
-/*  A BBRAM access takes 5 bus clocks with the PCCchip2's FAST bit, or 9
-    without (one is the instruction):  */
+/*
+ *  A BBRAM (MK48T08) access: the device takes 5 bus clocks with the
+ *  PCCchip2's FAST bit, or 9 without, and the whole cycle from the 88100
+ *  (through the 88200 and the PCCchip2, which also does the dynamic bus
+ *  sizing for the 8-bit device) is taken to add BBRAM_CYCLE_OVERHEAD.
+ *  (One clock is the instruction.) This is an estimate: the manuals give
+ *  only the device's time. UNIX SYSTEM V/88 calibrates the bus clock by
+ *  polling the RTC for the seconds to change, and gives up after 100000
+ *  polls, so a poll must take more than 10 us, as on the real board.
+ */
+#define	BBRAM_CYCLE_OVERHEAD	16
 void dev_mvme187_bbram_access(struct mvme187_data *d)
 {
+	int device = d->pcc[PCCTWO_GENCTL] & PCC2_GENCTL_FAST ? 5 : 9;
+
 	if (d->machine->emulated_hz == 0)
-		d->stall += d->pcc[PCCTWO_GENCTL] & PCC2_GENCTL_FAST ? 4 : 8;
+		d->stall += BBRAM_CYCLE_OVERHEAD + device - 1;
 }
 
 /*  A PCCchip2 or VMEchip2 register access: taken to be as slow as a fast

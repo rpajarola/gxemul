@@ -24,7 +24,8 @@ gateway).
   (A/B buffers, special character exceptions, receive timeout, REOIR
   TermBuff/DiscExc), transmission paced at the baud rate.
 - Emulated time: one instruction per bus clock, plus wait states for
-  BBRAM (5 or 9 clocks, by the PCCchip2 FAST bit) and PCCchip2/VMEchip2
+  BBRAM (a local bus cycle: 16 clocks plus 5 or 9 by the PCCchip2 FAST
+  bit) and PCCchip2/VMEchip2
   register accesses (5 clocks). Devices can ask for an event at a given
   instruction count (machine_add_event); the dyntrans run then stops
   there, so tick timer and CD2401 interrupts come on time rather than at
@@ -58,9 +59,8 @@ gateway).
 - CD2401: synchronous modes, interrupt-mode transmit timing (characters
   go out at once), modem signals, break.
 - MCECC (ECC memory controller variant), a second MEMC040.
-- Instruction timing: one instruction per bus clock is optimistic.
-  SYSTEM V/88 calibrates the bus clock by polling the MK48T08 for the
-  seconds to change, giving up after 100000 polls; each poll takes
-  about 140-260 instructions plus BBRAM wait states here, under a
-  second for 100000, so it falls back to 25 MHz and its clock tick runs
-  at 132 Hz instead of 100 Hz (the guest's time is 1.32 times fast).
+- Instruction timing: one instruction per bus clock is optimistic. (A
+  BBRAM access is charged a whole local bus cycle, estimated at 16 bus
+  clocks plus the device's 5 or 9: SYSTEM V/88 calibrates the bus clock
+  by polling the MK48T08 for the seconds to change, giving up after
+  100000 polls, and fell back to 25 MHz when they were faster.)
