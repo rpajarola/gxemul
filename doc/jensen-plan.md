@@ -147,37 +147,29 @@ Fixed on the way:
 
 ### Next
 
-1. **Video for GUI-mode Setup** (now the blocker): text-mode Setup completes and
-   the installed NT 3.1 boots past autochk: smss starts csrss and winlogon,
-   and the QVision display driver sets a 640x480 graphics mode (shown as
-   garbage until the QVision 256-colour mode is emulated). With the QVision
-   configured by the NT ECU from ARC (`CPQ3011` display node, HMA at 4 MB),
-   `QV.SYS` finds the card (chip ID, `CPQ3011` at zC80, controller number in
-   83C4/zC85). The earlier idle after autochk had two causes, both fixed:
-   - csrss died at once with an access violation: ntdll writes forwarded
-     imports into a read-only IAT with `STQ_U` and its exception filter
-     unprotects the page only if the fault VA is the IAT entry; the EV4
-     emulation reported the quadword-aligned address instead of the
-     effective address. smss then waited forever for csrss to connect.
-   - The RTC ran NT's clock 128 times too fast: the HAL writes register A =
-     0x02 (divider 000), and the RTC took that as a 4 MHz time base; the
-     Jensen's RTC always runs from 32.768 kHz.
-
-   A Compaq QVision
-   1024/E (`CPQ3011`, `dev_qvision.c`) is in slot 2 with the display on: the
-   SRM and ARC consoles and the ECU run on it (ARC runs the card's x86 BIOS
-   from its option ROM, `"slots": { "2": "qvision.rom" }`). Still missing for
-   `QV.SYS`/`QV.DLL`: the BitBLT engine, the linear framebuffer, the hardware
-   cursor, and the QVision 256-colour modes. The earlier "hang after Setting Configuration"
-   was NT running with AHA interrupts disabled: the old synthetic factory NVRAM
-   lacked the EISA port initialization (INTDEF); it now holds genuine ECU output.
+1. **GUI-mode Setup runs to the end** on the emulated QVision ("Windows NT
+   3.1 is now installed"): QV.SYS/QV.DLL draw with the packed 8-bit mode, the
+   linear framebuffer and the BitBLT engine (worked out from what QV.DLL
+   writes). Open:
+   - About one boot in four, GUI Setup stops after the desktop fill: csrss
+     deadlocks (two threads in `RtlpWaitForCriticalSection`, winlogon waits
+     in `CsrClientSendMessage`). Not yet understood; the lock flag is now
+     cleared on interrupts and exceptions, which did not cure it.
+   - No mouse pointer: NT never sets a pointer shape (mouse not detected?).
+   - The year shows as 2006 (item 3).
+   - Boot the installed system after Setup's restart.
+   Earlier blockers, fixed: csrss died at once (EV4 reported the aligned
+   address for STQ_U faults, which ntdll's IAT-forwarder filter needs
+   exactly), and the RTC ran NT's clock 128 times too fast (the Jensen's RTC
+   always runs from 32.768 kHz). The QVision must be configured by the NT
+   ECU from ARC (`CPQ3011` display node, HMA at 4 MB).
 2. **ARC system ID is `DEC-00Jensen`**; NT Setup only knows `DEC-10Jensen` /
    `DEC-20Jensen` (Computer: Unknown, must be picked by hand). The digit comes from
    word 1 of the parameter block the ROM loader passes to the ARC entry point
    (`{1, 0, 6600 ps, ...}`); it is not SROM register T11. Find its source.
 3. **Year shows as 2006** in the ARC clock (RTC year convention).
 4. **Video:** NT 3.1 Alpha only supports Compaq QVision and S3 (911/924, 928)
-   displays; there is no plain VGA option. GUI Setup will need one of those.
+   displays; there is no plain VGA option. The QVision works (item 1).
 5. Boot the installed NT kernel; then DEC OSF/1 AXP; DE422 NIC; newer NT/VMS.
 
 ### Not emulated
