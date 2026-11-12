@@ -151,10 +151,16 @@ Fixed on the way:
    3.1 is now installed"): QV.SYS/QV.DLL draw with the packed 8-bit mode, the
    linear framebuffer and the BitBLT engine (worked out from what QV.DLL
    writes). Open:
-   - About one boot in four, GUI Setup stops after the desktop fill: csrss
-     deadlocks (two threads in `RtlpWaitForCriticalSection`, winlogon waits
-     in `CsrClientSendMessage`). Not yet understood; the lock flag is now
-     cleared on interrupts and exceptions, which did not cure it.
+   - Now and then (about 1 boot in 15 since the lock flag is cleared on
+     interrupts; 3 in 8 before), GUI Setup stops after the desktop fill: a
+     lock-order deadlock in csrss. The API thread cleaning up a dead client
+     thread (`CsrDestroyThread`) holds CSRSRV's process structure lock
+     (0x77d2a0f8) and waits for WINSRV's USER lock (0x75c848b8); a thread
+     serving a USER/GDI request holds that and waits for the CSRSRV lock.
+     winlogon then waits in `CsrClientSendMessage` forever. The dead client
+     thread is a winlogon thread that exits with `C000004B` just as the
+     GUI starts (also in good boots). Not known whether that exit is
+     normal, or why our timing hits the window.
    - No mouse pointer: NT never sets a pointer shape (mouse not detected?).
    - The year shows as 2006 (item 3).
    - Boot the installed system after Setup's restart.
