@@ -234,19 +234,50 @@ static void diskimage__switch_tape(struct diskimage *d)
 
 #define	SENSE_KEY_NO_SENSE	0x00
 #define	SENSE_KEY_NOT_READY	0x02
+#define	SENSE_KEY_MEDIUM_ERROR	0x03
 #define	SENSE_KEY_ILLEGAL_REQUEST 0x05
 #define	SENSE_KEY_UNIT_ATTENTION 0x06
+#define	SENSE_KEY_DATA_PROTECT	0x07
 #define	SENSE_KEY_BLANK_CHECK	0x08
 #define	SENSE_FLAG_FILEMARK	0x80
 #define	SENSE_FLAG_EOM		0x40
 #define	SENSE_FLAG_ILI		0x20
 
 /*  Additional sense codes:  */
+#define	ASC_WRITE_ERROR			0x0c
+#define	ASC_INVALID_COMMAND		0x20
 #define	ASC_LBA_OUT_OF_RANGE		0x21
 #define	ASC_INVALID_FIELD_IN_CDB	0x24
+#define	ASC_INVALID_FIELD_IN_PARAMETERS	0x26
+#define	ASC_WRITE_PROTECTED		0x27
 #define	ASC_MEDIUM_MAY_HAVE_CHANGED	0x28
 #define	ASC_MEDIUM_NOT_PRESENT		0x3a
 #define	ASC_MEDIUM_REMOVAL_PREVENTED	0x53	/*  ASCQ 0x02  */
+
+
+/*
+ *  cdrom_address():
+ *
+ *  Puts the address of logical block lba of a CD-ROM in p[0..3]: the block
+ *  number, or with msf the minute, second and frame (block 0 is at 00:02:00,
+ *  after the 150 frames of the pause at the start of the disc).
+ */
+static void cdrom_address(unsigned char *p, uint64_t lba, int msf)
+{
+	if (msf) {
+		uint64_t f = lba + 150;
+
+		p[0] = 0;
+		p[1] = f / (60 * 75);
+		p[2] = (f / 75) % 60;
+		p[3] = f % 75;
+	} else {
+		p[0] = lba >> 24;
+		p[1] = lba >> 16;
+		p[2] = lba >> 8;
+		p[3] = lba;
+	}
+}
 
 
 /*
@@ -426,6 +457,7 @@ static int simh_tape_forward(struct diskimage *d, uint32_t *lenp,
 		if (marker == SIMH_TAPE_MARK) {
 			d->tape_offset += 4;
 			d->tape_filenr ++;
+			d->tape_blocknr ++;
 			return TAPE_REC_FILEMARK;
 		}
 
@@ -442,8 +474,10 @@ static int simh_tape_forward(struct diskimage *d, uint32_t *lenp,
 		d->tape_offset += 8 + ((len + 1) & ~1);
 
 		/*  Skip private records; return good and bad data.  */
-		if (recclass == 0 || recclass == 8)
+		if (recclass == 0 || recclass == 8) {
+			d->tape_blocknr ++;
 			return TAPE_REC_DATA;
+		}
 	}
 }
 
@@ -463,12 +497,14 @@ static int simh_tape_backward(struct diskimage *d)
 		if (d->tape_offset < 4 || !simh_tape_read_marker(d,
 		    d->tape_offset - 4, &marker)) {
 			d->tape_offset = 0;
+			d->tape_blocknr = 0;
 			return TAPE_REC_BOT;
 		}
 
 		if (marker == SIMH_TAPE_MARK) {
 			d->tape_offset -= 4;
 			d->tape_filenr --;
+			d->tape_blocknr --;
 			return TAPE_REC_FILEMARK;
 		}
 
@@ -482,12 +518,15 @@ static int simh_tape_backward(struct diskimage *d)
 		reclen = 8 + ((len + 1) & ~1);
 		if (reclen > d->tape_offset) {
 			d->tape_offset = 0;
+			d->tape_blocknr = 0;
 			return TAPE_REC_BOT;
 		}
 		d->tape_offset -= reclen;
 
-		if (recclass == 0 || recclass == 8)
+		if (recclass == 0 || recclass == 8) {
+			d->tape_blocknr --;
 			return TAPE_REC_DATA;
+		}
 	}
 }
 
@@ -696,6 +735,379 @@ static void diskimage__simh_tape_space(struct diskimage *d,
 	default:
 		fatal("[ diskimage: unimplemented SPACE type %i ]\n", code);
 	}
+}
+
+
+/*
+ *  simh_tape_rewind():
+ *
+ *  Moves a SIMH-format tape to its beginning.
+ */
+static void simh_tape_rewind(struct diskimage *d)
+{
+	d->tape_offset = 0;
+	d->tape_filenr = 0;
+	d->tape_blocknr = 0;
+	d->tape_partial_len = 0;
+	d->filemark = 0;
+}
+
+
+/*
+ *  simh_tape_writable():
+ *
+ *  A SIMH-format tape is written in its file, which must be writable
+ *  itself (not through an overlay).  Otherwise, as for a cartridge with
+ *  its write-protect switch set, a command that writes fails with DATA
+ *  PROTECT.  Returns false then.
+ */
+static bool simh_tape_writable(struct diskimage *d,
+	struct scsi_transfer *xferp)
+{
+	if (d->f != NULL && d->writable && !d->temp_overlay &&
+	    d->nr_of_overlays == 0)
+		return true;
+
+	check_condition(d, xferp, SENSE_KEY_DATA_PROTECT,
+	    ASC_WRITE_PROTECTED);
+	return false;
+}
+
+
+/*
+ *  simh_tape_put():
+ *
+ *  Writes a data record of len bytes (or, with buf NULL, a filemark) at
+ *  the position of the tape, and moves past it.  Returns false on error.
+ */
+static bool simh_tape_put(struct diskimage *d, const unsigned char *buf,
+	uint32_t len)
+{
+	unsigned char m[4];
+
+	if (buf == NULL)
+		len = SIMH_TAPE_MARK;
+	m[0] = len; m[1] = len >> 8; m[2] = len >> 16; m[3] = len >> 24;
+
+	if (fseeko(d->f, d->tape_offset, SEEK_SET) != 0 ||
+	    fwrite(m, 1, 4, d->f) != 4)
+		return false;
+
+	if (buf == NULL) {
+		d->tape_offset += 4;
+		d->tape_filenr ++;
+		d->tape_blocknr ++;
+		return true;
+	}
+
+	if (fwrite(buf, 1, len, d->f) != len ||
+	    ((len & 1) && fputc(0, d->f) == EOF) ||
+	    fwrite(m, 1, 4, d->f) != 4)
+		return false;
+
+	d->tape_offset += 8 + ((len + 1) & ~1);
+	d->tape_blocknr ++;
+	return true;
+}
+
+
+/*
+ *  simh_tape_end_data():
+ *
+ *  After a write or an erase, the tape ends at its position: what was
+ *  written beyond it is gone, as on a real tape (end of data).
+ */
+static bool simh_tape_end_data(struct diskimage *d)
+{
+	d->tape_partial_len = 0;
+	d->filemark = 0;
+
+	if (fflush(d->f) != 0)
+		return false;
+#ifdef _WIN32
+	return _chsize_s(_fileno(d->f), d->tape_offset) == 0;
+#else
+	return ftruncate(fileno(d->f), d->tape_offset) == 0;
+#endif
+}
+
+
+/*
+ *  diskimage__simh_tape_write():
+ *
+ *  WRITE to a SIMH-format tape: in fixed block mode each block is a
+ *  record of its own, in variable block mode the transfer is one record.
+ *  Returns true while the data is still to come (the DATA OUT phase).
+ */
+static bool diskimage__simh_tape_write(struct diskimage *d,
+	struct scsi_transfer *xferp)
+{
+	int fixed = xferp->cmd[1] & 0x01;
+	uint32_t count = (xferp->cmd[2] << 16) + (xferp->cmd[3] << 8) +
+	    xferp->cmd[4];
+	uint32_t blocksize = fixed? (uint32_t) d->logical_block_size : count;
+	uint32_t nblocks = fixed? count : 1;
+	size_t size = (size_t) nblocks * blocksize;
+
+	if (!simh_tape_writable(d, xferp))
+		return false;
+
+	/*  A transfer length of zero is not an error, and writes nothing.  */
+	if (count == 0) {
+		diskimage__return_default_status_and_message(xferp);
+		return false;
+	}
+
+	if (xferp->data_out_offset != size) {
+		xferp->data_out_len = size;
+		return true;
+	}
+
+	debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+	    "id=%i: WRITE tape file=%i cmd[1]=0x%02x count=%i ofs=%lli\n",
+	    d->id, d->tape_filenr, xferp->cmd[1], (int)count,
+	    (long long)d->tape_offset);
+
+	diskimage__return_default_status_and_message(xferp);
+
+	for (uint32_t i = 0; i < nblocks; i++)
+		if (!simh_tape_put(d, xferp->data_out + (size_t)i * blocksize,
+		    blocksize)) {
+			check_condition(d, xferp, SENSE_KEY_MEDIUM_ERROR,
+			    ASC_WRITE_ERROR);
+			break;
+		}
+
+	if (!simh_tape_end_data(d))
+		check_condition(d, xferp, SENSE_KEY_MEDIUM_ERROR,
+		    ASC_WRITE_ERROR);
+	return false;
+}
+
+
+/*
+ *  diskimage__simh_tape_locate():
+ *
+ *  LOCATE on a SIMH-format tape: to the record (or filemark) at the
+ *  position READ POSITION gives.  Beyond the end of data, the tape stops
+ *  there with BLANK CHECK.
+ */
+static void diskimage__simh_tape_locate(struct diskimage *d,
+	struct scsi_transfer *xferp)
+{
+	int64_t target = ((uint32_t)xferp->cmd[3] << 24) +
+	    (xferp->cmd[4] << 16) + (xferp->cmd[5] << 8) + xferp->cmd[6];
+	uint32_t reclen;
+	uint64_t data_ofs;
+
+	diskimage__return_default_status_and_message(xferp);
+
+	/*  A tape of one partition:  */
+	if ((xferp->cmd[1] & 0x02) && xferp->cmd[8] != 0) {
+		check_condition(d, xferp, SENSE_KEY_ILLEGAL_REQUEST,
+		    ASC_INVALID_FIELD_IN_CDB);
+		return;
+	}
+
+	if (target < d->tape_blocknr)
+		simh_tape_rewind(d);
+	d->tape_partial_len = 0;
+	d->filemark = 0;
+
+	while (d->tape_blocknr < target)
+		if (simh_tape_forward(d, &reclen, &data_ofs) == TAPE_REC_EOM) {
+			tape_check_condition(d, xferp, SENSE_KEY_BLANK_CHECK,
+			    0, 0);
+			break;
+		}
+}
+
+
+/*
+ *  diskimage__tape_mode_sense():
+ *
+ *  MODE SENSE of a tape drive: the header (with the write-protect bit),
+ *  unless DBD the block descriptor (block length 0 = variable blocks),
+ *  and the pages of a tape drive: data compression (0x0f: none), device
+ *  configuration (0x10) and medium partition (0x11: one partition).
+ */
+static void diskimage__tape_mode_sense(struct diskimage *d,
+	struct scsi_transfer *xferp)
+{
+	unsigned char buf[96];
+	int ten = xferp->cmd[0] == SCSICMD_MODE_SENSE10;
+	int dbd = xferp->cmd[1] & 0x08, changeable = (xferp->cmd[2] >> 6) == 1;
+	int page = xferp->cmd[2] & 0x3f, all = page == 0x3f;
+	size_t alloc = ten? (xferp->cmd[7] << 8) + xferp->cmd[8] :
+	    xferp->cmd[4];
+	int n = ten? 8 : 4, blocklen;
+
+	debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+	    "id=%i: MODE_SENSE tape page=0x%02x\n", d->id, page);
+	diskimage__return_default_status_and_message(xferp);
+
+	if (page != 0 && page != 0x0f && page != 0x10 && page != 0x11 &&
+	    !all) {
+		check_condition(d, xferp, SENSE_KEY_ILLEGAL_REQUEST,
+		    ASC_INVALID_FIELD_IN_CDB);
+		return;
+	}
+
+	memset(buf, 0, sizeof(buf));
+
+	if (!dbd) {
+		/*  Density 0 (the default), the number of blocks 0 (the rest
+		    of the tape), and the block length:  */
+		blocklen = d->tape_variable? 0 : d->logical_block_size;
+		if (changeable)
+			blocklen = 0xffffff;
+		buf[n + 5] = blocklen >> 16;
+		buf[n + 6] = blocklen >> 8;
+		buf[n + 7] = blocklen;
+		n += 8;
+	}
+
+	if (page == 0x0f || all) {
+		/*  Data compression: not capable (DCC 0)  */
+		buf[n] = 0x0f; buf[n + 1] = 0x0e;
+		n += 16;
+	}
+	if (page == 0x10 || all) {
+		/*  Device configuration: report setmarks as set  */
+		buf[n] = 0x10; buf[n + 1] = 0x0e;
+		if (d->tape_rsmk || changeable)
+			buf[n + 8] = 0x20;
+		n += 16;
+	}
+	if (page == 0x11 || all) {
+		/*  Medium partition: no additional partitions  */
+		buf[n] = 0x11; buf[n + 1] = 0x0a;
+		n += 12;
+	}
+
+	if (ten) {
+		buf[0] = (n - 2) >> 8; buf[1] = n - 2;
+		buf[3] = d->writable? 0x10 : 0x90;
+		buf[7] = dbd? 0 : 8;
+	} else {
+		buf[0] = n - 1;
+		/*  Buffered mode 1, and the write-protect bit:  */
+		buf[2] = d->writable? 0x10 : 0x90;
+		buf[3] = dbd? 0 : 8;
+	}
+
+	if (alloc > (size_t)n)
+		alloc = n;
+	scsi_transfer_allocbuf(&xferp->data_in_len, &xferp->data_in, alloc, 1);
+	memcpy(xferp->data_in, buf, alloc);
+}
+
+
+/*
+ *  diskimage__tape_mode_select():
+ *
+ *  MODE SELECT of a tape drive: the block length of the block descriptor
+ *  (0 = variable blocks), setmarks reported or not (the device
+ *  configuration page), and no additional partitions.  Returns true while
+ *  the parameter list is still to come (the DATA OUT phase).
+ */
+static bool diskimage__tape_mode_select(struct diskimage *d,
+	struct scsi_transfer *xferp)
+{
+	int ten = xferp->cmd[0] != SCSICMD_MODE_SELECT;
+	size_t len = ten? (xferp->cmd[7] << 8) + xferp->cmd[8] :
+	    xferp->cmd[4];
+	const unsigned char *p = xferp->data_out;
+	size_t n, bdlen;
+
+	if (len > 0 && xferp->data_out_offset != len) {
+		xferp->data_out_len = len;
+		return true;
+	}
+
+	diskimage__return_default_status_and_message(xferp);
+
+	n = ten? 8 : 4;
+	if (len < n)
+		return false;
+	bdlen = ten? (p[6] << 8) + p[7] : p[3];
+
+	if (bdlen >= 8 && n + 8 <= len) {
+		int blocklen = (p[n + 5] << 16) + (p[n + 6] << 8) + p[n + 7];
+
+		d->tape_variable = blocklen == 0;
+		if (blocklen > 0)
+			d->logical_block_size = blocklen;
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: MODE_SELECT tape block length %i\n",
+		    d->id, blocklen);
+	}
+
+	/*  The pages:  */
+	for (n += bdlen; n + 2 <= len; n += 2 + p[n + 1]) {
+		switch (p[n] & 0x3f) {
+		case 0x10:
+			if (n + 8 < len)
+				d->tape_rsmk = (p[n + 8] & 0x20) != 0;
+			break;
+		case 0x11:
+			if (n + 3 < len && p[n + 3] != 0) {
+				check_condition(d, xferp,
+				    SENSE_KEY_ILLEGAL_REQUEST,
+				    ASC_INVALID_FIELD_IN_PARAMETERS);
+				return false;
+			}
+			break;
+		}
+	}
+
+	return false;
+}
+
+
+/*
+ *  diskimage__tape_log_sense():
+ *
+ *  LOG SENSE of a DAT drive: the supported pages (0x00), and the tape
+ *  capacity page (0x31) in kilobytes, of a DDS tape, 2 GB, less what is
+ *  written.
+ */
+static void diskimage__tape_log_sense(struct diskimage *d,
+	struct scsi_transfer *xferp)
+{
+	unsigned char buf[36];
+	size_t alloc = (xferp->cmd[7] << 8) + xferp->cmd[8], n;
+	uint32_t max = 2000000, used = d->tape_offset / 1024;
+	uint32_t v[4] = { max > used? max - used : 0, 0, max, 0 };
+
+	diskimage__return_default_status_and_message(xferp);
+	memset(buf, 0, sizeof(buf));
+
+	switch (xferp->cmd[2] & 0x3f) {
+	case 0x00:
+		buf[3] = 2; buf[5] = 0x31;
+		n = 6;
+		break;
+	case 0x31:
+		buf[0] = 0x31; buf[3] = 32;
+		for (int i = 0; i < 4; i++) {
+			unsigned char *q = buf + 4 + i * 8;
+			q[1] = i + 1; q[3] = 4;
+			q[4] = v[i] >> 24; q[5] = v[i] >> 16;
+			q[6] = v[i] >> 8; q[7] = v[i];
+		}
+		n = 36;
+		break;
+	default:
+		check_condition(d, xferp, SENSE_KEY_ILLEGAL_REQUEST,
+		    ASC_INVALID_FIELD_IN_CDB);
+		return;
+	}
+
+	if (alloc > n)
+		alloc = n;
+	scsi_transfer_allocbuf(&xferp->data_in_len, &xferp->data_in, alloc, 1);
+	memcpy(xferp->data_in, buf, alloc);
 }
 
 
@@ -1068,6 +1480,10 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 	case SCSICMD_MODE_SENSE:
 	case SCSICMD_MODE_SENSE10:	
+		if (d->is_a_tape) {
+			diskimage__tape_mode_sense(d, xferp);
+			break;
+		}
 		q = 4; retlen = xferp->cmd[4];
 		switch (xferp->cmd_len) {
 		case 6:	break;
@@ -1338,7 +1754,13 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 	case SCSICMD_WRITE:
 	case SCSICMD_WRITE_10:
-		/*  TODO: tape  */
+		if (d->is_a_tape && d->tape_simh) {
+			if (diskimage__simh_tape_write(d, xferp))
+				return 2;
+			break;
+		}
+
+		/*  TODO: other tapes  */
 
 		if (xferp->cmd[0] == SCSICMD_WRITE) {
 			if (xferp->cmd_len != 6)
@@ -1435,6 +1857,24 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 		diskimage__return_default_status_and_message(xferp);
 		break;
+
+		/*
+		 *  LOAD UNLOAD of a tape drive: load, unload and retension
+		 *  leave the tape at its beginning (here it stays in the
+		 *  drive), and with EOT a load goes to the end of data:
+		 */
+		if (d->is_a_tape && d->tape_simh) {
+			uint32_t reclen;
+			uint64_t data_ofs;
+
+			diskimage__return_default_status_and_message(xferp);
+			simh_tape_rewind(d);
+			if ((xferp->cmd[4] & 0x05) == 0x05)
+				while (simh_tape_forward(d, &reclen, &data_ofs)
+				    != TAPE_REC_EOM)
+					;
+			break;
+		}
 
 		/*  LoEj without Start ejects a removable medium:  */
 		if ((xferp->cmd[4] & 0x03) == 0x02 &&
@@ -1579,6 +2019,8 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 		d->tape_offset = 0;
 		d->tape_filenr = 0;
+		d->tape_blocknr = 0;
+		d->tape_partial_len = 0;
 		d->filemark = 0;
 		d->tape_sense_key = SENSE_KEY_NO_SENSE;
 		d->tape_sense_flags = 0;
@@ -1637,64 +2079,109 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 	case SCSICDROM_READ_SUBCHANNEL:
 		/*
-		 *  According to
-		 *  http://mail-index.netbsd.org/port-i386/1997/03/03/0010.html:
-		 *
-		 *  "The READ_CD_CAPACITY, READ_SUBCHANNEL, and MODE_SELECT
-		 *   commands have the same opcode in SCSI or ATAPI, but don't
-		 *   have the same command structure"...
-		 *
-		 *  TODO: This still doesn't work. Hm.
+		 *  READ SUB-CHANNEL of SCSI-2: a header of four bytes (the
+		 *  audio status, none as audio play is not emulated, and the
+		 *  length of the data after the header), then, with SubQ,
+		 *  the data of the format asked for: the current position (1),
+		 *  at the start of track 1, the data track of the disc; the
+		 *  media catalog number (2) or the ISRC of a track (3), which
+		 *  the disc does not have. As many bytes as the allocation
+		 *  length are returned.
 		 */
-		retlen = 48;
+		{
+			unsigned char sub[24];
+			int msf = xferp->cmd[1] & 2, n = 4;
 
-		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
-		    "id=%i: CDROM_READ_SUBCHANNEL/READ_CD_CAPACITY cmd[1]=0x%02x\n",
-		    id, xferp->cmd[1]);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: CDROM_READ_SUBCHANNEL msf=%i subq=%i format=%i "
+			    "track=%i\n", id, msf? 1 : 0, (xferp->cmd[2] >> 6) & 1,
+			    xferp->cmd[3], xferp->cmd[6]);
 
-		/*  Return data:  */
-		scsi_transfer_allocbuf(&xferp->data_in_len,
-		    &xferp->data_in, retlen, 1);
+			memset(sub, 0, sizeof(sub));
+			sub[1] = 0x15;		/*  No current audio status  */
+			if ((xferp->cmd[2] & 0x40) && xferp->cmd[3] >= 1 &&
+			    xferp->cmd[3] <= 3) {
+				sub[4] = xferp->cmd[3];
+				if (xferp->cmd[3] == 1) {
+					sub[5] = 0x14;	/*  ADR 1, data track  */
+					sub[6] = 1;	/*  Track  */
+					sub[7] = 1;	/*  Index  */
+					cdrom_address(sub + 8, 0, msf);
+					/*  Track relative address: 0  */
+					n = 16;
+				} else {
+					if (xferp->cmd[3] == 3) {
+						sub[5] = 0x14;
+						sub[6] = xferp->cmd[6];
+					}
+					n = 24;
+				}
+			}
+			sub[3] = n - 4;
 
-		diskimage_recalc_size(d);
-
-		size = d->nr_of_logical_blocks;
-
-		xferp->data_in[0] = (size >> 24) & 255;
-		xferp->data_in[1] = (size >> 16) & 255;
-		xferp->data_in[2] = (size >> 8) & 255;
-		xferp->data_in[3] = size & 255;
-
-		xferp->data_in[4] = (d->logical_block_size >> 24) & 255;
-		xferp->data_in[5] = (d->logical_block_size >> 16) & 255;
-		xferp->data_in[6] = (d->logical_block_size >> 8) & 255;
-		xferp->data_in[7] = d->logical_block_size & 255;
+			retlen = xferp->cmd[7] * 256 + xferp->cmd[8];
+			if (retlen > 0) {
+				scsi_transfer_allocbuf(&xferp->data_in_len,
+				    &xferp->data_in, retlen, 1);
+				memcpy(xferp->data_in, sub,
+				    retlen < n? retlen : n);
+			}
+		}
 
 		diskimage__return_default_status_and_message(xferp);
 		break;
 
 	case SCSICDROM_READ_TOC:
-		retlen = xferp->cmd[7] * 256 + xferp->cmd[8];
-		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
-		    "id=%i: CDROM_READ_TOC lun=%i msf=%i starting_track=%i alloc_len=%i\n",
-		    id, xferp->cmd[1] >> 5, (xferp->cmd[1] >> 1) & 1, xferp->cmd[6], retlen);
+		/*
+		 *  The disc is one data track, track 1 from block 0. The table
+		 *  of contents (format 0) has the descriptors of track 1 and of
+		 *  the lead-out (track AAh) after it, from the starting track
+		 *  on; format 1, in the vendor bits of the control byte as
+		 *  SCSI-2 drives have it, the first track of the last session
+		 *  (the only one). Addresses are block numbers or, with MSF,
+		 *  minutes, seconds and frames. As many bytes as the
+		 *  allocation length are returned.
+		 */
+		{
+			unsigned char toc[20];
+			int msf = xferp->cmd[1] & 2, n = 4;
 
-		/*  Return data:  */
-		scsi_transfer_allocbuf(&xferp->data_in_len,
-		    &xferp->data_in, retlen, 1);
+			debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+			    "id=%i: CDROM_READ_TOC lun=%i msf=%i starting_track=%i "
+			    "format=%i alloc_len=%i\n", id, xferp->cmd[1] >> 5,
+			    msf? 1 : 0, xferp->cmd[6], xferp->cmd[9] >> 6,
+			    xferp->cmd[7] * 256 + xferp->cmd[8]);
 
-		xferp->data_in[0] = 0;
-		xferp->data_in[1] = 10;
-		xferp->data_in[2] = 0;		/*  First track.  */
-		xferp->data_in[3] = 0;		/*  Last track.  */
+			diskimage_recalc_size(d);
 
-		/*  Track 0 data:  */
-		xferp->data_in[4] = 0x00;	/*  Reserved.  */
-		xferp->data_in[5] = 0x04;	/*  ADR + CTRL:
-						    Data, not audio  */
-		xferp->data_in[6] = 0x00;	/*  Track nr  */
-		xferp->data_in[7] = 0x00;	/*  Reserved  */
-		/*  8..11 = absolute CDROM address  */
+			memset(toc, 0, sizeof(toc));
+			toc[2] = 1;		/*  First track or session  */
+			toc[3] = 1;		/*  Last track or session  */
+			if ((xferp->cmd[9] & 0xc0) == 0x40 ||
+			    xferp->cmd[6] <= 1) {
+				toc[n + 1] = 0x14;	/*  ADR 1, data track  */
+				toc[n + 2] = 1;
+				cdrom_address(toc + n + 4, 0, msf);
+				n += 8;
+			}
+			if ((xferp->cmd[9] & 0xc0) != 0x40) {
+				toc[n + 1] = 0x14;
+				toc[n + 2] = 0xaa;	/*  Lead-out  */
+				cdrom_address(toc + n + 4,
+				    d->nr_of_logical_blocks, msf);
+				n += 8;
+			}
+			toc[0] = (n - 2) >> 8;
+			toc[1] = n - 2;
+
+			retlen = xferp->cmd[7] * 256 + xferp->cmd[8];
+			if (retlen > 0) {
+				scsi_transfer_allocbuf(&xferp->data_in_len,
+				    &xferp->data_in, retlen, 1);
+				memcpy(xferp->data_in, toc,
+				    retlen < n? retlen : n);
+			}
+		}
 
 		diskimage__return_default_status_and_message(xferp);
 		break;
@@ -1777,6 +2264,12 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 
 	case SCSICMD_MODE_SELECT:
 	case SCSICMD_MODE_SELECT10:
+		if (d->is_a_tape) {
+			if (diskimage__tape_mode_select(d, xferp))
+				return 2;
+			break;
+		}
+
 		/*
 		 *  TODO:
 		 *
@@ -1860,6 +2353,91 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		diskimage__return_default_status_and_message(xferp);
 		break;
 
+	case SCSICMD_WRITE_FILEMARKS:
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: WRITE_FILEMARKS\n", id);
+
+		if (!d->is_a_tape || !d->tape_simh)
+			goto unimplemented;
+		if (!simh_tape_writable(d, xferp))
+			break;
+
+		/*  Setmarks (WSmk) are not written on these tapes:  */
+		if (xferp->cmd[1] & 0x02) {
+			check_condition(d, xferp, SENSE_KEY_ILLEGAL_REQUEST,
+			    ASC_INVALID_FIELD_IN_CDB);
+			break;
+		}
+
+		diskimage__return_default_status_and_message(xferp);
+		{
+			uint32_t count = (xferp->cmd[2] << 16) +
+			    (xferp->cmd[3] << 8) + xferp->cmd[4];
+
+			/*  (No filemarks: only the buffer is written.)  */
+			if (count == 0)
+				break;
+			for (uint32_t j = 0; j < count; j++)
+				if (!simh_tape_put(d, NULL, 0))
+					break;
+			if (!simh_tape_end_data(d))
+				check_condition(d, xferp,
+				    SENSE_KEY_MEDIUM_ERROR, ASC_WRITE_ERROR);
+		}
+		break;
+
+	case SCSICMD_ERASE:
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: ERASE\n", id);
+
+		/*  Short or long (bit 0), both end the data where the tape
+		    is, which stays there:  */
+		if (!d->is_a_tape || !d->tape_simh)
+			goto unimplemented;
+		if (!simh_tape_writable(d, xferp))
+			break;
+		diskimage__return_default_status_and_message(xferp);
+		if (!simh_tape_end_data(d))
+			check_condition(d, xferp, SENSE_KEY_MEDIUM_ERROR,
+			    ASC_WRITE_ERROR);
+		break;
+
+	case SCSICMD_LOCATE:
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: LOCATE\n", id);
+		if (!d->is_a_tape || !d->tape_simh)
+			goto unimplemented;
+		diskimage__simh_tape_locate(d, xferp);
+		break;
+
+	case SCSICMD_READ_POSITION:
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: READ_POSITION\n", id);
+		if (!d->is_a_tape || !d->tape_simh)
+			goto unimplemented;
+
+		/*  The short form: BOP, partition 0, the first and the last
+		    block location (the same: nothing is buffered).  */
+		scsi_transfer_allocbuf(&xferp->data_in_len, &xferp->data_in,
+		    20, 1);
+		xferp->data_in[0] = d->tape_blocknr == 0? 0x80 : 0x00;
+		for (i = 4; i < 12; i += 4) {
+			xferp->data_in[i + 0] = d->tape_blocknr >> 24;
+			xferp->data_in[i + 1] = d->tape_blocknr >> 16;
+			xferp->data_in[i + 2] = d->tape_blocknr >> 8;
+			xferp->data_in[i + 3] = d->tape_blocknr;
+		}
+		diskimage__return_default_status_and_message(xferp);
+		break;
+
+	case SCSICMD_LOG_SENSE:
+		debugmsg(scsi_subsys, "scsi", VERBOSITY_DEBUG,
+		    "id=%i: LOG_SENSE\n", id);
+		if (!d->is_a_tape)
+			goto unimplemented;
+		diskimage__tape_log_sense(d, xferp);
+		break;
+
 	case 0xbd:
 		if (debugmsg_is_active(scsi_subsys, VERBOSITY_WARNING)) {
 			char cbuf[256] = "";
@@ -1896,10 +2474,16 @@ xferp->data_in[4] = 0x2c - 4;	/*  Additional length  */
 		break;
 
 	default:
+	unimplemented:
 		debugmsg(scsi_subsys, "scsi", VERBOSITY_WARNING,
 		    "id=%i: UNIMPLEMENTED SCSI command 0x%02x\n",
 		    id, xferp->cmd[0]);
 		// exit(1);
+
+		/*  A tape drive fails a command that it does not have:  */
+		if (d->is_a_tape)
+			check_condition(d, xferp, SENSE_KEY_ILLEGAL_REQUEST,
+			    ASC_INVALID_COMMAND);
 	}
 
 	return 1;

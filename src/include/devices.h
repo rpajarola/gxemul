@@ -589,8 +589,9 @@ struct lk201_data {
         int                     use_fb;
 	int			kbd_present;	/*  answers commands without fb  */
 	int			console_handle;
-	int			serial_handle;	/*  with fb: the serial console
-						    line's own, or -1  */
+	int			serial_handle[2];	/*  with fb: the consoles
+						    of their own of lines 2
+						    and 3, or -1  */
 
         int                     (*space_available_in_queue)(void *,int);
         void                    (*add_to_rx_queue)(void *,int,int);

@@ -5775,4 +5775,46 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.23  ==============
 
-
+20261110	SCSI CD-ROM: READ SUB-CHANNEL returns the SCSI-2 sub-channel
+		header and, with SubQ, the current position, the media catalog
+		number or the ISRC, up to the allocation length; it returned
+		48 bytes of READ CAPACITY data, and Windows NT reset the SCSI
+		bus when CD Player started. READ TOC has track 1 and the
+		lead-out, as block numbers or MSF, and the last session
+		(format 1 in the vendor bits), up to the allocation length.
+		(Antoni Sawicki)
+20261110	DC7085 lines 2 and 3 (communications and printer) with a
+		framebuffer: consoles of their own, as the two serial
+		connectors of the machine. What is written to a line goes to
+		its console, and what is typed there is received on the line;
+		they wrote to the main console, and nothing could be typed to
+		them. Windows NT has them as COM1 and COM2. (Antoni Sawicki)
+20261110	SCSI tape: on a SIMH tape image (.tap), WRITE writes records
+		and WRITE FILEMARKS tape marks, and the tape ends at what was
+		written last (also after ERASE); a WRITE went to a block
+		address, as on a disk. LOCATE, READ POSITION, MODE SENSE and
+		MODE SELECT, LOG SENSE (the tape capacity) and LOAD UNLOAD, as
+		Windows NT's 4mmdat driver and Backup use them. A command
+		that a tape drive does not have fails with ILLEGAL REQUEST,
+		and a write to a read-only image with DATA PROTECT.
+		(Antoni Sawicki)
+20261110	DECstation 5000/240 (3MAX+, KN03): it stopped at "TODO"
+		fatals. It now has the devices of the KN03 (new dev_kn03.c):
+		the IOASIC and its system interrupt register, the LANCE, the
+		two SCCs and the NCR 53C94 with the IOASIC's DMA, the RTC, and
+		the memory error and ECC registers. Ultrix 4.5's generic
+		kernel and Windows NT 3.5 run on it with PROM emulation.
+		(Antoni Sawicki)
+20261110	SCC: a character written while WR5 disables the transmitter
+		stays in the transmit buffer, as on a Z8530, and is sent when
+		the transmitter is enabled; it was sent at once, which hid a
+		bug in the SCC driver of the NT port (NTMAX) on a real
+		5000/240. With PROM emulation the transmitters start enabled,
+		as before. (Antoni Sawicki)
+20261110	DHCP: the simulated gateway answers with the DHCP message a
+		client waits for (option 53): an offer for a discover, an ack
+		(or a nak) for a request and an ack for an inform, with the
+		server identifier and an infinite lease; it sent every client
+		a BOOTP reply, which a DHCP client does not take. A renewal,
+		which a client sends to the gateway, reaches it too. Windows
+		NT 3.5 gets its address with DHCP. (Antoni Sawicki)

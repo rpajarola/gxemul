@@ -737,6 +737,10 @@ ret:
  *  last missing piece, returns the whole datagram as one packet (in a buffer
  *  that is used again later), with its length in *lenp; else NULL.
  */
+static void net_ip_broadcast_dhcp(struct net *net, struct nic_data *nic,
+	unsigned char *packet, int len);
+
+
 static unsigned char *udp_reassemble(struct net *net,
 	const unsigned char *packet, int len, int *lenp)
 {
@@ -887,6 +891,17 @@ static void net_ip_udp(struct net *net, struct nic_data *nic,
 	dstport = (packet[36] << 8) + packet[37];
 	udp_len = (packet[38] << 8) + packet[39];
 	/*  chksum at offset 40 and 41  */
+
+	/*
+	 *  DHCP to the gateway: a client that has its address sends the
+	 *  messages of its lease (renewing it, for example) to its server,
+	 *  which is the gateway.
+	 */
+	if (srcport == 68 && dstport == 67 &&
+	    memcmp(packet + 30, &net->gateway_ipv4_addr[0], 4) == 0) {
+		net_ip_broadcast_dhcp(net, nic, packet, len);
+		return;
+	}
 
 	debug("[ net: UDP: ");
 	debug("srcport=%i dstport=%i len=%i ", srcport, dstport, udp_len);
@@ -1073,9 +1088,42 @@ void net_ip(struct net *net, struct nic_data *nic, unsigned char *packet,
 
 
 /*
+ *  net_ip_dhcp_option():
+ *
+ *  Find option opt among the options of a BOOTP or DHCP message, which
+ *  follow the magic cookie at offset 278 of the Ethernet packet. Returns a
+ *  pointer to the length byte of the option, or NULL if there is none.
+ */
+static unsigned char *net_ip_dhcp_option(unsigned char *packet, int len,
+	int opt)
+{
+	int i = 282;
+
+	if (len < 282 || packet[278] != 99 || packet[279] != 130 ||
+	    packet[280] != 83 || packet[281] != 99)
+		return NULL;
+
+	while (i < len && packet[i] != 255) {
+		if (packet[i] == 0) {
+			i ++;
+			continue;
+		}
+		if (i + 2 > len || i + 2 + packet[i+1] > len)
+			break;
+		if (packet[i] == opt)
+			return packet + i + 1;
+		i += 2 + packet[i+1];
+	}
+
+	return NULL;
+}
+
+
+/*
  *  net_ip_broadcast_dhcp():
  *
  *  Handle an IPv4 DHCP broadcast packet, coming from the emulated NIC.
+ *  (Or one sent to the gateway, see net_ip_udp().)
  *
  *  Read http://tools.ietf.org/html/rfc2131 for details on DHCP.
  *  (And http://users.telenet.be/mydotcom/library/network/dhcp.htm.)
@@ -1083,8 +1131,12 @@ void net_ip(struct net *net, struct nic_data *nic, unsigned char *packet,
 static void net_ip_broadcast_dhcp(struct net *net, struct nic_data *nic,
 	unsigned char *packet, int len)
 {
+	/*  The address of the client:  */
+	static const unsigned char client_ipv4[4] = { 10, 0, 0, 1 };  /*  TODO  */
+	static const unsigned char zero_ipv4[4] = { 0, 0, 0, 0 };
 	struct ethernet_packet_link *lp;
-        int i, reply_len;
+	unsigned char *opt;
+        int i, reply_len, dhcp_type = 0, inform = 0;
 
 	if (ENOUGH_VERBOSITY(SUBSYS_NET, VERBOSITY_DEBUG)) {
 		char s[4000];
@@ -1150,11 +1202,46 @@ static void net_ip_broadcast_dhcp(struct net *net, struct nic_data *nic,
 	fatal(" ]\n");
 #endif
 
-        reply_len = 307;
+	/*
+	 *  A DHCP client tells the type of its message in option 53, and
+	 *  expects the type of the answer there: an offer for a discover, an
+	 *  ack for a request, or a nak when it asks for an address that is not
+	 *  its address here (one it leased on another network), an ack
+	 *  without an address for an inform. A decline or a release gets no
+	 *  answer. A BOOTP client sends no option 53, and gets a BOOTP reply.
+	 */
+	opt = net_ip_dhcp_option(packet, len, 53);
+	if (opt != NULL && opt[0] == 1) {
+		switch (opt[1]) {
+		case 1:	/*  DHCPDISCOVER  */
+			dhcp_type = 2;			/*  DHCPOFFER  */
+			break;
+		case 3:	/*  DHCPREQUEST  */
+			dhcp_type = 5;			/*  DHCPACK  */
+			opt = net_ip_dhcp_option(packet, len, 50);
+			if (opt != NULL && opt[0] == 4) {
+				if (memcmp(opt + 1, client_ipv4, 4) != 0)
+					dhcp_type = 6;	/*  DHCPNAK  */
+			} else if (memcmp(packet + 54, zero_ipv4, 4) != 0 &&
+			    memcmp(packet + 54, client_ipv4, 4) != 0)
+				dhcp_type = 6;		/*  DHCPNAK  */
+			break;
+		case 8:	/*  DHCPINFORM  */
+			dhcp_type = 5;			/*  DHCPACK  */
+			inform = 1;
+			break;
+		default:/*  DHCPDECLINE, DHCPRELEASE  */
+			return;
+		}
+	}
+
+	/*  A DHCP answer has at least the 300 bytes of a BOOTP message:  */
+	reply_len = dhcp_type ? 14 + 20 + 8 + 300 : 307;
         lp = net_allocate_ethernet_packet_link(net, nic, reply_len);
 
         /*  From old packet, copy everything before options field:  */
         memcpy(lp->data, packet, 278);
+	memset(lp->data + 278, 0, reply_len - 278);
 
 	/*  We are sending to the client, from the gateway:  */
 	memcpy(lp->data + 0, packet + 6, 6);
@@ -1164,12 +1251,12 @@ static void net_ip_broadcast_dhcp(struct net *net, struct nic_data *nic,
 	lp->data[16] = (reply_len - 14) >> 8;
 	lp->data[17] = (reply_len - 14) & 0xff;
 
-        /*  Set IP addresses:  */
+        /*  Set IP addresses (an ack goes to the address the client has):  */
 	memcpy(lp->data + 26, &net->gateway_ipv4_addr[0], 4);
-	lp->data[30] = 0xff;
-	lp->data[31] = 0xff;
-	lp->data[32] = 0xff;
-	lp->data[33] = 0xff;
+	if (dhcp_type == 5 && memcmp(packet + 54, zero_ipv4, 4) != 0)
+		memcpy(lp->data + 30, packet + 54, 4);
+	else
+		memset(lp->data + 30, 0xff, 4);
 
 	/*  Switch src and dst ports:  */
 	memcpy(lp->data + 34, packet + 36, 2);
@@ -1180,13 +1267,18 @@ static void net_ip_broadcast_dhcp(struct net *net, struct nic_data *nic,
 	lp->data[39] = (reply_len - 34) & 0xff;
 
 	/*  Client's (yiaddr) IPv4 address:  */
-	lp->data[58] = 10;
-	lp->data[59] = 0;
-	lp->data[60] = 0;
-	lp->data[61] = 1;	/*  TODO  */
+	if (dhcp_type == 6 || inform)
+		memset(lp->data + 58, 0, 4);
+	else
+		memcpy(lp->data + 58, client_ipv4, 4);
 
-	/*  Server's IPv4 address:  (giaddr)  */
-	memcpy(lp->data + 66, &net->gateway_ipv4_addr[0], 4);
+	if (dhcp_type == 0) {
+		/*  Server's IPv4 address:  (giaddr)  */
+		memcpy(lp->data + 66, &net->gateway_ipv4_addr[0], 4);
+	} else if (dhcp_type != 6) {
+		/*  Server's IPv4 address:  (siaddr)  */
+		memcpy(lp->data + 62, &net->gateway_ipv4_addr[0], 4);
+	}
 
 	/*  This is a Reply:  */
 	lp->data[42] = 0x02;
@@ -1198,24 +1290,47 @@ static void net_ip_broadcast_dhcp(struct net *net, struct nic_data *nic,
 	lp->data[279] = 130;
 	lp->data[280] = 83;
 	lp->data[281] = 99;
+	i = 282;
 
 	/*  DHCP options, http://tools.ietf.org/html/rfc1533  */
-	lp->data[282] = 1; /* subnet mask */
-	lp->data[283] = 4;
-	lp->data[284] = 255;
-	lp->data[285] = 0;
-	lp->data[286] = 0;
-	lp->data[287] = 0;
-	lp->data[288] = 3; /* router */
-	lp->data[289] = 4;
-	memcpy(lp->data + 290, &net->gateway_ipv4_addr[0], 4);
-	lp->data[294] = 6; /* domain name server */
-	lp->data[295] = 4;
-	memcpy(lp->data + 296, &net->gateway_ipv4_addr[0], 4);
-	lp->data[300] = 54; /* server identifier */
-	lp->data[301] = 4;
-	memcpy(lp->data + 302, &net->gateway_ipv4_addr[0], 4);
-	lp->data[306] = 255; /* end */
+	if (dhcp_type != 0) {
+		lp->data[i++] = 53; /* DHCP message type */
+		lp->data[i++] = 1;
+		lp->data[i++] = dhcp_type;
+		lp->data[i++] = 54; /* server identifier */
+		lp->data[i++] = 4;
+		memcpy(lp->data + i, &net->gateway_ipv4_addr[0], 4);
+		i += 4;
+		if (!inform && dhcp_type != 6) {
+			lp->data[i++] = 51; /* lease time: infinite */
+			lp->data[i++] = 4;
+			memset(lp->data + i, 0xff, 4);
+			i += 4;
+		}
+	}
+	if (dhcp_type != 6) {
+		lp->data[i++] = 1; /* subnet mask */
+		lp->data[i++] = 4;
+		lp->data[i++] = 255;
+		lp->data[i++] = 0;
+		lp->data[i++] = 0;
+		lp->data[i++] = 0;
+		lp->data[i++] = 3; /* router */
+		lp->data[i++] = 4;
+		memcpy(lp->data + i, &net->gateway_ipv4_addr[0], 4);
+		i += 4;
+		lp->data[i++] = 6; /* domain name server */
+		lp->data[i++] = 4;
+		memcpy(lp->data + i, &net->gateway_ipv4_addr[0], 4);
+		i += 4;
+	}
+	if (dhcp_type == 0) {
+		lp->data[i++] = 54; /* server identifier */
+		lp->data[i++] = 4;
+		memcpy(lp->data + i, &net->gateway_ipv4_addr[0], 4);
+		i += 4;
+	}
+	lp->data[i] = 255; /* end */
 
 	/*  Recalculate IP header checksum:  */
 	net_ip_checksum(lp->data + 14, 10, 20);
