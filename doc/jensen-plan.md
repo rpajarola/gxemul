@@ -164,7 +164,10 @@ Fixed on the way:
      thread is a winlogon thread that exits with `C000004B` just as the
      GUI starts (also in good boots). Not known whether that exit is
      normal, or why our timing hits the window.
-   - No mouse pointer: NT never sets a pointer shape (mouse not detected?).
+   - The mouse (fixed): the 8042 now has a PS/2 mouse on its auxiliary port
+     (D4 commands, the aux bit in the status register, the interrupt shared
+     with the keyboard on irq_h[3]), and the QVision's Bt485 hardware cursor
+     shows the pointer.
    - The year shows as 2006 (item 3).
    - arcinst must run before the ECU: with the QVision's framebuffer
      reserved at 4 MB, arcinst (at 6 MB) fails with "Failed to initialize
@@ -181,7 +184,7 @@ Fixed on the way:
 3. **Year shows as 2006** in the ARC clock (RTC year convention).
 4. **Video:** NT 3.1 Alpha only supports Compaq QVision and S3 (911/924, 928)
    displays; there is no plain VGA option. The QVision works (item 1).
-5. DEC OSF/1 AXP; the mouse; newer NT/VMS.
+5. DEC OSF/1 AXP; newer NT/VMS.
 6. **DE422 Ethernet** (done): `dev_de422.c` in EISA slot 3 with networking on,
    on the LANCE core of `dev_le.c`; SRM's NI test passes, and NT 3.1's
    lance.sys works (TCP/IP through the simulated network). The factory NVRAM

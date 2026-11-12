@@ -123,6 +123,11 @@ struct pckbc_data {
 #define	STATE_WAITING_FOR_AUX_OUT	7
 #define	STATE_LDOUTPUT			8
 #define	STATE_RDOUTPUT			9
+#define	STATE_WAITING_FOR_AUXBUF	10	/*  D3: next byte is aux data  */
+
+/*  8042 status: the output buffer holds a byte from the auxiliary device
+    (the mouse):  */
+#define	KBS_AUXB			0x20
 
 
 /*
@@ -810,7 +815,14 @@ void pckbc_reassert_interrupts(struct pckbc_data *d)
 		 *  Cause receive interrupt, if there's something in the
 		 *  receive buffer: (Otherwise deassert the interrupt.)
 		 */
-		if (d->head[port_nr] != d->tail[port_nr] && ints_enabled && d->rx_int_enable[port_nr]) {
+		/*  The 8042 has one output buffer: a mouse byte comes after
+		    the keyboard's, and interrupts only when it is next.  */
+		int pending = d->head[port_nr] != d->tail[port_nr];
+		if (port_nr == 1 && d->type != PCKBC_8242 &&
+		    d->head[0] != d->tail[0])
+			pending = 0;
+
+		if (pending && ints_enabled && d->rx_int_enable[port_nr]) {
 			if (!d->currently_asserted[port_nr]) {
 				// fatal("[ pckbc: interrupt port %i ]\n", port_nr);
 				if (port_nr == 0)
@@ -853,7 +865,8 @@ DEVICE_TICK(pckbc)
 
 	// Mouse input:
 	/*  Don't do mouse updates if we're running in serial console mode:  */
-	if (cpu->machine->display_md.in_use && d->state[1] == STATE_NORMAL && d->scanning_enabled[1]) {
+	if (cpu->machine->display_md.in_use && d->state[1] == STATE_NORMAL && d->scanning_enabled[1] &&
+	    (d->type == PCKBC_8242 || !(d->cmdbyte & KC8_MDISABLE))) {
 		int xdelta, ydelta, mouse_buttons, mouse_fb_nr;
 		console_getmouse(&xdelta, &ydelta, &mouse_buttons, &mouse_fb_nr);
 
@@ -982,6 +995,40 @@ static void dev_pckbc_command(struct pckbc_data *d, int port_nr)
 		pckbc_add_code(d, cmd, port_nr);
 		d->state[port_nr] = STATE_NORMAL;
 		return;
+	}
+
+	/*  PS/2 mouse commands that differ from the keyboard's:  */
+	if (port_nr == 1) {
+		switch (cmd) {
+		case 0xe6:	/*  Set scaling 1:1  */
+		case 0xe7:	/*  Set scaling 2:1  */
+		case 0xea:	/*  Set stream mode  */
+		case 0xf0:	/*  Set remote mode  */
+			pckbc_add_code(d, KBR_ACK, port_nr);
+			return;
+		case 0xe8:	/*  Set resolution, then a byte  */
+			pckbc_add_code(d, KBR_ACK, port_nr);
+			d->state[port_nr] = STATE_WAITING_FOR_RATE;
+			return;
+		case 0xe9:	/*  Status request: status, resolution,
+				    sample rate  */
+			pckbc_add_code(d, KBR_ACK, port_nr);
+			pckbc_add_code(d, d->scanning_enabled[1]? 0x20 : 0x00,
+			    port_nr);
+			pckbc_add_code(d, 0x02, port_nr);
+			pckbc_add_code(d, 100, port_nr);
+			return;
+		case 0xeb:	/*  Read data: a packet with no movement  */
+			pckbc_add_code(d, KBR_ACK, port_nr);
+			pckbc_add_code(d, 0x08, port_nr);
+			pckbc_add_code(d, 0x00, port_nr);
+			pckbc_add_code(d, 0x00, port_nr);
+			return;
+		case KBC_GETID:	/*  A PS/2 mouse is ID 00 (one byte)  */
+			pckbc_add_code(d, KBR_ACK, port_nr);
+			pckbc_add_code(d, 0x00, port_nr);
+			return;
+		}
 	}
 
 	switch (cmd) {
@@ -1169,6 +1216,9 @@ DEVICE_ACCESS(pckbc)
 			default:if (d->head[0] != d->tail[0]) {
 					odata = pckbc_get_code(d, 0);
 					d->last_scancode = odata;
+				} else if (d->head[1] != d->tail[1]) {
+					/*  A byte from the mouse:  */
+					odata = pckbc_get_code(d, 1);
 				} else {
 					odata = d->last_scancode;
 					d->last_scancode |= 0x80;
@@ -1189,7 +1239,22 @@ DEVICE_ACCESS(pckbc)
 				d->cmdbyte = idata;
 				d->rx_int_enable[port_nr] = d->cmdbyte &
 				    (KC8_KENABLE | KC8_MENABLE) ? 1 : 0;
+				/*  The mouse's interrupt:  */
+				d->rx_int_enable[1] = d->cmdbyte & KC8_MENABLE?
+				    1 : 0;
 				d->state[port_nr] = STATE_NORMAL;
+				break;
+			case STATE_WAITING_FOR_AUX:
+				/*  D4: the byte goes to the mouse.  */
+				d->state[port_nr] = STATE_NORMAL;
+				d->reg[relative_addr] = idata;
+				dev_pckbc_command(d, 1);
+				break;
+			case STATE_WAITING_FOR_AUXBUF:
+				/*  D3: the byte comes back as if from the
+				    mouse.  */
+				d->state[port_nr] = STATE_NORMAL;
+				pckbc_add_code(d, idata, 1);
 				break;
 			case STATE_LDOUTPUT:
 				d->output_byte = idata;
@@ -1209,6 +1274,9 @@ DEVICE_ACCESS(pckbc)
 			    d->state[port_nr] == STATE_RDCMDBYTE ||
 			    d->state[port_nr] == STATE_RDOUTPUT)
 				odata |= KBS_DIB;
+			else if (d->head[1] != d->tail[1])
+				/*  The next byte is from the mouse:  */
+				odata |= KBS_DIB | KBS_AUXB;
 
 			if (d->state[port_nr] == STATE_RDCMDBYTE)
 				odata |= KBS_OCMD;
@@ -1277,13 +1345,10 @@ DEVICE_ACCESS(pckbc)
 				break;
 			case 0xd3:	/*  write to auxiliary device
 					    output buffer  */
-				debugmsg(d->subsys, "pckbc", VERBOSITY_WARNING,
-				    "CONTROL 0xd3, TODO\n");
-				d->state[port_nr] = STATE_WAITING_FOR_AUX_OUT;
+				d->state[port_nr] = STATE_WAITING_FOR_AUXBUF;
 				break;
-			case 0xd4:	/*  write to auxiliary port  */
-				debugmsg(d->subsys, "pckbc", VERBOSITY_WARNING,
-				    "CONTROL 0xd4, TODO\n");
+			case 0xd4:	/*  write to the auxiliary device (the
+					    mouse)  */
 				d->state[port_nr] = STATE_WAITING_FOR_AUX;
 				break;
 			default:

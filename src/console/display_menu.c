@@ -28,9 +28,10 @@
  *  The menus of a machine's framebuffer windows, and its status line (see
  *  display.h).  The backend draws them; what the items do is here:
  *
- *	Machine:  Save Screenshot, Record Video, Enter Debugger, Edit
- *		  Configuration (for a machine set up from a machine.json),
- *		  Quit
+ *	Machine:  Save Screenshot, Record Video, Enter Debugger, Send
+ *		  Ctrl+Alt+Del (for a keyboard that takes modifiers), Reset,
+ *		  Edit Configuration (for a machine set up from a
+ *		  machine.json), Quit
  *	Media:    for each CD-ROM and tape drive, Load... and Eject
  *
  *  Load... opens the desktop's file chooser (display_files.c), and the
@@ -48,6 +49,7 @@
 #include <unistd.h>
 #endif
 
+#include "console.h"
 #include "debugger.h"
 #include "diskimage.h"
 #include "machine.h"
@@ -250,6 +252,15 @@ static void menu_reset(struct machine *m, struct menu_item *item)
 }
 
 
+/*  Ctrl+Alt+Del, which the host's desktop may keep for itself (the
+    Windows NT logon needs it):  */
+static void menu_ctrl_alt_del(struct machine *m, struct menu_item *item)
+{
+	(void) item;
+	display_key(m, DISPLAY_KEY_DELETE, DISPLAY_MOD_CTRL | DISPLAY_MOD_ALT);
+}
+
+
 static void menu_quit(struct machine *m, struct menu_item *item)
 {
 	printf("[ Quit was chosen in the menu; exiting ]\n");
@@ -410,6 +421,9 @@ struct display_menus *display_menus(struct machine *m)
 	menus->debugger = menu_append(machine, MENU_ITEM_ACTION,
 	    "Enter Debugger", menu_debugger, NULL);
 	menu_append(machine, MENU_ITEM_SEPARATOR, NULL, NULL, NULL);
+	if (console_keys_with_modifiers(m->main_console_handle))
+		menu_append(machine, MENU_ITEM_ACTION, "Send Ctrl+Alt+Del",
+		    menu_ctrl_alt_del, NULL);
 	menu_append(machine, MENU_ITEM_ACTION, "Reset", menu_reset, NULL);
 	if (m->config_path != NULL)
 		menu_append(machine, MENU_ITEM_ACTION,

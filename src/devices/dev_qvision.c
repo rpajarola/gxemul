@@ -48,17 +48,17 @@
  *	- the EISA board ID CPQ3011 at zC80, and the board control
  *	  registers zC84 (enable) and zC85 (controller order, ROM bank);
  *	- 83C4h, the controller select;
- *	- the DAC's extra registers at 13C6h, 83C6h and 93C6h (stored;
- *	  83C6h bit 1 selects an 8-bit DAC);
+ *	- the DAC's extra registers at 13C6h, 83C6h and 93C6h, a Brooktree
+ *	  Bt485's: 83C6h bit 1 selects an 8-bit DAC, and the hardware cursor
+ *	  (see qv_cursor_line());
  *	- the BitBLT registers at 23C0h, 33C0h and 63C0h (stored only);
  *	- the 32 KB option ROM window at C0000, banked from a 64 KB image.
  *
  *  Video memory layout: byte (offset * 4 + plane), so that chain-4 and
  *  packed-pixel addresses are linear byte addresses.
  *
- *  TODO: the BitBLT engine, the linear framebuffer (high address video
- *  buffer), the hardware cursor, packed 4-bit and 15/24-bit modes, the
- *  video interrupt.
+ *  TODO: packed 4-bit and 15/24-bit modes, the line draw engine (83C0h),
+ *  the video interrupt.
  */
 
 #include <stdio.h>
@@ -128,6 +128,12 @@ struct qv_data {
 	uint8_t		dac_tmp[3];
 	uint8_t		dac[256][3];
 	uint8_t		dac_ext[3][4];		/*  13C6h, 83C6h, 93C6h  */
+
+	/*  The DAC's hardware cursor (a Brooktree Bt485's):  */
+	uint8_t		cursor_ram[1024];
+	int		cursor_addr;
+	uint8_t		cursor_color[4][3];	/*  0 = overscan, 1..3  */
+	int		cursor_color_idx, cursor_color_sub;
 
 	uint8_t		ctrl_select;		/*  83C4h  */
 	uint8_t		board_ctrl;		/*  zC84  */
@@ -343,10 +349,72 @@ static void qv_resize(struct qv_data *d, int xsize, int ysize)
 
 
 /*  Puts one rendered line into the framebuffer, marking it if changed:  */
+/*
+ *  qv_cursor_line():
+ *
+ *  Draws line y of the DAC's hardware cursor (Bt485) over the rendered
+ *  line.  13C9h (command register 2) bits 1..0 are the mode: 0 = off,
+ *  1 = three colours, 2 = "XGA" (the two planes as the AND and XOR masks:
+ *  colour 1, colour 2, transparent, inverted), 3 = X Windows (transparent,
+ *  transparent, colour 1, colour 2).  93C8h/93C9h (X) and 93C6h/93C7h (Y)
+ *  give the cursor's lower right corner.  13C6h (command register 3)
+ *  bit 2 selects a 64x64 cursor instead of 32x32.  The cursor RAM holds
+ *  plane 0, then plane 1, a row at a time with the leftmost pixel in the
+ *  most significant bit.
+ */
+static void qv_cursor_line(struct qv_data *d, int y)
+{
+	int mode = d->dac_ext[0][3] & 3, size, x0, y0, row, x, dac8;
+	int bytes_per_row, plane1;
+
+	if (mode == 0 || !(d->attr[0x10] & 0x01))
+		return;
+
+	size = (d->dac_ext[0][0] & 0x04)? 64 : 32;
+	bytes_per_row = size / 8;
+	plane1 = size * bytes_per_row;
+	x0 = (d->dac_ext[2][2] | ((d->dac_ext[2][3] & 0x0f) << 8)) - size;
+	y0 = (d->dac_ext[2][0] | ((d->dac_ext[2][1] & 0x0f) << 8)) - size;
+	row = y - y0;
+	if (row < 0 || row >= size)
+		return;
+
+	dac8 = d->dac_ext[1][0] & 0x02;
+	for (x = 0; x < size; x++) {
+		int sx = x0 + x, bit = 7 - (x & 7), i, pix, c;
+		int a = row * bytes_per_row + x / 8;
+		unsigned char *p;
+
+		if (sx < 0 || sx >= d->fb_xsize)
+			continue;
+		pix = ((d->cursor_ram[a] >> bit) & 1) |
+		    (((d->cursor_ram[plane1 + a] >> bit) & 1) << 1);
+		p = d->line + sx * 3;
+
+		switch (mode) {
+		case 1:	c = pix; break;
+		case 2:	c = pix == 2? 0 : pix == 3? -1 : pix + 1; break;
+		default:c = pix < 2? 0 : pix - 1;
+		}
+		if (c == 0)
+			continue;
+		for (i = 0; i < 3; i++) {
+			int v = d->cursor_color[c > 0? c : 0][i];
+			if (c < 0)
+				p[i] = 255 - p[i];
+			else
+				p[i] = dac8? v : (v & 0x3f) * 255 / 63;
+		}
+	}
+}
+
+
 static void qv_put_line(struct qv_data *d, int y)
 {
 	size_t n = d->fb_xsize * 3;
 	unsigned char *dst = d->fb->framebuffer + (size_t) y * d->fb->bytes_per_line;
+
+	qv_cursor_line(d, y);
 
 	if (memcmp(dst, d->line, n) == 0)
 		return;
@@ -670,6 +738,9 @@ static void qv_write_port(struct qv_data *d, int port, uint8_t v)
 		d->dac_write_idx = v;
 		d->dac_write_sub = 0;
 		d->dac_state = 0;
+		/*  Also the cursor RAM address (bits 9..8 in command
+		    register 3):  */
+		d->cursor_addr = v | ((d->dac_ext[0][0] & 3) << 8);
 		return;
 	case 0x3c9:
 		d->dac_tmp[d->dac_write_sub++] = v;
@@ -998,6 +1069,27 @@ static void qv_dac_ext(struct qv_data *d, int group, uint64_t r,
 	if (writeflag == MEM_WRITE) {
 		d->dac_ext[group][r] = data[0];
 		d->dirty = 1;
+		if (group == 0 && r == 1) {
+			/*  Cursor RAM data:  */
+			d->cursor_ram[d->cursor_addr & 0x3ff] = data[0];
+			d->cursor_addr ++;
+			return;
+		}
+		if (group == 1 && r == 2) {
+			/*  Cursor colour write address:  */
+			d->cursor_color_idx = data[0] & 3;
+			d->cursor_color_sub = 0;
+		}
+		if (group == 1 && r == 3) {
+			/*  Cursor colour data, red, green, blue:  */
+			d->cursor_color[d->cursor_color_idx]
+			    [d->cursor_color_sub] = data[0];
+			if (++ d->cursor_color_sub == 3) {
+				d->cursor_color_sub = 0;
+				d->cursor_color_idx =
+				    (d->cursor_color_idx + 1) & 3;
+			}
+		}
 		debugmsg(d->subsys, "qvision", VERBOSITY_DEBUG,
 		    "DAC extension %i.%i = 0x%02x\n", group, (int) r, data[0]);
 	} else

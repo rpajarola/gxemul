@@ -111,6 +111,7 @@ struct jensen_data {
 	struct interrupt	irq_pic;	/* EV4 irq_h[1] */
 	struct interrupt	irq_nmi;	/* EV4 irq_h[2] */
 	struct interrupt	irq_kbd;	/* EV4 irq_h[3] */
+	uint8_t			kbd_irq_mask;	/*  keyboard, mouse  */
 	struct interrupt	irq_serial;	/* EV4 irq_h[5] */
 	uint8_t			serial_irq_mask;
 
@@ -234,16 +235,21 @@ static void jensen_serial_interrupt_deassert(struct interrupt *interrupt)
 		INTERRUPT_DEASSERT(d->irq_serial);
 }
 
+/*  The keyboard (line 0) and the mouse (line 1) share irq_h[3]; NT's
+    i8042prt tells them apart by the 8042's status register.  */
 static void jensen_kbd_interrupt_assert(struct interrupt *interrupt)
 {
 	struct jensen_data *d = (struct jensen_data *) interrupt->extra;
+	d->kbd_irq_mask |= 1 << interrupt->line;
 	INTERRUPT_ASSERT(d->irq_kbd);
 }
 
 static void jensen_kbd_interrupt_deassert(struct interrupt *interrupt)
 {
 	struct jensen_data *d = (struct jensen_data *) interrupt->extra;
-	INTERRUPT_DEASSERT(d->irq_kbd);
+	d->kbd_irq_mask &= ~(1 << interrupt->line);
+	if (d->kbd_irq_mask == 0)
+		INTERRUPT_DEASSERT(d->irq_kbd);
 }
 
 
@@ -829,6 +835,12 @@ struct jensen_data *dev_jensen_init(struct machine *machine,
 	templ.extra = d;
 	templ.interrupt_assert = jensen_kbd_interrupt_assert;
 	templ.interrupt_deassert = jensen_kbd_interrupt_deassert;
+	interrupt_handler_register(&templ);
+
+	/*  The mouse, on the same line:  */
+	snprintf(tmp, sizeof(tmp), "%s.jensen.mouse", machine->path);
+	templ.line = 1;
+	templ.name = tmp;
 	interrupt_handler_register(&templ);
 
 	/*
