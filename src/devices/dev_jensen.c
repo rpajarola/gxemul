@@ -51,6 +51,7 @@
 #include "cpu_alpha.h"
 #include "device.h"
 #include "devices.h"
+#include "emul.h"
 #include "interrupt.h"
 #include "machine.h"
 #include "memory.h"
@@ -90,6 +91,7 @@
 
 #define	JENSEN_ISA_PORTBASE	0x10000000000ULL
 #define	JENSEN_ISA_MEMBASE	0x10001000000ULL
+#define	JENSEN_DE422_SLOT	3
 
 
 struct jensen_data {
@@ -855,6 +857,12 @@ struct jensen_data *dev_jensen_init(struct machine *machine,
 	/*  Adaptec AHA-1742A SCSI host adapter in EISA slot 1:  */
 	dev_aha1742_init(machine, mem, JENSEN_ISA_PORTBASE + 0x1c80, jensen_irq_path);
 
+	/*  With networking on, a DE422 EtherWORKS Turbo EISA Ethernet
+	    controller in EISA slot 3:  */
+	if (machine->emul->net != NULL)
+		dev_de422_init(machine, mem, JENSEN_ISA_PORTBASE,
+		    JENSEN_ISA_MEMBASE, JENSEN_DE422_SLOT, jensen_irq_path);
+
 	return d;
 }
 
@@ -875,6 +883,16 @@ static void dev_jensen_init_ecu(struct jensen_data *d)
 	/*  Erase Block 6 (0x60000..0x6ffff) and Block C (0xc0000..0xcffff):  */
 	memset(d->rom + 0x60000, 0xff, 0x10000);
 	memset(d->rom + 0xc0000, 0xff, 0x10000);
+
+	/*  With networking on, there is a DE422 in slot 3 (see
+	    dev_jensen_init()), which the factory configuration includes:  */
+	if (d->machine != NULL && d->machine->emul->net != NULL) {
+		memcpy(d->rom + 0x60000, jensen_de422_nvram_block6,
+		    sizeof(jensen_de422_nvram_block6));
+		memcpy(d->rom + 0xc0000, jensen_de422_nvram_blockc,
+		    sizeof(jensen_de422_nvram_blockc));
+		return;
+	}
 
 	/*  Populate Block 6 (EISA Slot table & AHA-1742A configuration):  */
 	memcpy(d->rom + 0x60000, jensen_default_nvram_block6,
