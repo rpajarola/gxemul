@@ -63,6 +63,8 @@ bool emul_machine_setup(struct machine *machine, int n_load, char **load_names,
 void emul_dumpinfo(struct emul *e);
 bool emul_simple_init(struct emul *emul, char* tap_devname);
 void emul_run(struct emul *emul);
+struct machine;
+void emul_idle_realtime(struct machine *m);
 
 
 #endif	/*  EMUL_H  */

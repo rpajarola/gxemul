@@ -152,6 +152,14 @@ struct machine {
 	struct tick_functions tick_functions;
 	struct machine_events events;
 
+	/*  Instructions per second of real time, to keep emulated time
+	    from running ahead of the host's clock while idle (0 = no), and
+	    the emulated time in microseconds (if it is not just the
+	    instructions counted at that rate):  */
+	uint64_t	realtime_hz;
+	uint64_t	(*realtime_us)(struct machine *);
+	void		*realtime_extra;
+
 	char	*cpu_name;  /*  TODO: remove this, there could be several
 				cpus with different names in a machine  */
 	int	byte_order_override;

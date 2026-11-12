@@ -28,7 +28,12 @@ gateway).
   register accesses (5 clocks). Devices can ask for an event at a given
   instruction count (machine_add_event); the dyntrans run then stops
   there, so tick timer and CD2401 interrupts come on time rather than at
-  the next tick. An idle CPU skips ahead to an event due in its run.
+  the next tick.
+- Idle: spin loops which only read memory (such as SYSTEM V/88's idle
+  loop, "tb1 1,r0,0xff" then loads, compares and branches) make the CPU
+  idle; it skips ahead to the next tick or device event, and the host
+  sleeps until its clock catches up (machine->realtime_hz). Busy code
+  still runs as fast as it can, at most 0.1 s ahead of real time.
 - 53C710: SCRIPTS processor and SCSI target model.
 - DRAM parity: bytes written with the MEMC040's WWP bit get wrong parity;
   reading them with EXTPEN and PAREN is a bus error (VMEchip2 MLPE), with
@@ -54,3 +59,8 @@ gateway).
   go out at once), modem signals, break.
 - MCECC (ECC memory controller variant), a second MEMC040.
 - Instruction timing: one instruction per bus clock is optimistic.
+  SYSTEM V/88 calibrates the bus clock by polling the MK48T08 for the
+  seconds to change, giving up after 100000 polls; each poll takes
+  about 140-260 instructions plus BBRAM wait states here, under a
+  second for 100000, so it falls back to 25 MHz and its clock tick runs
+  at 132 Hz instead of 100 Hz (the guest's time is 1.32 times fast).

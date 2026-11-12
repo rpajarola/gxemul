@@ -1803,6 +1803,164 @@ void COMBINE(idle)(struct cpu *cpu, struct m88k_instr_call *ic, int low_addr)
 }
 
 
+/*
+ *  idle_spin:  The backward branch which closes a spin loop (see
+ *              m88k_spin_loop() below). It does what the branch does, and
+ *              when that goes around the loop once more, the CPU idles.
+ */
+X(idle_spin)
+{
+	struct m88k_cpu *m = &cpu->cd.m88k;
+	int i;
+
+	for (i = 0; i < M88K_N_SPIN_LOOPS; i++)
+		if (m->spin_branch[i] == ic)
+			break;
+	if (i == M88K_N_SPIN_LOOPS) {
+		/*  Should not happen: translate the branch again.  */
+		ic->f = TO_BE_TRANSLATED;
+		m->next_ic = ic;
+		cpu->n_translated_instrs --;
+		return;
+	}
+
+	m->spin_f[i](cpu, ic);
+
+	if (m->next_ic == m->spin_head[i] &&
+	    !(cpu->delay_slot & EXCEPTION_IN_DELAY_SLOT)) {
+		/*  Nothing changed in the last round; wait at the head.  */
+		cpu->pc = (cpu->pc & ~((M88K_IC_ENTRIES_PER_PAGE-1) <<
+		    M88K_INSTR_ALIGNMENT_SHIFT)) + (((size_t)m->spin_head[i] -
+		    (size_t)m->cur_ic_page) / sizeof(struct m88k_instr_call)
+		    << M88K_INSTR_ALIGNMENT_SHIFT);
+		cpu->wants_to_idle = true;
+		cpu->n_translated_instrs += N_DYNTRANS_IDLE_BREAK;
+		m->next_ic = &nothing_call;
+	}
+}
+
+
+/*
+ *  m88k_spin_loop():
+ *
+ *  Is the code from 'head' to the branch at 'end' (both offsets in a page
+ *  of instruction words) a loop which only reads memory and branches? E.g.
+ *  the UNIX SYSTEM V/88 idle loop:
+ *
+ *	tb1	1,r0,0xff
+ *	ld	r13,r7,0x82d0		(runrun)
+ *	bcnd.n	eq0,r13,out
+ *	or.u	r13,r0,0x6000
+ *	...
+ *	ld	r13,r10,0xdbe0
+ *	ld	r12,r11,0x82d4
+ *	cmp	r13,r13,r12
+ *	bb1.n	eq,r13,head
+ *	or.u	r13,r0,0x6000
+ *
+ *  If such a loop goes around once without leaving, it would do the same
+ *  again until memory changes (from an interrupt or DMA), so the CPU can
+ *  idle. The loop must start with "tb1 n,r0,vec" (where interrupts are
+ *  taken), contain only loads, logical operations with immediates,
+ *  compares and branches out of the loop, and must not carry values from
+ *  one round to the next in registers.
+ */
+static bool m88k_spin_loop(const unsigned char *page, int head, int end,
+	bool delayed)
+{
+	uint32_t written = 0, written_so_far = 0;
+	int pass, a, last = end + (delayed ? 4 : 0);
+
+	if (last > 0xffc || end - head > 64 * 4)
+		return false;
+
+	for (pass = 0; pass < 2; pass++) {
+		for (a = head; a <= last; a += 4) {
+			uint32_t w = (page[a] << 24) | (page[a+1] << 16) |
+			    (page[a+2] << 8) | page[a+3];
+			int op6 = w >> 26, d = (w >> 21) & 31,
+			    s1 = (w >> 16) & 31, s2 = w & 31;
+			uint32_t reads = 0, writes = 0;
+
+			if (a == head) {
+				/*  tb1 n,r0,vec  */
+				if (op6 != 0x3c || ((w >> 10) & 0x3f) != 0x36 ||
+				    s1 != 0)
+					return false;
+				continue;
+			}
+
+			switch (op6) {
+			case 0x02: case 0x03: case 0x05:	/*  ld*  */
+			case 0x06: case 0x07:
+			case 0x10: case 0x11: case 0x12:	/*  and, mask  */
+			case 0x13: case 0x16: case 0x17:	/*  or  */
+			case 0x1f:				/*  cmp imm  */
+				reads = 1 << s1;
+				writes = 1 << d;
+				break;
+			case 0x3d:
+				if ((w & 0xfc00fc00) != 0xf4007c00)
+					return false;		/*  cmp  */
+				reads = (1 << s1) | (1 << s2);
+				writes = 1 << d;
+				break;
+			case 0x34: case 0x35: case 0x36:	/*  bb0, bb1  */
+			case 0x37: case 0x3a: case 0x3b:	/*  bcnd  */
+			{
+				int target = a + 4 * (int16_t)(w & 0xffff);
+				if (op6 >= 0x3a)
+					reads = 1 << s1;	/*  bcnd  */
+				else
+					reads = 1 << s1;	/*  bb  */
+				if (a == end) {
+					if (target != head)
+						return false;
+				} else if (target >= head && target <= last)
+					return false;
+				break;
+			}
+			default:
+				return false;
+			}
+
+			reads &= ~1;
+			writes &= ~1;
+			if (pass == 0)
+				written |= writes;
+			else {
+				/*  A register written in the loop must be
+				    written before it is read.  */
+				if (reads & written & ~written_so_far)
+					return false;
+				written_so_far |= writes;
+			}
+		}
+	}
+	return true;
+}
+
+static void m88k_spin_loop_install(struct cpu *cpu,
+	struct m88k_instr_call *ic, int head, int end)
+{
+	struct m88k_cpu *m = &cpu->cd.m88k;
+	int i;
+
+	/*  A free slot, or one of a branch which has been translated anew:  */
+	for (i = 0; i < M88K_N_SPIN_LOOPS; i++)
+		if (m->spin_branch[i] == NULL ||
+		    m->spin_branch[i]->f != instr(idle_spin))
+			break;
+	if (i == M88K_N_SPIN_LOOPS)
+		return;
+
+	m->spin_branch[i] = ic;
+	m->spin_head[i] = ic - ((end - head) >> M88K_INSTR_ALIGNMENT_SHIFT);
+	m->spin_f[i] = ic->f;
+	ic->f = instr(idle_spin);
+}
+
+
 /*****************************************************************************/
 
 
@@ -2538,6 +2696,17 @@ X(to_be_translated)
 		break;
 
 	default:goto bad;
+	}
+
+	/*  A backward branch within the page may close a spin loop:  */
+	if (page != NULL && !single_step && (op26 == 0x34 || op26 == 0x35 ||
+	    op26 == 0x36 || op26 == 0x37 || op26 == 0x3a || op26 == 0x3b) &&
+	    ic->f != instr(idle) && ic->f != instr(idle_with_tb1)) {
+		int end = addr & 0xffc;
+		int head = end + 4 * (int16_t)(iword & 0xffff);
+		if (head >= 0 && head < end &&
+		    m88k_spin_loop(page, head, end, op26 & 1))
+			m88k_spin_loop_install(cpu, ic, head, end);
 	}
 
 

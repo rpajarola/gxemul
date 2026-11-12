@@ -243,6 +243,12 @@ uint64_t dev_mvme187_time_us(struct mvme187_data *d)
 	return bclk(d) / (BCLK_HZ / 1000000);
 }
 
+static uint64_t mvme187_realtime_us(struct machine *machine)
+{
+	return dev_mvme187_time_us((struct mvme187_data *)
+	    machine->realtime_extra);
+}
+
 /*  The same, in nanoseconds (for serial line timing):  */
 uint64_t dev_mvme187_time_ns(struct mvme187_data *d)
 {
@@ -1477,6 +1483,14 @@ struct mvme187_data *dev_mvme187_init(struct machine *machine)
 	CHECK_ALLOCATION(d = (struct mvme187_data *) malloc(sizeof(*d)));
 	memset(d, 0, sizeof(*d));
 	d->machine = machine;
+
+	/*  Time is counted in instructions, one per bus clock: while idle,
+	    keep it in step with the host's clock.  */
+	if (machine->emulated_hz == 0) {
+		machine->realtime_hz = BCLK_HZ;
+		machine->realtime_us = mvme187_realtime_us;
+		machine->realtime_extra = d;
+	}
 	d->cpu = machine->cpus[machine->bootstrap_cpu];
 	d->subsys = debugmsg_register_subsystem("mvme187");
 

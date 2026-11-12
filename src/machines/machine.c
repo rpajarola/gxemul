@@ -949,10 +949,10 @@ bool machine_run(struct machine *machine)
 	 *  TODO: This should be redesigned into some "mainbus" stuff instead!
 	 */
 
-	/*  (A shorter run, which stopped for a device event:)  */
+	/*  (A shorter run, which stopped for a device event, or an idle
+	    CPU which skipped ahead to the next tick or event:)  */
 	int chunk = single_step ? 1 : N_SAFE_DYNTRANS_LIMIT;
-	if (!single_step && cpus[0]->dyntrans_chunk > 0 &&
-	    cpus[0]->dyntrans_chunk < chunk)
+	if (!single_step && cpus[0]->dyntrans_chunk > 0)
 		chunk = cpus[0]->dyntrans_chunk;
 
 	if (machine->events.n > 0)

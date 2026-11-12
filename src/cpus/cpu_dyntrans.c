@@ -405,11 +405,28 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 	if (cpu->wants_to_idle) {
 		cpu->n_translated_instrs -= N_DYNTRANS_IDLE_BREAK;
 
-		/*  An idle loop would spin until a device event which is
-		    due in this run: skip ahead to it.  */
-		if (cpu->dyntrans_chunk < N_SAFE_DYNTRANS_LIMIT &&
-		    cpu->n_translated_instrs < cpu->dyntrans_chunk)
-			cpu->n_translated_instrs = cpu->dyntrans_chunk;
+		/*
+		 *  Where time is counted in instructions, an idle loop
+		 *  would spin until something happens: skip ahead to the
+		 *  next tick or device event (and tell machine_run how far,
+		 *  for the ticks). The host waits for its clock meanwhile.
+		 */
+		if (cpu->machine->realtime_hz != 0) {
+			struct tick_functions *tf =
+			    &cpu->machine->tick_functions;
+			int64_t left = 1 << 20;
+			for (int te = 0; te < tf->n_entries; te++)
+				if (tf->ticks_till_next[te] < left)
+					left = tf->ticks_till_next[te];
+			if (cpu->machine->events.n > 0 &&
+			    (int64_t) (cpu->machine->events.next -
+			    cpu->ninstrs) < left)
+				left = cpu->machine->events.next -
+				    cpu->ninstrs;
+			if (cpu->n_translated_instrs < left)
+				cpu->n_translated_instrs = left;
+			cpu->dyntrans_chunk = cpu->n_translated_instrs;
+		}
 
 		// TODO: More arch specific interrupt checks
 		if (false
