@@ -375,9 +375,11 @@ screen; use the arrow keys and Enter.</p>
 	    because the ARC console reports the system as
 	    <tt>DEC-00Jensen</tt>.
 	<li>The date shows the year 2006.
-	<li>There is no mouse pointer; use the keyboard. Ctrl+Alt+Del may be
-	    taken by the host's desktop; it can also be sent through the
-	    control socket (<tt>keyboard {"keys": ["Control_L+Alt_L+Delete"]}</tt>).
+	<li>The mouse works once NT runs (a PS/2 mouse on the 8042's
+	    auxiliary port; grab it with a click in the window). Ctrl+Alt+Del
+	    may be taken by the host's desktop: use <i>Machine &rarr; Send
+	    Ctrl+Alt+Del</i> in the window's menu (F10), or the control socket
+	    (<tt>keyboard {"keys": ["Control_L+Alt_L+Delete"]}</tt>).
 	<li>Now and then (about one boot in fifteen), GUI-mode Setup stops at
 	    the plain teal desktop: a deadlock in Windows NT's <tt>csrss</tt>.
 	    Restart the machine; Setup carries on.
@@ -524,11 +526,12 @@ is now installed</i>. It uses the packed 8-bit mode, the linear framebuffer
 pattern, colour expansion of 1-bit glyphs, copies, and bitmaps that the CPU
 writes through the framebuffer. There is no documentation of the BitBLT
 engine; it is emulated as the driver uses it (see
-<tt>src/devices/dev_qvision.c</tt>).</p>
+<tt>src/devices/dev_qvision.c</tt>). The mouse pointer is the DAC's hardware
+cursor (a Brooktree Bt485's: 32x32 or 64x64, two planes, at 13C6h, 83C6h and
+93C6h).</p>
 
-<p>What is not emulated yet: the hardware cursor (NT never sets a pointer
-shape, so no mouse pointer shows), the packed 4-, 15- and 24-bit modes, the
-line draw engine (83C0h), and the video interrupt (IRQ 9).</p>
+<p>What is not emulated yet: the packed 4-, 15- and 24-bit modes, the line
+draw engine (83C0h), and the video interrupt (IRQ 9).</p>
 
 
 
