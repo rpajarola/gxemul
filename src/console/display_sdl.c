@@ -211,6 +211,8 @@ static bool init_sdl(void)
 		return false;
 	}
 
+	/*  SDL2 inhibits the screensaver by default; don't.  */
+	SDL_EnableScreenSaver();
 	SDL_StartTextInput();
 	sdl_initialized = true;
 	return true;

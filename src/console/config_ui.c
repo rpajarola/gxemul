@@ -2925,6 +2925,8 @@ struct machine_config *config_ui_run(const char *edit_path, bool running)
 		    SDL_GetError());
 		return NULL;
 	}
+	/*  SDL2 inhibits the screensaver by default; don't.  */
+	SDL_EnableScreenSaver();
 
 	ui.window = SDL_CreateWindow("GXemul", SDL_WINDOWPOS_CENTERED,
 	    SDL_WINDOWPOS_CENTERED, WINDOW_W, WINDOW_H,
