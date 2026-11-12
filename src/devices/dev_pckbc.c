@@ -45,6 +45,7 @@
 #include "console.h"
 #include "cpu.h"
 #include "devices.h"
+#include "display.h"
 #include "machine.h"
 #include "memory.h"
 #include "misc.h"
@@ -670,6 +671,39 @@ static void pckbc_type_char(struct pckbc_data *d, int ch)
 
 
 /*
+ *  pckbc_modifiers():
+ *
+ *  Presses (or releases) the left Shift, Ctrl and Alt keys for
+ *  DISPLAY_MOD_* bits, in the current scancode set.
+ */
+static void pckbc_modifiers(struct pckbc_data *d, int mods, int release)
+{
+	static const uint8_t codes[3][3] = {
+		/*  Shift Ctrl  Alt  */
+		{ 0x2a, 0x1d, 0x38 },		/*  set 1  */
+		{ 0x12, 0x14, 0x11 },		/*  set 2  */
+		{ 0x12, 0x11, 0x19 } };		/*  set 3  */
+	static const int bits[3] = { DISPLAY_MOD_SHIFT, DISPLAY_MOD_CTRL,
+	    DISPLAY_MOD_ALT };
+	int set = d->translation_table, i;
+
+	if (set < 1 || set > 3)
+		return;
+	for (i = 0; i < 3; i++) {
+		int j = release? 2 - i : i;
+		uint8_t code = codes[set - 1][j];
+		if (!(mods & bits[j]))
+			continue;
+		if (release && set == 1)
+			code |= 0x80;
+		else if (release)
+			pckbc_add_code(d, 0xf0, 0);
+		pckbc_add_code(d, code, 0);
+	}
+}
+
+
+/*
  *  pckbc_type_escape():
  *
  *  Called after ESC, CSI (0x9b) or SS3 (0x8f) was read from the console.
@@ -678,7 +712,12 @@ static void pckbc_type_char(struct pckbc_data *d, int ch)
  *  typed as that key.  Otherwise, ESC was the Esc key, and what followed
  *  is typed as it is.  With VT100 translation on ("vt100" / -7), the
  *  console has already turned ESC [ into CSI and ESC O into SS3.
- *  Unknown sequences (e.g. with modifiers) are dropped.
+ *
+ *  Keys with modifiers come as xterm sends them (see display_key() and
+ *  display_char()): ESC [ 1 ; m A for Up, ESC [ 3 ; m ~ for Delete, and
+ *  ESC [ 27 ; m ; c ~ for the character c, where m - 1 is the
+ *  DISPLAY_MOD_* bits; the modifier keys are pressed around the key (so
+ *  that Ctrl+Alt+Del reaches the guest).  Unknown sequences are dropped.
  */
 static void pckbc_type_escape(struct pckbc_data *d, int introducer)
 {
@@ -714,6 +753,38 @@ static void pckbc_type_escape(struct pckbc_data *d, int introducer)
 			break;
 	}
 	seq[len] = '\0';
+
+	/*  Modifiers:  */
+	{
+		int p1, p2, p3, mods = 0;
+		char final, base[16];
+
+		if (sscanf(seq, "[27;%d;%d%c", &p2, &p3, &final) == 3 &&
+		    final == '~') {
+			mods = p2 - 1;
+			pckbc_modifiers(d, mods, 0);
+			pckbc_type_char(d, p3);
+			pckbc_modifiers(d, mods, 1);
+			return;
+		}
+		if (sscanf(seq, "[%d;%d%c", &p1, &p2, &final) == 3) {
+			mods = p2 - 1;
+			if (final == '~')
+				snprintf(base, sizeof(base), "[%d~", p1);
+			else if (final >= 'P' && final <= 'S')
+				snprintf(base, sizeof(base), "O%c", final);
+			else
+				snprintf(base, sizeof(base), "[%c", final);
+			for (const struct pckbc_special_key *k =
+			    pckbc_special_keys; k->seq != NULL; k++)
+				if (strcmp(k->seq, base) == 0) {
+					pckbc_modifiers(d, mods, 0);
+					pckbc_type_special_key(d, k);
+					pckbc_modifiers(d, mods, 1);
+					return;
+				}
+		}
+	}
 
 	for (const struct pckbc_special_key *k = pckbc_special_keys;
 	    k->seq != NULL; k++)
@@ -1375,6 +1446,11 @@ int dev_pckbc_init(struct machine *machine, struct memory *mem,
 
 	d->console_handle = console_start_slave_inputonly(
 	    machine, "pckbc", d->in_use);
+
+	/*  As the keyboard of the display, keys come with their modifiers
+	    (see pckbc_type_escape()):  */
+	if (d->in_use)
+		console_set_keys_with_modifiers(d->console_handle);
 
 	memory_device_register(mem, "pckbc", baseaddr,
 	    len, dev_pckbc_access, d, DM_DEFAULT, NULL);
