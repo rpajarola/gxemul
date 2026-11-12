@@ -352,6 +352,16 @@ screen; use the arrow keys and Enter.</p>
 	    6 MB, stops with <i>Failed to initialize the heap</i>. If that
 	    happens, delete the <tt>.flash</tt> file, create the partition, and
 	    run the ECU again.
+	<li><b><i>Image can't be relocated, no fixup information</i> and
+	    <i>ntoskrnl.exe is missing or corrupt</i></b> mean that the
+	    QVision's "High Address Video Buffer" is at 1 MB, where NT's
+	    kernel has to be loaded. The OpenVMS/Digital UNIX ECU diskettes
+	    (e.g. <i>Digital ECU Diskette</i> V1.8 and V1.9 for OpenVMS and
+	    Digital UNIX) put it at 1, 2 or 3 MB; the Windows NT ECU (V1.8,
+	    V1.10, V1.11) at 4 MB or 20&ndash;31 MB. Delete the
+	    <tt>.flash</tt> file and configure again with the Windows NT ECU
+	    (in the ECU, <i>Step 3: View or edit details</i> shows the address).
+	    The installation on the disk is not affected.
 	<li>Setup does not recognize the machine (<i>Computer: Unknown</i>)
 	    because the ARC console reports the system as
 	    <tt>DEC-00Jensen</tt>.
