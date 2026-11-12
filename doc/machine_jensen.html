@@ -103,7 +103,7 @@ and standard PC peripherals.</p>
 <p>The following guest firmware and operating systems have been verified:
 <ul>
 	<li><a href="#configfile">Configuration via machine.json</a> &mdash; Graphical and JSON configuration files for Windows NT and OpenVMS.
-	<li><a href="#windowsnt">Windows NT 3.1 Alpha</a> (Build 528) &mdash; Genuine Digital ARC Multiboot console (Version 3.0.g) and Microsoft Windows NT 3.1 Setup loader (<tt>\alpha\setupldr</tt>).
+	<li><a href="#windowsnt">Windows NT 3.1 Alpha</a> (Build 528) &mdash; Genuine Digital ARC Multiboot console (Version 3.0.g); <a href="#ntinstall">installs from scratch</a> and boots to Program Manager on the emulated QVision.
 	<li><a href="#firmware">Digital SRM Firmware ROM v1.3</a> &mdash; Passes 100% of power-up self-tests:
 		<tt>CPU OK</tt>, <tt>MEM OK 64MB</tt>, <tt>NVR OK</tt>, <tt>SCC OK</tt>, <tt>IT OK</tt>, <tt>KBD OK</tt>, <tt>LPT OK</tt>, <tt>SCSI OK</tt>.
 	<li><a href="#qvision">Compaq QVision 1024/E</a> &mdash; The SRM console (power-up test <tt>VGA OK</tt>), the ARC console and the ECU run on the emulated display and PC keyboard; Windows NT 3.1 GUI-mode Setup runs to the end on it.
@@ -235,30 +235,134 @@ pre-population below; delete it to start over from the factory state.</p>
 	<li>In the Configuration UI (<tt>-E</tt>): The <b>"Pre-populate ECU and NVRAM configuration"</b> checkbox.
 </ul>
 
-<h4>Booting Windows NT Setup:</h4>
-<p>To boot the Windows NT 3.1 Alpha installation media:
+<a name="ntinstall"></a>
+<h4>Installing Windows NT 3.1 from scratch:</h4>
+
+<p>Windows NT 3.1 installs completely, through text-mode and GUI-mode Setup,
+and the installed system boots to the logon screen and Program Manager. NT 3.1
+has no plain VGA driver for Alpha, so this needs the display and the emulated
+Compaq QVision (<a href="#qvision">see below</a>).</p>
+
+<p>You need:</p>
+<ul>
+	<li>the Jensen firmware, <tt>media/rom/jensen_v1_3.rom</tt>
+	    (<a href="#firmware">see below</a>);
+	<li>the Windows NT 3.1 for Alpha CD (build 528) as an ISO image;
+	<li>an image of the QVision's option ROM, <tt>qvision.rom</tt>
+	    (<a href="#qvision">see below</a>), which the ARC console needs to
+	    use the screen;
+	<li>a copy of Digital's <b>ECU for Windows NT</b> diskette (V1.8 has
+	    been tested; <tt>AlphaECUWNT1-10.ZIP</tt> also has one). Use a copy:
+	    the ECU saves to it, and Setup later writes the Emergency Repair Disk
+	    over whatever is in drive A:. The ECU for OpenVMS and Digital UNIX
+	    does not work for NT (<a href="#qvision">see below</a>);
+	<li>an empty hard disk image, e.g. 500 MB:
+<pre>
+	<b>truncate -s 500M nt_disk.img</b>
+</pre>
+</ul>
+
+<p>A machine.json for the installation (<tt>nt.json</tt>):</p>
+<pre>
+{
+  "gxemul": 1,
+  "name": "Windows NT 3.1 (DECpc AXP 150)",
+  "machine": { "type": "jensen", "model": "300", "memory_mb": 64 },
+  "boot": {
+    "prom_emulation": false,
+    "rom": "media/rom/jensen_v1_3.rom",
+    "nvram": "nt_nvram.bin",
+    "populate_ecu": true
+  },
+  "drives": [
+    { "file": "nt_disk.img", "kind": "disk", "id": 0 },
+    { "file": "nt31_alpha.iso", "kind": "cdrom", "id": 4, "readonly": true },
+    { "file": "ecu_nt_copy.img", "kind": "floppy", "id": 0 }
+  ],
+  "display": { "enabled": true },
+  "slots": { "2": "qvision.rom" }
+}
+</pre>
+<p>With the <tt>nvram</tt> setting, the console's settings, the EISA
+configuration and the boot selections are kept in
+<tt>nt_nvram.bin.flash</tt>. Delete that file to start over from the
+factory state. Start the machine with <b><tt>gxemul nt.json</tt></b>. After
+the power-up tests, the ARC console's <i>Boot menu</i> appears on the
+screen; use the arrow keys and Enter.</p>
+
 <ol>
-	<li><b>Launch GXemul with the hard disk on SCSI ID 0 and CD-ROM on SCSI ID 4:</b>
+	<li><b>Create the system partition</b> (first, before the ECU, see
+	    below). Choose <i>Run a program</i> and enter
 <pre>
-	<b>gxemul -e jensen -x -M 64 -d 0:nt_disk.img -d 4:/path/to/nt31_alpha.iso media/rom/jensen_v1_3.rom</b>
+	<b>scsi(0)cdrom(4)fdisk(0)\alpha\arcinst</b>
 </pre>
-	<li><b>Connect to the serial console:</b>
-<pre>
-	<b>telnet localhost 4000</b>
-</pre>
-	<li><b>Navigate the ARC Firmware Menu:</b><br>
-		When prompted, press Spacebar to abort the memory diagnostic.
-		From the main Boot Menu, use the arrow keys to select <b>"Run a program"</b> and press Enter (<tt>\r</tt>).
-	<li><b>Execute the Setup Loader:</b><br>
-		At the program path prompt, enter:
-<pre>
-	<b>scsi(0)cdrom(4)fdisk(0)\alpha\setupldr</b>
-</pre>
-	<li><b>Windows NT Setup:</b><br>
-		The Microsoft OS Loader launches, loads <tt>\alpha\txtsetup.inf</tt>, and displays
-		the classic blue text-mode <b>"Windows NT Setup"</b> screen where Express or Custom
-		installation can be selected.
+	    In the <i>Arc Installation Program</i>, choose <i>Configure
+	    Partitions</i>, then <i>Create Partition</i>, and enter a size of
+	    <b>5</b> MB. The partition is created, formatted (FAT), and made the
+	    system partition. Choose <i>Exit</i> twice to get back to the boot
+	    menu.
+
+	<li><b>Configure the EISA cards.</b> Choose <i>Supplementary
+	    menu...</i>, <i>Set up the system...</i>, and <i>Run EISA
+	    configuration utility from floppy</i> (the yellow item). The ECU
+	    starts from the diskette; press Enter at its first screen. Under
+	    <i>Step 2: Add or remove boards</i>, the ECU lists the Adaptec
+	    AHA-1742A in slot 1 and the QVision 1024/E in slot 2; press F10.
+	    Then choose <i>Step 5: Save and exit</i>, <i>Save the configuration
+	    and restart the computer</i>, and press Enter to restart. (Wait for
+	    each ECU screen before pressing the next key, <a href="#ecu">see
+	    below</a>.)
+
+	<li><b>Text-mode Setup.</b> Choose <i>Supplementary menu...</i> and
+	    <i>Install Windows NT from CD-ROM</i>. At <i>Welcome to Setup</i>,
+	    press Enter, then Enter again for <b>Express Setup</b>.
+	    <ul>
+		<li>In the list of hardware, <i>Computer</i> is <i>Unknown</i>:
+		    press Enter on it and choose <b>DEC Alpha_AXP Personal
+		    Workstation</b>. The display is already <i>Compaq QVision,
+		    640x480, 256 colors</i>. Then select <i>No Changes</i> and
+		    press Enter.
+		<li>Select the <i>Unpartitioned Disk Space</i>, press Enter,
+		    choose <i>Format to FAT</i> and confirm with F.
+		<li>Accept <tt>\winnt</tt> as the directory. Setup copies the
+		    files and restarts into GUI-mode Setup.
+	    </ul>
+
+	<li><b>GUI-mode Setup</b> runs on the QVision. Enter your name (Tab to
+	    the company field) and confirm, enter a computer name and confirm,
+	    and accept the language. With no printer, choose <i>Cancel</i> in
+	    <i>Set up Local Printer</i>. No network card is emulated: choose
+	    <i>Continue</i> twice in <i>Network Adapter Card Detection</i>, then
+	    <i>No Network</i> (Tab to it) and <i>OK</i>. Set the Administrator
+	    password and, if you like, a local account, then accept the date and
+	    time. For the <i>Emergency Repair Disk</i>, the diskette in drive A:
+	    is erased and written. Setup ends with <i>Windows NT 3.1 is now
+	    installed</i>; choose <i>Restart Computer</i>.
+
+	<li><b>First boot.</b> The boot menu now has <i>Boot Windows NT Version
+	    3.1</i>. NT checks the disks and shows the logon screen. Press
+	    <b>Ctrl+Alt+Del</b> and log on.
 </ol>
+
+<p>Notes:</p>
+<ul>
+	<li><b>The system partition must be created before the ECU is
+	    run.</b> Once the QVision is configured, ARC reserves its
+	    framebuffer (4&ndash;5 MB), and <tt>arcinst</tt>, which runs at
+	    6 MB, stops with <i>Failed to initialize the heap</i>. If that
+	    happens, delete the <tt>.flash</tt> file, create the partition, and
+	    run the ECU again.
+	<li>Setup does not recognize the machine (<i>Computer: Unknown</i>)
+	    because the ARC console reports the system as
+	    <tt>DEC-00Jensen</tt>.
+	<li>The date shows the year 2006.
+	<li>There is no mouse pointer; use the keyboard. Ctrl+Alt+Del may be
+	    taken by the host's desktop; it can also be sent through the
+	    control socket (<tt>keyboard {"keys": ["Control_L+Alt_L+Delete"]}</tt>).
+	<li>Now and then (about one boot in fifteen), GUI-mode Setup stops at
+	    the plain teal desktop: a deadlock in Windows NT's <tt>csrss</tt>.
+	    Restart the machine; Setup carries on.
+</ul>
 
 
 
