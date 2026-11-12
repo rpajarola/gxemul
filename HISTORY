@@ -5775,4 +5775,25 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.23  ==============
 
+20261112	DECpc AXP 150 (Jensen): Windows NT 3.1 installs from scratch
+		and runs, with the GUI, networking and the mouse.  New
+		devices: 82077 floppy controller and 82357 EISA DMA (the ECU
+		runs from floppy), Compaq QVision 1024/E in EISA slot 2 (VGA,
+		packed 8-bit mode, linear framebuffer, BitBLT engine, Bt485
+		hardware cursor), DE422 EtherWORKS Turbo Ethernet in slot 3.
+		The DEC2400 system board EISA ID; a genuine factory NVRAM
+		from the real ECU; the whole Flash is kept in a file.
+		aha1742: SCSI writes reach the disk image, DMA split at page
+		boundaries, completions queued.  8259/ELCR level-triggered
+		inputs; 8254 access modes, latch and read-back; RTC always at
+		32.768 kHz, without the seconds hack.
+		EV4: an LDQ_U/STQ_U fault reports the effective address; an
+		interrupt or exception clears the lock flag.
+		pckbc: a PS/2 mouse on the aux port; cursor, editing and
+		function keys and keys with Ctrl, Alt and Shift from the
+		display; port 0x61.  Machine menu: Send Ctrl+Alt+Del.
+		SDL: the host's screensaver is no longer inhibited.
+
+==============  RELEASE 1.0.24  ==============
+
 
