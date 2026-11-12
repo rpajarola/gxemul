@@ -176,6 +176,10 @@ struct mvme187_data *dev_mvme187_init(struct machine *machine);
 void dev_mvme187_set_rom(struct mvme187_data *d, const unsigned char *image,
 	size_t len);
 uint64_t dev_mvme187_time_us(struct mvme187_data *d);
+uint64_t dev_mvme187_time_ns(struct mvme187_data *d);
+void dev_mvme187_at_ns(struct mvme187_data *d, uint64_t ns,
+	void (*f)(struct cpu *, void *), void *extra);
+void dev_mvme187_bbram_access(struct mvme187_data *d);
 void dev_mvme187_brdid_defaults(struct machine *machine, uint8_t *nvram);
 void dev_mvme187_set_scc(struct mvme187_data *d, int (*f)(void *, int),
 	void (*reset)(void *), void *extra);

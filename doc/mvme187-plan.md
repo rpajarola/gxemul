@@ -18,7 +18,17 @@ gateway).
   GCSR, A16 self access, tick timers, interrupter, SYSRESET and GCSR RST),
   PCCchip2 (timers and prescaler, interrupt control, pin inputs, 88100
   prioritizer, SCC pseudo-IACK), MEMC040, IACK space, bus errors.
-- CD2401: four channels, interrupt contexts, per-channel LIVR, loopback.
+- CD2401: four channels, interrupt contexts, per-channel LIVR, loopback,
+  receive data timeout (data below the FIFO threshold is passed on after
+  RTPR prescaler ticks; SYSTEM V/88's console needs it), asynchronous DMA
+  (A/B buffers, special character exceptions, receive timeout, REOIR
+  TermBuff/DiscExc), transmission paced at the baud rate.
+- Emulated time: one instruction per bus clock, plus wait states for
+  BBRAM (5 or 9 clocks, by the PCCchip2 FAST bit) and PCCchip2/VMEchip2
+  register accesses (5 clocks). Devices can ask for an event at a given
+  instruction count (machine_add_event); the dyntrans run then stops
+  there, so tick timer and CD2401 interrupts come on time rather than at
+  the next tick. An idle CPU skips ahead to an event due in its run.
 - 53C710: SCRIPTS processor and SCSI target model.
 - MK48T08 with NVRAM file; a blank board configuration area
   ($FFFC1EF8, with its checksum at $FFFC1FF7) is filled in.
@@ -30,14 +40,14 @@ gateway).
 ## 187Bug self-test failures left
 
 - RAM PED and MEMC RAMCNTRL: no parity error emulation (MEMC040 WWP).
-- ST2401 DMA and BAUD: CD2401 DMA mode not implemented (time-outs).
 - CMMU cache tests (CCHSD, CCHLR, CCHBYP, CCHSDWT, CCHBUR, ...): the
   cache contents are not emulated; CCHCODE ends the self-test with an
   unimplemented opcode exception.
 
 ## To do
 
-- CD2401 DMA (if a driver uses it), modem signals, break.
+- CD2401: synchronous modes, interrupt-mode transmit timing (characters
+  go out at once), modem signals, break.
 - MCECC (ECC memory controller variant), a second MEMC040.
 - WARNING: "pid 11(bcheckrc): trap type 3 return at spl7" on the first
   boot: look at the data access exception return path.

@@ -106,6 +106,7 @@ struct mvme187_data {
 	struct cpu	*cpu;
 	struct interrupt cpu_irq;
 	int		irq_asserted;
+	uint64_t	stall;		/*  wait states (bus clocks)  */
 
 	uint8_t		*rom;		/*  ROM_WINDOW bytes  */
 	uint8_t		*rom_at_0;	/*  a copy (dyntrans needs its own)  */
@@ -147,7 +148,8 @@ struct mvme187_data {
  *  Time: the bus clock (BCLK) runs at 33 MHz. Unless the machine has an
  *  emulated_hz (then the host's clock is used), emulated time is the number
  *  of instructions run, at one per BCLK cycle; the firmware calibrates its
- *  delays from the tick timers and the RTC, so these must agree.
+ *  delays from the tick timers and the RTC, so these must agree. Slow
+ *  devices add wait states (the BBRAM, whose speed 187Bug tests).
  */
 #define	BCLK_HZ		33000000
 
@@ -157,7 +159,8 @@ static uint64_t bclk(struct mvme187_data *d)
 	static struct timeval start;
 
 	if (d->machine->emulated_hz == 0)
-		return d->cpu->ninstrs + d->cpu->n_translated_instrs;
+		return d->cpu->ninstrs + d->cpu->n_translated_instrs +
+		    d->stall;
 
 	gettimeofday(&tv, NULL);
 	if (start.tv_sec == 0 && start.tv_usec == 0)
@@ -217,6 +220,48 @@ void dev_mvme187_brdid_defaults(struct machine *machine, uint8_t *nvram)
 uint64_t dev_mvme187_time_us(struct mvme187_data *d)
 {
 	return bclk(d) / (BCLK_HZ / 1000000);
+}
+
+/*  The same, in nanoseconds (for serial line timing):  */
+uint64_t dev_mvme187_time_ns(struct mvme187_data *d)
+{
+	return bclk(d) * 1000 / (BCLK_HZ / 1000000);
+}
+
+/*  Calls f(cpu, extra) at a bus clock, when time is counted in
+    instructions (otherwise the device has to make do with its ticks).  */
+static void at_bclk(struct mvme187_data *d, uint64_t when,
+	void (*f)(struct cpu *, void *), void *extra)
+{
+	if (d->machine->emulated_hz != 0)
+		return;
+	machine_add_event(d->machine, when > d->stall ? when - d->stall : 0,
+	    f, extra);
+}
+
+/*  The same, at an emulated time in ns:  */
+void dev_mvme187_at_ns(struct mvme187_data *d, uint64_t ns,
+	void (*f)(struct cpu *, void *), void *extra)
+{
+	at_bclk(d, (ns * (BCLK_HZ / 1000000) + 999) / 1000, f, extra);
+}
+
+/*  A BBRAM access takes 5 bus clocks with the PCCchip2's FAST bit, or 9
+    without (one is the instruction):  */
+void dev_mvme187_bbram_access(struct mvme187_data *d)
+{
+	if (d->machine->emulated_hz == 0)
+		d->stall += d->pcc[PCCTWO_GENCTL] & PCC2_GENCTL_FAST ? 4 : 8;
+}
+
+/*  A PCCchip2 or VMEchip2 register access: taken to be as slow as a fast
+    BBRAM cycle (5 bus clocks). (187Bug's tick timer interrupt test needs
+    its handler to take about as long as on the real board.)  */
+#define	REG_WAIT_STATES		4
+static void reg_access(struct mvme187_data *d)
+{
+	if (d->machine->emulated_hz == 0)
+		d->stall += REG_WAIT_STATES;
 }
 
 /*  Number of tick timer clocks since the last call (the prescaler divides
@@ -387,6 +432,11 @@ static void update_irq(struct mvme187_data *d)
 			assert = 1;
 	}
 
+	if (assert != d->irq_asserted)
+		debugmsg(d->subsys, "irq", VERBOSITY_DEBUG, "%s at %llu, pc "
+		    "0x%08llx psr 0x%08x", assert ? "asserted" : "deasserted",
+		    (unsigned long long) bclk(d), (unsigned long long)
+		    d->cpu->pc, (unsigned) d->cpu->cd.m88k.cr[M88K_CR_PSR]);
 	if (assert && !d->irq_asserted)
 		INTERRUPT_ASSERT(d->cpu_irq);
 	else if (!assert && d->irq_asserted)
@@ -560,6 +610,80 @@ static int iack(struct mvme187_data *d, int level)
  *  Timers
  */
 
+/*  Timer clocks until the next compare match (0 = none):  */
+static uint64_t ticks_to_match(struct tick_timer *t, uint32_t cmp, int ctl)
+{
+	if (!(ctl & PCC2_TCTL_CEN))
+		return 0;
+	if ((ctl & PCC2_TCTL_COC) && cmp == 0)
+		return 1;
+	if (t->count < cmp)
+		return cmp - t->count;
+	return 0x100000000ULL - t->count + cmp;
+}
+
+/*  The bus clock at which a prescaler has given n more clocks:  */
+static uint64_t prescaler_at(struct prescaler *p, uint64_t n, uint8_t adjust)
+{
+	return p->last_bclk + n * (256 - adjust) - p->frac;
+}
+
+void dev_mvme187_tick(struct cpu *, void *);
+
+/*
+ *  Interrupts from the tick timers come on time (not at the next tick),
+ *  when emulated time is counted in instructions: an event at the next
+ *  compare match of each timer which may interrupt.
+ */
+static void timers_schedule(struct mvme187_data *d)
+{
+	uint64_t next = UINT64_MAX, n, when;
+	int i;
+
+	if (d->machine->emulated_hz != 0)
+		return;
+
+	for (i = 0; i < 2; i++) {
+		int ctlreg = i == 0 ? PCCTWO_T1CTL : PCCTWO_T2CTL;
+		int icr = i == 0 ? PCCTWO_T1ICR : PCCTWO_T2ICR;
+		int cmpreg = i == 0 ? PCCTWO_T1CMP : PCCTWO_T2CMP;
+		uint32_t cmp = (d->pcc[cmpreg] << 24) | (d->pcc[cmpreg+1] << 16)
+		    | (d->pcc[cmpreg+2] << 8) | d->pcc[cmpreg+3];
+
+		if (!(d->pcc[icr] & PCC2_TTIRQ_IEN) ||
+		    (d->pcc[icr] & PCC2_TTIRQ_INT))
+			continue;
+		n = ticks_to_match(&d->ptimer[i], cmp, d->pcc[ctlreg]);
+		if (n == 0)
+			continue;
+		when = prescaler_at(&d->ppre, n, d->pcc[PCCTWO_PSCALEADJ]);
+		if (when < next)
+			next = when;
+	}
+
+	for (i = 0; i < 2; i++) {
+		uint32_t bit = i == 0 ? VME2_IRQ_TIC1 : VME2_IRQ_TIC2;
+		uint32_t cmp = d->lcsr[(i == 0 ? VME2_T1CMP : VME2_T2CMP) / 4];
+		int ctl = (d->lcsr[VME2_TCTL / 4] >> (8 * i)) & 0xff;
+
+		if (!(d->lcsr[VME2_IRQEN / 4] & bit) || (d->vme_irqstat & bit))
+			continue;
+		n = ticks_to_match(&d->vtimer[i], cmp, ctl);
+		if (n == 0)
+			continue;
+		when = prescaler_at(&d->vpre, n, d->lcsr[VME2_TCR / 4]);
+		if (when < next)
+			next = when;
+	}
+
+	if (next != UINT64_MAX) {
+		debugmsg(d->subsys, "timer", VERBOSITY_DEBUG, "next match at "
+		    "%llu (now %llu)", (unsigned long long) next,
+		    (unsigned long long) bclk(d));
+		at_bclk(d, next, dev_mvme187_tick, d);
+	}
+}
+
 static void timers_update(struct mvme187_data *d)
 {
 	uint64_t now = bclk(d);
@@ -576,8 +700,12 @@ static void timers_update(struct mvme187_data *d)
 		    | (d->pcc[cmpreg+2] << 8) | d->pcc[cmpreg+3];
 
 		hits = timer_advance(&d->ptimer[i], cmp, d->pcc[ctlreg], pticks);
-		if (hits > 0)
+		if (hits > 0) {
+			debugmsg(d->subsys, "timer", VERBOSITY_DEBUG, "PCCchip2"
+			    " timer %i: %i match(es) at %llu", i + 1, hits,
+			    (unsigned long long) now);
 			d->pcc[icr] |= PCC2_TTIRQ_INT;
+		}
 	}
 
 	for (i = 0; i < 2; i++) {
@@ -607,6 +735,7 @@ DEVICE_TICK(mvme187)
 	}
 
 	timers_update(d);
+	timers_schedule(d);
 }
 
 
@@ -692,6 +821,7 @@ DEVICE_ACCESS(mvme187_lcsr)
 	if (writeflag == MEM_WRITE)
 		idata = memory_readmax64(cpu, data, len) << shift;
 
+	reg_access(d);
 	timers_update(d);
 
 	switch (reg) {
@@ -781,6 +911,7 @@ DEVICE_ACCESS(mvme187_lcsr)
 		break;
 	}
 
+	timers_schedule(d);
 	update_irq(d);
 	return 1;
 }
@@ -952,6 +1083,7 @@ DEVICE_ACCESS(mvme187_pcc)
 	uint64_t idata;
 	size_t i;
 
+	reg_access(d);
 	timers_update(d);
 
 	if (writeflag == MEM_READ) {
@@ -962,6 +1094,7 @@ DEVICE_ACCESS(mvme187_pcc)
 		for (i = 0; i < len; i++)
 			pcc_write(d, (a + i) & 0x3f,
 			    idata >> ((len - 1 - i) * 8));
+		timers_schedule(d);
 	}
 
 	update_irq(d);

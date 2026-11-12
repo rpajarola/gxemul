@@ -153,6 +153,9 @@ DEVICE_ACCESS(mk48txx)
 	struct mk48txx_data *d = (struct mk48txx_data *) extra;
 	size_t i;
 
+	if (d->machine->md.mvme187 != NULL)
+		dev_mvme187_bbram_access(d->machine->md.mvme187);
+
 	for (i = 0; i < len; i++) {
 		uint32_t a = (relative_addr + i) & (MK48TXX_LEN - 1);
 

@@ -81,6 +81,16 @@ struct tick_functions {
 	void	**extra;
 };
 
+/*  Device events at a given instruction count (see machine_add_event):  */
+#define	MAX_MACHINE_EVENTS	8
+struct machine_events {
+	int		n;
+	uint64_t	next;		/*  the earliest  */
+	uint64_t	when[MAX_MACHINE_EVENTS];
+	void		(*f[MAX_MACHINE_EVENTS])(struct cpu *, void *);
+	void		*extra[MAX_MACHINE_EVENTS];
+};
+
 struct display_md {
 	/*  Framebuffer windows (see display.c):  */
 	int	in_use;
@@ -140,6 +150,7 @@ struct machine {
 
 	/*  Tick functions (e.g. hardware devices):  */
 	struct tick_functions tick_functions;
+	struct machine_events events;
 
 	char	*cpu_name;  /*  TODO: remove this, there could be several
 				cpus with different names in a machine  */
@@ -414,6 +425,8 @@ int machine_name_to_type(char *stype, char *ssubtype, int *type, int *subtype);
 void machine_add_breakpoint_string(struct machine *machine, char *str);
 void machine_add_tickfunction(struct machine *machine,
 	void (*func)(struct cpu *, void *), void *extra, int clockshift);
+void machine_add_event(struct machine *machine, uint64_t when,
+	void (*func)(struct cpu *, void *), void *extra);
 void machine_statistics_init(struct machine *, char *fname);
 void machine_register(char *name, MACHINE_SETUP_TYPE(setup));
 void machine_setup(struct machine *);

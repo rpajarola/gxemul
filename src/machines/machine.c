@@ -30,6 +30,7 @@
 
 #include <ctype.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -837,6 +838,79 @@ void machine_default_cputype(struct machine *m)
 }
 
 
+/*
+ *  machine_add_event():
+ *
+ *  Calls func(cpu, extra) once the (first) CPU has run 'when' instructions
+ *  in all; the dyntrans loop stops early for it, so that a device can do
+ *  something (e.g. raise an interrupt) at a precise point in emulated time.
+ *  A device has at most one event per function and extra: adding it again
+ *  moves it.
+ */
+static void machine_events_update(struct machine_events *e)
+{
+	e->next = UINT64_MAX;
+	for (int i = 0; i < e->n; i++)
+		if (e->when[i] < e->next)
+			e->next = e->when[i];
+}
+
+void machine_add_event(struct machine *machine, uint64_t when,
+	void (*func)(struct cpu *, void *), void *extra)
+{
+	struct machine_events *e = &machine->events;
+	int i;
+
+	for (i = 0; i < e->n; i++)
+		if (e->f[i] == func && e->extra[i] == extra)
+			break;
+	if (i == e->n) {
+		if (e->n >= MAX_MACHINE_EVENTS) {
+			fatal("machine_add_event(): too many events\n");
+			return;
+		}
+		e->n ++;
+	}
+
+	e->when[i] = when;
+	e->f[i] = func;
+	e->extra[i] = extra;
+	machine_events_update(e);
+
+	/*  Added by a device during a dyntrans run: end that run in time.
+	    (Between runs, the next one starts with this.)  */
+	struct cpu *cpu = machine->cpus[0];
+	int64_t left = (int64_t) (when - cpu->ninstrs);
+	if (left < cpu->dyntrans_chunk)
+		cpu->dyntrans_chunk = left < 1 ? 1 : left;
+}
+
+static void machine_run_events(struct machine *machine)
+{
+	struct machine_events *e = &machine->events;
+	struct cpu *cpu = machine->cpus[0];
+
+	while (e->n > 0 && e->next <= (uint64_t) cpu->ninstrs) {
+		void (*f)(struct cpu *, void *) = NULL;
+		void *extra = NULL;
+
+		for (int i = 0; i < e->n; i++) {
+			if (e->when[i] != e->next)
+				continue;
+			f = e->f[i];
+			extra = e->extra[i];
+			e->n --;
+			e->when[i] = e->when[e->n];
+			e->f[i] = e->f[e->n];
+			e->extra[i] = e->extra[e->n];
+			break;
+		}
+		machine_events_update(e);
+		f(cpu, extra);
+	}
+}
+
+
 /*****************************************************************************/
 
 
@@ -875,9 +949,17 @@ bool machine_run(struct machine *machine)
 	 *  TODO: This should be redesigned into some "mainbus" stuff instead!
 	 */
 
+	/*  (A shorter run, which stopped for a device event:)  */
+	int chunk = single_step ? 1 : N_SAFE_DYNTRANS_LIMIT;
+	if (!single_step && cpus[0]->dyntrans_chunk > 0 &&
+	    cpus[0]->dyntrans_chunk < chunk)
+		chunk = cpus[0]->dyntrans_chunk;
+
+	if (machine->events.n > 0)
+		machine_run_events(machine);
+
 	for (int te=0; te<machine->tick_functions.n_entries; te++) {
-		machine->tick_functions.ticks_till_next[te] -=
-		    single_step ? 1 : N_SAFE_DYNTRANS_LIMIT;
+		machine->tick_functions.ticks_till_next[te] -= chunk;
 
 		if (machine->tick_functions.ticks_till_next[te] <= 0) {
 			while (machine->tick_functions.ticks_till_next[te]<=0) {

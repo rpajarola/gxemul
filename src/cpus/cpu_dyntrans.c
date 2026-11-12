@@ -270,6 +270,15 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 
 	cpu->n_translated_instrs = 0;
 
+	/*  Stop early for a device event? (See machine_add_event.)  */
+	cpu->dyntrans_chunk = N_SAFE_DYNTRANS_LIMIT;
+	if (cpu->machine->events.n > 0) {
+		int64_t left = (int64_t) (cpu->machine->events.next -
+		    cpu->ninstrs);
+		if (left < cpu->dyntrans_chunk)
+			cpu->dyntrans_chunk = left < 1 ? 1 : left;
+	}
+
 	cpu->cd.DYNTRANS_ARCH.cur_physpage = (struct DYNTRANS_TC_PHYSPAGE *)
 	    cpu->cd.DYNTRANS_ARCH.cur_ic_page;
 
@@ -341,7 +350,7 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 			S; I; S; I; S; I; S; I; S; I; S; I;
 
 			cpu->n_translated_instrs += 24;
-			if (cpu->n_translated_instrs >= N_SAFE_DYNTRANS_LIMIT
+			if (cpu->n_translated_instrs >= cpu->dyntrans_chunk
 			    || about_to_enter_single_step)
 				break;
 		}
@@ -355,6 +364,20 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 
 		for (;;) {
 			struct DYNTRANS_IC *ic;
+
+			/*  Close to a device event: one instruction at a
+			    time, to stop right at it.  */
+			if (cpu->dyntrans_chunk < N_SAFE_DYNTRANS_LIMIT &&
+			    cpu->dyntrans_chunk - cpu->n_translated_instrs
+			    < 120) {
+				while (cpu->n_translated_instrs <
+				    cpu->dyntrans_chunk &&
+				    !about_to_enter_single_step) {
+					I;
+					cpu->n_translated_instrs ++;
+				}
+				break;
+			}
 
 			I; I; I; I; I;   I; I; I; I; I;
 			I; I; I; I; I;   I; I; I; I; I;
@@ -373,7 +396,7 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 			I; I; I; I; I;   I; I; I; I; I;
 
 			cpu->n_translated_instrs += 120;
-			if (cpu->n_translated_instrs >= N_SAFE_DYNTRANS_LIMIT
+			if (cpu->n_translated_instrs >= cpu->dyntrans_chunk
 			    || about_to_enter_single_step)
 				break;
 		}
@@ -381,6 +404,12 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 
 	if (cpu->wants_to_idle) {
 		cpu->n_translated_instrs -= N_DYNTRANS_IDLE_BREAK;
+
+		/*  An idle loop would spin until a device event which is
+		    due in this run: skip ahead to it.  */
+		if (cpu->dyntrans_chunk < N_SAFE_DYNTRANS_LIMIT &&
+		    cpu->n_translated_instrs < cpu->dyntrans_chunk)
+			cpu->n_translated_instrs = cpu->dyntrans_chunk;
 
 		// TODO: More arch specific interrupt checks
 		if (false
@@ -466,6 +495,10 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 #endif
 
 	cpu->ninstrs += n_instrs;
+
+	/*  (Now counted in ninstrs; devices which run between calls, e.g.
+	    from ticks, use ninstrs + n_translated_instrs as the time.)  */
+	cpu->n_translated_instrs = 0;
 
 	/*  Return the nr of instructions executed:  */
 	return n_instrs;
