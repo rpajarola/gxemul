@@ -43,6 +43,7 @@
 #include <fenv.h>
 #include <math.h>
 
+#include "control.h"
 #include "cpu.h"
 #include "float_emul.h"
 #include "interrupt.h"
@@ -665,9 +666,27 @@ static void m88k_memory_transaction_debug_dump(struct cpu *cpu, int n)
  *
  *  Cause an exception.
  */
+/*  Exception names, for watches on the control socket:  */
+static const char *m88k_exception_name(int vector)
+{
+	static const char *names[] = { "reset", "interrupt",
+	    "instruction_access", "data_access", "misaligned_access",
+	    "unimplemented_opcode", "privilege_violation", "bounds_check",
+	    "illegal_integer_divide", "integer_overflow", "error" };
+
+	if (vector >= 0 && vector < (int) (sizeof(names) / sizeof(names[0])))
+		return names[vector];
+	if (vector == M88K_EXCEPTION_SFU1_PRECISE)
+		return "sfu1_precise";
+	if (vector == M88K_EXCEPTION_SFU1_IMPRECISE)
+		return "sfu1_imprecise";
+	return "trap";
+}
+
 void m88k_exception(struct cpu *cpu, int vector, int is_trap)
 {
 	bool update_shadow_regs = true;
+	uint32_t from_pc = cpu->pc;
 
 	// TODO: Use a const char * instead or something like that, inside the switch...
 
@@ -836,6 +855,14 @@ void m88k_exception(struct cpu *cpu, int vector, int is_trap)
 	}
 
 	m88k_pc_to_pointers(cpu);
+
+	/*  A watch on the control socket may stop here, at the handler's
+	    first instruction:  */
+	if (control_watch_exceptions && control_exception(cpu,
+	    m88k_exception_name(vector), vector, from_pc,
+	    vector == M88K_EXCEPTION_DATA_ACCESS ?
+	    cpu->cd.m88k.cr[M88K_CR_DMA0] : 0))
+		cpu->cd.m88k.next_ic = &nothing_call;
 }
 
 

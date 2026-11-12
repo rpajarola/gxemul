@@ -1898,6 +1898,18 @@ cpu->cd.DYNTRANS_ARCH.vph_tlb_entry[r].valid);
 		    translations_bitmap));
 		x /= addr_per_translation_range;
 
+		/*
+		 *  The first translation on a page whose translations were
+		 *  invalidated (by a write) while running on it: make it
+		 *  non-writable again, as when the page is entered, or later
+		 *  writes to it would not invalidate this translation.
+		 */
+		if (cpu->cd.DYNTRANS_ARCH.cur_physpage->translations_bitmap
+		    == 0)
+			cpu->invalidate_translation_caches(cpu,
+			    cpu->cd.DYNTRANS_ARCH.cur_physpage->physaddr,
+			    JUST_MARK_AS_NON_WRITABLE | INVALIDATE_PADDR);
+
 		cpu->cd.DYNTRANS_ARCH.cur_physpage->
 		    translations_bitmap |= (1 << x);
 	}
@@ -2018,6 +2030,20 @@ bad:	/*
 #ifdef DYNTRANS_M88K
 	/*  The 88100 takes an unimplemented opcode exception.  */
 	ic->f = instr(illegal);
+
+	/*  This is a translation too: mark its part of the page (see the
+	    tail above), so that writing code there later invalidates it.  */
+	{
+		struct DYNTRANS_TC_PHYSPAGE *pp = (struct DYNTRANS_TC_PHYSPAGE *)
+		    cpu->cd.DYNTRANS_ARCH.cur_ic_page;
+		int x = (addr & (DYNTRANS_PAGESIZE - 1)) / (DYNTRANS_PAGESIZE /
+		    (8 * sizeof(pp->translations_bitmap)));
+		if (pp->translations_bitmap == 0)
+			cpu->invalidate_translation_caches(cpu, pp->physaddr,
+			    JUST_MARK_AS_NON_WRITABLE | INVALIDATE_PADDR);
+		pp->translations_bitmap |= (1 << x);
+	}
+
 	if (cpu->translation_readahead)
 		return;
 	ic->f(cpu, ic);
