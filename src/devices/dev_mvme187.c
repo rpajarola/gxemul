@@ -141,6 +141,15 @@ struct mvme187_data {
 	uint8_t		memc[2][0x20];
 	int		n_memc;
 
+	/*  DRAM parity: bytes written with wrong parity (MEMC040 WWP), one
+	    bitmap per 4 KB page (allocated when needed), and the overlay
+	    device on the RAM which watches the accesses meanwhile.  */
+	uint64_t	ram_size;
+	uint8_t		**par_bad;
+	uint32_t	*par_nbad;	/*  bad bytes, per page  */
+	uint64_t	par_total;
+	bool		par_overlay;
+
 };
 
 
@@ -152,6 +161,18 @@ struct mvme187_data {
  *  devices add wait states (the BBRAM, whose speed 187Bug tests).
  */
 #define	BCLK_HZ		33000000
+
+/*  MEMC040 RAM control and status bits, VMEchip2 MPU status:  */
+#define	MEMC_EXTPEN		0x10	/*  status: parity checking possible  */
+#define	MEMC_PAREN		0x02
+#define	MEMC_PARINT		0x04
+#define	MEMC_WWP		0x08
+#define	DMASTAT_MLPE		0x00000200
+#define	DMASTAT_MCLR		0x00000800
+#define	DMASTAT_MPU		0x00000780	/*  MLBE, MLPE, MLOB, MLTO  */
+#define	PAR_PAGE_SHIFT		12
+
+static void parity_overlay(struct mvme187_data *d);
 
 static uint64_t bclk(struct mvme187_data *d)
 {
@@ -736,6 +757,9 @@ DEVICE_TICK(mvme187)
 
 	timers_update(d);
 	timers_schedule(d);
+
+	if (d->par_overlay)
+		parity_overlay(d);
 }
 
 
@@ -900,6 +924,13 @@ DEVICE_ACCESS(mvme187_lcsr)
 		break;
 	case VME2_IRQSTAT:
 		d->lcsr[reg / 4] = old;		/*  read-only  */
+		break;
+	case VME2_DMASTAT:
+		/*  The MPU status bits are read-only; MCLR clears them.  */
+		d->lcsr[reg / 4] = (d->lcsr[reg / 4] & ~(DMASTAT_MPU |
+		    DMASTAT_MCLR)) | (old & DMASTAT_MPU);
+		if (idata & mask & DMASTAT_MCLR)
+			d->lcsr[reg / 4] &= ~DMASTAT_MPU;
 		break;
 	case VME2_SETSOFTIRQ:
 		d->vme_irqstat |= idata & 0xff00;
@@ -1107,6 +1138,117 @@ DEVICE_ACCESS(mvme187_pcc)
  *  MEMC040
  */
 
+
+static bool parity_bad(struct mvme187_data *d, uint64_t a)
+{
+	uint8_t *b = d->par_bad[a >> PAR_PAGE_SHIFT];
+	uint32_t o = a & ((1 << PAR_PAGE_SHIFT) - 1);
+	return b != NULL && (b[o >> 3] & (1 << (o & 7)));
+}
+
+static void parity_set(struct mvme187_data *d, uint64_t a, bool bad)
+{
+	uint64_t page = a >> PAR_PAGE_SHIFT;
+	uint32_t o = a & ((1 << PAR_PAGE_SHIFT) - 1);
+	uint8_t bit = 1 << (o & 7);
+
+	if (bad == parity_bad(d, a))
+		return;
+	if (d->par_bad[page] == NULL)
+		CHECK_ALLOCATION(d->par_bad[page] = (uint8_t *)
+		    calloc(1, (1 << PAR_PAGE_SHIFT) / 8));
+	if (bad) {
+		d->par_bad[page][o >> 3] |= bit;
+		d->par_nbad[page] ++;
+		d->par_total ++;
+	} else {
+		d->par_bad[page][o >> 3] &= ~bit;
+		d->par_nbad[page] --;
+		d->par_total --;
+	}
+}
+
+/*
+ *  The RAM normally goes straight to host memory. While parity matters
+ *  (WWP is set, or some bytes have wrong parity), a device on top of the
+ *  RAM sees every access: writes set or clear the bad parity of their
+ *  bytes, and reads of bad bytes are parity errors.
+ */
+DEVICE_ACCESS(mvme187_parity)
+{
+	struct mvme187_data *d = (struct mvme187_data *) extra;
+	uint8_t ctl = d->memc[0][0x18];
+	bool error = false;
+	size_t i;
+
+	for (i = 0; i < len; i++) {
+		uint64_t a = relative_addr + i;
+		unsigned char *h = memory_paddr_to_hostaddr(mem, a, writeflag);
+
+		if (writeflag == MEM_WRITE) {
+			if (h != NULL)
+				*h = data[i];
+			parity_set(d, a, ctl & MEMC_WWP);
+		} else {
+			data[i] = h != NULL ? *h : 0;
+			if (parity_bad(d, a))
+				error = true;
+		}
+	}
+
+	if (!error || !(d->memc[0][0x08] & MEMC_EXTPEN))
+		return 1;
+
+	/*  PARINT: an interrupt (the cycle ends normally); PAREN alone: a
+	    bus error (TEA).  */
+	if (ctl & MEMC_PARINT) {
+		debugmsg(d->subsys, "parity", VERBOSITY_INFO, "parity error at "
+		    "0x%08llx: interrupt", (unsigned long long) relative_addr);
+		d->vme_irqstat |= VME2_IRQ_PE;
+		update_irq(d);
+		return 1;
+	}
+	if (ctl & MEMC_PAREN) {
+		debugmsg(d->subsys, "parity", VERBOSITY_INFO, "parity error at "
+		    "0x%08llx: bus error", (unsigned long long) relative_addr);
+		d->lcsr[VME2_DMASTAT / 4] |= DMASTAT_MLPE;
+		return 0;
+	}
+	return 1;
+}
+
+/*  Put the overlay on the RAM, or take it away (from outside its own
+    access function, i.e. from the MEMC040 registers or a tick).  */
+static void parity_overlay(struct mvme187_data *d)
+{
+	struct memory *mem = d->machine->memory;
+	bool want = (d->memc[0][0x18] & MEMC_WWP) || d->par_total > 0;
+	int i;
+
+	if (want == d->par_overlay)
+		return;
+	d->par_overlay = want;
+
+	if (want) {
+		memory_device_register(mem, "parity", 0, d->ram_size,
+		    dev_mvme187_parity_access, d, DM_DEFAULT |
+		    DM_READS_HAVE_NO_SIDE_EFFECTS, NULL);
+	} else {
+		for (i = 0; i < mem->n_mmapped_devices; i++)
+			if (strcmp(mem->devices[i].name, "parity") == 0) {
+				memory_device_remove(mem, i);
+				break;
+			}
+	}
+
+	debugmsg(d->subsys, "parity", VERBOSITY_DEBUG, "RAM overlay %s",
+	    want ? "on" : "off");
+
+	/*  RAM pages may be mapped (or translated) directly.  */
+	d->cpu->invalidate_translation_caches(d->cpu, 0, INVALIDATE_ALL);
+	d->cpu->invalidate_code_translation(d->cpu, 0, INVALIDATE_ALL);
+}
+
 DEVICE_ACCESS(mvme187_memc)
 {
 	struct mvme187_data *d = (struct mvme187_data *) extra;
@@ -1133,12 +1275,16 @@ DEVICE_ACCESS(mvme187_memc)
 			if (data[i] == 0x0f) {
 				/*  Software reset.  */
 				r[0x10] = r[0x14] = r[0x18] = 0;
+				if (n == 0)
+					parity_overlay(d);
 			}
 			break;
 		case 0x10:
 		case 0x14:
 		case 0x18:
 			r[a + i] = data[i];
+			if (n == 0 && a + i == 0x18)
+				parity_overlay(d);
 			break;
 		case 0x1c:
 			/*  Bus clock (not changed by a software reset).  */
@@ -1367,6 +1513,11 @@ struct mvme187_data *dev_mvme187_init(struct machine *machine)
 		fatal("WARNING: MVME187 memory should be 4, 8, 16, 32, 64 "
 		    "or 128 MB (not %i MB)\n", ram_mb);
 	d->n_memc = 1;
+	d->ram_size = (uint64_t) ram_mb << 20;
+	CHECK_ALLOCATION(d->par_bad = (uint8_t **) calloc(
+	    (d->ram_size >> PAR_PAGE_SHIFT) + 1, sizeof(uint8_t *)));
+	CHECK_ALLOCATION(d->par_nbad = (uint32_t *) calloc(
+	    (d->ram_size >> PAR_PAGE_SHIFT) + 1, sizeof(uint32_t)));
 	d->memc[0][0x00] = 0x80;	/*  chip id  */
 	d->memc[0][0x04] = 0x01;	/*  revision  */
 	d->memc[0][0x08] = 0x20 | 0x10 | msiz;	/*  FSTRD, EXTPEN  */

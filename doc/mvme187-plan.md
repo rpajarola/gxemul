@@ -30,6 +30,11 @@ gateway).
   there, so tick timer and CD2401 interrupts come on time rather than at
   the next tick. An idle CPU skips ahead to an event due in its run.
 - 53C710: SCRIPTS processor and SCSI target model.
+- DRAM parity: bytes written with the MEMC040's WWP bit get wrong parity;
+  reading them with EXTPEN and PAREN is a bus error (VMEchip2 MLPE), with
+  PARINT a VMEchip2 PE interrupt. A device on top of the RAM watches the
+  accesses only while this matters. "tb0/tb1" (the barrier 187Bug uses
+  after such reads) take a pending interrupt.
 - MK48T08 with NVRAM file; a blank board configuration area
   ($FFFC1EF8, with its checksum at $FFFC1FF7) is filled in.
 - 82596CA (dev_i82596.c): linear mode, big-endian layout, all commands,
@@ -39,7 +44,6 @@ gateway).
 
 ## 187Bug self-test failures left
 
-- RAM PED and MEMC RAMCNTRL: no parity error emulation (MEMC040 WWP).
 - CMMU cache tests (CCHSD, CCHLR, CCHBYP, CCHSDWT, CCHBUR, ...): the
   cache contents are not emulated; CCHCODE ends the self-test with an
   unimplemented opcode exception.

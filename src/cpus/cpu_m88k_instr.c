@@ -1528,6 +1528,16 @@ X(tb0)
 {
 	SYNCH_PC;
 
+	/*  Code uses "tb1 0,r0,vec" as a barrier, after which pending
+	    exceptions have been taken: so are interrupts which came up
+	    meanwhile (e.g. from a device access just before). The
+	    interrupt returns to this instruction.  */
+	if (cpu->cd.m88k.irq_asserted &&
+	    !(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_IND)) {
+		m88k_exception(cpu, M88K_EXCEPTION_INTERRUPT, 0);
+		return;
+	}
+
 	if (!(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE)
 	    && ic->arg[2] < M88K_EXCEPTION_USER_TRAPS_START) {
 		m88k_exception(cpu, M88K_EXCEPTION_PRIVILEGE_VIOLATION, 0);
@@ -1540,6 +1550,16 @@ X(tb0)
 X(tb1)
 {
 	SYNCH_PC;
+
+	/*  Code uses "tb1 0,r0,vec" as a barrier, after which pending
+	    exceptions have been taken: so are interrupts which came up
+	    meanwhile (e.g. from a device access just before). The
+	    interrupt returns to this instruction.  */
+	if (cpu->cd.m88k.irq_asserted &&
+	    !(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_IND)) {
+		m88k_exception(cpu, M88K_EXCEPTION_INTERRUPT, 0);
+		return;
+	}
 
 	if (!(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE)
 	    && ic->arg[2] < M88K_EXCEPTION_USER_TRAPS_START) {
