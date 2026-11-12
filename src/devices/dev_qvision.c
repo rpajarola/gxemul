@@ -136,7 +136,9 @@ struct qv_data {
 
 	/*  The current BitBLT operation:  */
 	int		blt_mono, blt_transparent, blt_use_rop;
-	uint8_t		blt_rop, blt_mask;
+	uint8_t		blt_rop;
+	uint8_t		pattern[8];		/*  33CAh..33CDh, twice  */
+	int		pattern_half;
 	int		blt_host;		/*  source data from the CPU  */
 	int		blt_w, blt_h, blt_y;
 	uint32_t	blt_dst;
@@ -1040,7 +1042,9 @@ DEVICE_ACCESS(qvision_dac2)
  *	63CAh bit 4	the source has 1 bit per pixel, expanded to GC 43h
  *			(1 bits) and GC 44h (0 bits); otherwise 8 bits
  *	33C7h		ROP2, a truth table: bit ((S << 1) | D) is the result
- *	33CAh		pixel write mask
+ *	33CAh..33CDh	an 8x8 1-bit pattern for fills (1 bits are the
+ *			foreground colour, 0 bits the background), written
+ *			twice: lines 0..3, then lines 4..7
  *	33CEh		write 1 to start; bit 0 reads as busy (never)
  *
  *  Lines of 8-bit pixels are 1024 pixels apart. The lines of a 1-bit
@@ -1064,7 +1068,7 @@ static uint32_t qv_le32(const uint8_t *p)
 
 static void qv_blt_put(struct qv_data *d, uint32_t daddr, uint8_t src)
 {
-	uint8_t dst, v = src, mask = d->blt_mask;
+	uint8_t dst, v = src;
 	int bit;
 
 	daddr &= QV_VRAM_SIZE - 1;
@@ -1076,7 +1080,7 @@ static void qv_blt_put(struct qv_data *d, uint32_t daddr, uint8_t src)
 			v |= ((d->blt_rop >> ((sb << 1) | db)) & 1) << bit;
 		}
 	}
-	d->vram[daddr] = (v & mask) | (dst & ~mask);
+	d->vram[daddr] = v;
 }
 
 /*  One pixel of the source: a 1-bit pixel is expanded (or skipped if
@@ -1130,7 +1134,6 @@ static void qv_blt_start(struct qv_data *d)
 	d->blt_transparent = (d->gc[0x5a] & 0x10) != 0;
 	d->blt_use_rop = (d->gc[0x5a] & 0xc0) != 0;
 	d->blt_rop = b1[7] & 0x0f;
-	d->blt_mask = b1[0x0a];
 
 	if (linear) {
 		src = qv_le32(b2 + 0);
@@ -1146,9 +1149,12 @@ static void qv_blt_start(struct qv_data *d)
 
 	debugmsg(d->subsys, "qvision", VERBOSITY_DEBUG,
 	    "BitBLT 0x%02x %ix%i src %s 0x%x%s dst 0x%x fg 0x%02x bg 0x%02x "
-	    "rop 0x%x mask 0x%02x\n", d->gc[0x5a], w, h, source == 0? "cpu" :
-	    source == 2? "colour" : "vram", src, d->blt_mono? " (1-bit)" : "",
-	    dst, d->gc[0x43], d->gc[0x44], d->blt_rop, d->blt_mask);
+	    "rop 0x%x pattern %02x%02x%02x%02x%02x%02x%02x%02x\n", d->gc[0x5a],
+	    w, h, source == 0? "cpu" : source == 2? "pattern" : "vram", src,
+	    d->blt_mono? " (1-bit)" : "", dst, d->gc[0x43], d->gc[0x44],
+	    d->blt_rop, d->pattern[0], d->pattern[1], d->pattern[2],
+	    d->pattern[3], d->pattern[4], d->pattern[5], d->pattern[6],
+	    d->pattern[7]);
 
 	if (w == 0 || h == 0 || w > QV_BLT_PITCH)
 		return;
@@ -1191,11 +1197,14 @@ static void qv_blt_start(struct qv_data *d)
 					    & (QV_VRAM_SIZE - 1)]);
 		}
 		break;
-	case 2:	/*  Solid fill:  */
-		for (y = 0; y < h; y++)
-			for (x = 0; x < w; x++)
-				qv_blt_put(d, dst + y * QV_BLT_PITCH + x,
-				    d->gc[0x43]);
+	case 2:	/*  A fill with the pattern (aligned to the screen):  */
+		for (y = 0; y < h; y++) {
+			uint32_t a = dst + y * QV_BLT_PITCH;
+			uint8_t pat = d->pattern[(a / QV_BLT_PITCH) & 7];
+			for (x = 0; x < w; x++, a++)
+				qv_blt_put(d, a, (pat >> (7 - (a & 7))) & 1?
+				    d->gc[0x43] : d->gc[0x44]);
+		}
 		break;
 	default:
 		debugmsg(d->subsys, "qvision", VERBOSITY_WARNING,
@@ -1216,6 +1225,12 @@ static void qv_blt(struct qv_data *d, int group, uint64_t r,
 	for (i = 0; i < len && r + i < 16; i++) {
 		if (writeflag == MEM_WRITE) {
 			d->blt[group][r + i] = data[i];
+			if (group == 1 && r + i >= 0x0a && r + i <= 0x0d) {
+				d->pattern[d->pattern_half * 4 + r + i - 0x0a] =
+				    data[i];
+				if (r + i == 0x0d)
+					d->pattern_half ^= 1;
+			}
 			if (group == 1 && r + i == 0x0e && (data[i] & 1))
 				qv_blt_start(d);
 		} else {
@@ -1291,6 +1306,7 @@ static void qv_reset(struct qv_data *d)
 	d->board_ctrl = 0x01;
 	d->board_ctrl2 = 0x10;
 	d->gc[0x54] = 0x04;		/*  1 MB  */
+	memset(d->pattern, 0xff, sizeof(d->pattern));	/*  solid  */
 	d->dirty = 1;
 }
 

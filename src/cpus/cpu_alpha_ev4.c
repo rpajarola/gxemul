@@ -288,6 +288,14 @@ void ev4_exception(struct cpu *cpu, int entry, uint64_t exc_addr)
 {
 	cpu->cd.alpha.exc_addr = exc_addr;
 	cpu->cd.alpha.palmode = 1;
+
+	/*
+	 *  An interrupt or exception clears the lock flag: otherwise a
+	 *  thread switched out between LDx_L and STx_C would succeed with
+	 *  its STx_C after another thread had changed the location (NT's
+	 *  critical sections lost updates, and csrss deadlocked).
+	 */
+	cpu->cd.alpha.ll_flag = 0;
 	cpu->pc = ALPHA_PALMODE_TAG |
 	    ((cpu->cd.alpha.pal_base & 0x3ffffc000ULL) + entry);
 
