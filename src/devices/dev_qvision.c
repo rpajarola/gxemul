@@ -134,6 +134,15 @@ struct qv_data {
 	uint8_t		board_ctrl2;		/*  zC85  */
 	uint8_t		blt[3][16];		/*  23C0h, 33C0h, 63C0h  */
 
+	/*  The current BitBLT operation:  */
+	int		blt_mono, blt_transparent, blt_use_rop;
+	uint8_t		blt_rop, blt_mask;
+	int		blt_host;		/*  source data from the CPU  */
+	int		blt_w, blt_h, blt_y;
+	uint32_t	blt_dst;
+	uint8_t		blt_line[QV_MAX_XSIZE + 8];
+	int		blt_line_pos, blt_line_len, blt_skip;
+
 	unsigned	is1_reads;
 
 	int		have_rom;
@@ -861,6 +870,8 @@ DEVICE_ACCESS(qvision_mem)
 #define	QV_LFB_START		0x100000
 #define	QV_LFB_END		0x10000000
 
+static void qv_blt_host_byte(struct qv_data *d, uint8_t b);
+
 static uint32_t qv_lfb_base(struct qv_data *d)
 {
 	return (d->gc[0x48] << 20) | ((d->gc[0x49] & 0x0f) << 28);
@@ -879,6 +890,12 @@ DEVICE_ACCESS(qvision_lfb)
 	}
 
 	a -= base;
+	if (writeflag == MEM_WRITE && d->blt_host) {
+		/*  Source data for the BitBLT engine:  */
+		for (i = 0; i < len && d->blt_host; i++)
+			qv_blt_host_byte(d, data[i]);
+		return 1;
+	}
 	if (writeflag == MEM_WRITE) {
 		for (i = 0; i < len; i++)
 			d->vram[a + i] = data[i];
@@ -1009,23 +1026,29 @@ DEVICE_ACCESS(qvision_dac2)
 
 /*
  *  The BitBLT engine, as Windows NT's QV.DLL uses it (worked out from what
- *  it writes; no documentation):
+ *  it writes; there is no documentation):
  *
  *	23C2h, 23C4h	width and height, in pixels
  *	23CAh bit 0	linear addressing: the source (63C0h) and destination
  *			(63CCh) are 32-bit bit addresses; otherwise they are
  *			X (63C0h, 63CCh) and Y (63C2h, 63CEh) pixel coordinates
- *	GC 5Ah		operation, bits 0..3: 4 = copy, 5 = colour-expand a
- *			1-bit source, 6 = fill; bit 4: transparent expansion
- *			(0 bits leave the destination); bits 6..7: combine
- *			with the destination by the ROP in 33C7h
- *	GC 43h, 44h	foreground and background colour
+ *	GC 5Ah		bits 0..1, the source: 1 = video memory, 2 = the
+ *			foreground colour (a fill), 0 = the CPU (see below);
+ *			bit 4: transparent colour expansion (0 bits leave the
+ *			destination); bits 6..7: combine with the destination
+ *			by the ROP in 33C7h
+ *	63CAh bit 4	the source has 1 bit per pixel, expanded to GC 43h
+ *			(1 bits) and GC 44h (0 bits); otherwise 8 bits
  *	33C7h		ROP2, a truth table: bit ((S << 1) | D) is the result
  *	33CAh		pixel write mask
  *	33CEh		write 1 to start; bit 0 reads as busy (never)
  *
- *  Lines of 8-bit pixels are 1024 pixels apart; the lines of a 1-bit
- *  source are padded to 32 bits.
+ *  Lines of 8-bit pixels are 1024 pixels apart. The lines of a 1-bit
+ *  source in video memory are padded to 32 bits (most significant bit
+ *  first). From the CPU, the source comes as writes to the start of the
+ *  linear framebuffer, line by line, in whole bytes (1-bit) or 32-bit
+ *  words (8-bit) from the one that holds the source X (the pixels before
+ *  it are skipped).
  */
 #define	QV_BLT_PITCH		1024
 
@@ -1039,32 +1062,75 @@ static uint32_t qv_le32(const uint8_t *p)
 	return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-static void qv_blt_put(struct qv_data *d, uint32_t daddr, uint8_t src,
-	int use_rop, uint8_t rop, uint8_t mask)
+static void qv_blt_put(struct qv_data *d, uint32_t daddr, uint8_t src)
 {
-	uint8_t dst = d->vram[daddr], v = src;
+	uint8_t dst, v = src, mask = d->blt_mask;
 	int bit;
 
-	if (use_rop) {
+	daddr &= QV_VRAM_SIZE - 1;
+	dst = d->vram[daddr];
+	if (d->blt_use_rop) {
 		v = 0;
 		for (bit = 0; bit < 8; bit++) {
 			int sb = (src >> bit) & 1, db = (dst >> bit) & 1;
-			v |= ((rop >> ((sb << 1) | db)) & 1) << bit;
+			v |= ((d->blt_rop >> ((sb << 1) | db)) & 1) << bit;
 		}
 	}
 	d->vram[daddr] = (v & mask) | (dst & ~mask);
+}
+
+/*  One pixel of the source: a 1-bit pixel is expanded (or skipped if
+    transparent), an 8-bit one is used as it is.  */
+static void qv_blt_pixel(struct qv_data *d, uint32_t daddr, int pix)
+{
+	if (d->blt_mono) {
+		if (!pix && d->blt_transparent)
+			return;
+		pix = pix? d->gc[0x43] : d->gc[0x44];
+	}
+	qv_blt_put(d, daddr, pix);
+}
+
+/*  A line of source data from the CPU is complete:  */
+static void qv_blt_host_line(struct qv_data *d)
+{
+	uint32_t daddr = d->blt_dst + d->blt_y * QV_BLT_PITCH;
+	int x;
+
+	for (x = 0; x < d->blt_w; x++) {
+		int sx = x + d->blt_skip;
+		int pix = d->blt_mono? (d->blt_line[sx >> 3] >> (7 - (sx & 7)))
+		    & 1 : d->blt_line[sx];
+		qv_blt_pixel(d, daddr + x, pix);
+	}
+
+	d->blt_line_pos = 0;
+	if (++ d->blt_y >= d->blt_h)
+		d->blt_host = 0;
+	d->dirty = 1;
+}
+
+/*  A byte of source data written by the CPU:  */
+static void qv_blt_host_byte(struct qv_data *d, uint8_t b)
+{
+	d->blt_line[d->blt_line_pos ++] = b;
+	if (d->blt_line_pos >= d->blt_line_len)
+		qv_blt_host_line(d);
 }
 
 static void qv_blt_start(struct qv_data *d)
 {
 	uint8_t *b0 = d->blt[0], *b1 = d->blt[1], *b2 = d->blt[2];
 	int w = qv_le16(b0 + 2) & 0xfff, h = qv_le16(b0 + 4) & 0xfff;
-	int op = d->gc[0x5a] & 0x0f, transparent = d->gc[0x5a] & 0x10;
-	int use_rop = (d->gc[0x5a] & 0xc0) != 0;
-	uint8_t rop = b1[7] & 0x0f, mask = b1[0x0a];
-	uint8_t fg = d->gc[0x43], bg = d->gc[0x44];
-	uint32_t src, dst;	/*  in bits if linear, else in pixels  */
-	int linear = b0[0x0a] & 1, x, y, ystep = 1, xstep = 1, y0, x0;
+	int source = d->gc[0x5a] & 3, linear = b0[0x0a] & 1, x, y;
+	uint32_t src, dst;	/*  bits if linear, else pixels  */
+
+	d->blt_host = 0;
+	d->blt_mono = (b2[0x0a] & 0x10) != 0;
+	d->blt_transparent = (d->gc[0x5a] & 0x10) != 0;
+	d->blt_use_rop = (d->gc[0x5a] & 0xc0) != 0;
+	d->blt_rop = b1[7] & 0x0f;
+	d->blt_mask = b1[0x0a];
 
 	if (linear) {
 		src = qv_le32(b2 + 0);
@@ -1072,56 +1138,64 @@ static void qv_blt_start(struct qv_data *d)
 	} else {
 		src = qv_le16(b2 + 2) * QV_BLT_PITCH + qv_le16(b2 + 0);
 		dst = qv_le16(b2 + 0x0e) * QV_BLT_PITCH + qv_le16(b2 + 0x0c);
+		if (d->blt_mono)
+			src *= 8;
 	}
+	if (linear && !d->blt_mono)
+		src /= 8;
 
 	debugmsg(d->subsys, "qvision", VERBOSITY_DEBUG,
-	    "BitBLT op 0x%02x %ix%i src 0x%x dst 0x%x%s fg 0x%02x bg 0x%02x "
-	    "rop 0x%x mask 0x%02x\n", d->gc[0x5a], w, h, src, dst,
-	    linear? " (linear)" : "", fg, bg, rop, mask);
+	    "BitBLT 0x%02x %ix%i src %s 0x%x%s dst 0x%x fg 0x%02x bg 0x%02x "
+	    "rop 0x%x mask 0x%02x\n", d->gc[0x5a], w, h, source == 0? "cpu" :
+	    source == 2? "colour" : "vram", src, d->blt_mono? " (1-bit)" : "",
+	    dst, d->gc[0x43], d->gc[0x44], d->blt_rop, d->blt_mask);
 
-	if (w == 0 || h == 0)
+	if (w == 0 || h == 0 || w > QV_BLT_PITCH)
 		return;
 
-	switch (op) {
-	case 4:	/*  Screen to screen copy (8-bit source).  */
-		if (linear)
-			src /= 8;
-		/*  Overlapping copies go the safe way:  */
-		y0 = 0; x0 = 0;
-		if (dst > src) {
-			y0 = h - 1; ystep = -1;
-			x0 = w - 1; xstep = -1;
-		}
-		for (y = y0; y >= 0 && y < h; y += ystep)
-			for (x = x0; x >= 0 && x < w; x += xstep)
-				qv_blt_put(d, (dst + y * QV_BLT_PITCH + x) &
-				    (QV_VRAM_SIZE - 1), d->vram[(src + y *
-				    QV_BLT_PITCH + x) & (QV_VRAM_SIZE - 1)],
-				    use_rop, rop, mask);
-		break;
-	case 5:	/*  Colour expansion of a 1-bit source, whose lines are
-		    padded to 32 bits (most significant bit first):  */
-		if (!linear)
-			src *= 8;
-		for (y = 0; y < h; y++)
-			for (x = 0; x < w; x++) {
-				uint32_t bitaddr = src + y * ((w + 31) & ~31)
-				    + x;
-				int on = (d->vram[(bitaddr >> 3) &
-				    (QV_VRAM_SIZE - 1)] >> (7 - (bitaddr & 7)))
-				    & 1;
-				if (!on && transparent)
-					continue;
-				qv_blt_put(d, (dst + y * QV_BLT_PITCH + x) &
-				    (QV_VRAM_SIZE - 1), on? fg : bg, use_rop,
-				    rop, mask);
+	switch (source) {
+	case 0:	/*  From the CPU, through the framebuffer:  */
+		d->blt_host = 1;
+		d->blt_w = w;
+		d->blt_h = h;
+		d->blt_y = 0;
+		d->blt_dst = dst;
+		d->blt_line_pos = 0;
+		/*  The CPU sends whole bytes (1-bit) or 32-bit words (8-bit)
+		    of its bitmap, from the one that holds the source X;
+		    the pixels before X are skipped:  */
+		d->blt_skip = d->blt_mono? (src & 7) : (src & 3);
+		d->blt_line_len = d->blt_mono? (d->blt_skip + w + 7) / 8 :
+		    (d->blt_skip + w + 3) & ~3;
+		return;
+	case 1:	/*  From video memory:  */
+		if (d->blt_mono) {
+			for (y = 0; y < h; y++)
+				for (x = 0; x < w; x++) {
+					uint32_t bit = src + y * ((w + 31) & ~31)
+					    + x;
+					qv_blt_pixel(d, dst + y * QV_BLT_PITCH + x,
+					    (d->vram[(bit >> 3) & (QV_VRAM_SIZE
+					    - 1)] >> (7 - (bit & 7))) & 1);
+				}
+		} else {
+			/*  Overlapping copies go the safe way:  */
+			int y0 = 0, x0 = 0, step = 1;
+			if (dst > src) {
+				y0 = h - 1; x0 = w - 1; step = -1;
 			}
+			for (y = y0; y >= 0 && y < h; y += step)
+				for (x = x0; x >= 0 && x < w; x += step)
+					qv_blt_put(d, dst + y * QV_BLT_PITCH + x,
+					    d->vram[(src + y * QV_BLT_PITCH + x)
+					    & (QV_VRAM_SIZE - 1)]);
+		}
 		break;
-	case 6:	/*  Solid fill.  */
+	case 2:	/*  Solid fill:  */
 		for (y = 0; y < h; y++)
 			for (x = 0; x < w; x++)
-				qv_blt_put(d, (dst + y * QV_BLT_PITCH + x) &
-				    (QV_VRAM_SIZE - 1), fg, use_rop, rop, mask);
+				qv_blt_put(d, dst + y * QV_BLT_PITCH + x,
+				    d->gc[0x43]);
 		break;
 	default:
 		debugmsg(d->subsys, "qvision", VERBOSITY_WARNING,
