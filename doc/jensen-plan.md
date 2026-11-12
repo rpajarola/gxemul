@@ -127,8 +127,10 @@ User-facing documentation lives in `doc/machine_jensen.html`.
     ECU V1.9 runs from a diskette image and saves its configuration.
 - **Milestone 5 &ndash; OS verification (partial):**
   - OpenVMS AXP V1.5-1H1 boots from CD via `SYS$PKJDRIVER` to Stand-alone BACKUP (`$`).
-  - Windows NT 3.1 Alpha (build 528): `scsi(0)cdrom(4)fdisk(0)\alpha\setupldr` loads
-    and shows the text-mode Setup screen.
+  - Windows NT 3.1 Alpha (build 528) installs from scratch (arcinst, ECU from
+    ARC, text-mode and GUI-mode Setup) and boots to the logon screen and
+    Program Manager on the QVision; see "Installing Windows NT 3.1 from
+    scratch" in `doc/machine_jensen.html`.
 
 ### NT 3.1 text-mode Setup (2026-11-09)
 
@@ -147,8 +149,9 @@ Fixed on the way:
 
 ### Next
 
-1. **GUI-mode Setup runs to the end** on the emulated QVision ("Windows NT
-   3.1 is now installed"): QV.SYS/QV.DLL draw with the packed 8-bit mode, the
+1. **Windows NT 3.1 installs and runs** on the emulated QVision (Setup to
+   "Windows NT 3.1 is now installed", then logon with Ctrl+Alt+Del, which
+   the 8042 now types with its modifiers, and Program Manager). QV.SYS/QV.DLL draw with the packed 8-bit mode, the
    linear framebuffer and the BitBLT engine (worked out from what QV.DLL
    writes). Open:
    - Now and then (about 1 boot in 15 since the lock flag is cleared on
@@ -163,7 +166,9 @@ Fixed on the way:
      normal, or why our timing hits the window.
    - No mouse pointer: NT never sets a pointer shape (mouse not detected?).
    - The year shows as 2006 (item 3).
-   - Boot the installed system after Setup's restart.
+   - arcinst must run before the ECU: with the QVision's framebuffer
+     reserved at 4 MB, arcinst (at 6 MB) fails with "Failed to initialize
+     the heap".
    Earlier blockers, fixed: csrss died at once (EV4 reported the aligned
    address for STQ_U faults, which ntdll's IAT-forwarder filter needs
    exactly), and the RTC ran NT's clock 128 times too fast (the Jensen's RTC
@@ -176,7 +181,7 @@ Fixed on the way:
 3. **Year shows as 2006** in the ARC clock (RTC year convention).
 4. **Video:** NT 3.1 Alpha only supports Compaq QVision and S3 (911/924, 928)
    displays; there is no plain VGA option. The QVision works (item 1).
-5. Boot the installed NT kernel; then DEC OSF/1 AXP; DE422 NIC; newer NT/VMS.
+5. DEC OSF/1 AXP; DE422 NIC; the mouse; newer NT/VMS.
 
 ### Not emulated
 
