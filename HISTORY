@@ -5796,4 +5796,10 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.24  ==============
 
+20261112	QVision: BitBLT screen-to-screen copies backwards (33CEh bit
+		6), from the bottom right, as Windows NT uses them to move
+		windows down and to scroll up; these copied the wrong area.
+
+==============  RELEASE 1.0.25  ==============
+
 
