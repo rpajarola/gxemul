@@ -885,6 +885,28 @@ void machine_add_event(struct machine *machine, uint64_t when,
 		cpu->dyntrans_chunk = left < 1 ? 1 : left;
 }
 
+/*
+ *  machine_shift_events():
+ *
+ *  Brings all events n instructions closer; for a machine whose time runs
+ *  ahead of the instruction count (wait states), when it does so.
+ */
+void machine_shift_events(struct machine *machine, uint64_t n)
+{
+	struct machine_events *e = &machine->events;
+	struct cpu *cpu = machine->cpus[0];
+
+	if (e->n == 0)
+		return;
+	for (int i = 0; i < e->n; i++)
+		e->when[i] = e->when[i] > n ? e->when[i] - n : 0;
+	machine_events_update(e);
+
+	int64_t left = (int64_t) (e->next - cpu->ninstrs);
+	if (left < cpu->dyntrans_chunk)
+		cpu->dyntrans_chunk = left < 1 ? 1 : left;
+}
+
 static void machine_run_events(struct machine *machine)
 {
 	struct machine_events *e = &machine->events;

@@ -23,7 +23,9 @@ gateway).
   RTPR prescaler ticks; SYSTEM V/88's console needs it), asynchronous DMA
   (A/B buffers, special character exceptions, receive timeout, REOIR
   TermBuff/DiscExc), transmission paced at the baud rate.
+- VMEchip2 watchdog (time-out, WDTO, BRDFAIL, reset).
 - Emulated time: one instruction per bus clock, plus wait states for
+  VMEchip2 registers (60 clocks, an estimate from 187Bug's poll budgets),
   BBRAM (a local bus cycle: 16 clocks plus 5 or 9 by the PCCchip2 FAST
   bit) and PCCchip2/VMEchip2
   register accesses (5 clocks). Devices can ask for an event at a given
@@ -53,10 +55,9 @@ gateway).
 - CMMU cache tests (CCHSD, CCHUD, CCHSC, CCHUC, CCHSDWT, CCHUDWT,
   CCHBUR, CCHST, CCHWHIT, CCHLDS, CCHLR, CCHBYP): the cache contents
   are not emulated. "skip_failing_tests" patches them to pass.
-- VME2 TMRC-TMRK (VMEchip2 prescaler adjust, tick timers, watchdog),
-  SWIB and SWIC (software interrupts): not looked at yet (these tests
-  only run since CCHCODE no longer stops the self-test).
-- NCR SFIFO, DFIFO, LPBK, SCRIPTS, IRQ (53C710 diagnostics): likewise.
+- NCR SFIFO, DFIFO, LPBK, SCRIPTS, IRQ (53C710 diagnostics): FIFO
+  counts and flags, SCSI bus data lines in loopback, the first byte
+  received register and SGE are not emulated.
 
 ## To do
 

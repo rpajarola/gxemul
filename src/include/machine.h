@@ -435,6 +435,7 @@ void machine_add_tickfunction(struct machine *machine,
 	void (*func)(struct cpu *, void *), void *extra, int clockshift);
 void machine_add_event(struct machine *machine, uint64_t when,
 	void (*func)(struct cpu *, void *), void *extra);
+void machine_shift_events(struct machine *machine, uint64_t n);
 void machine_statistics_init(struct machine *, char *fname);
 void machine_register(char *name, MACHINE_SETUP_TYPE(setup));
 void machine_setup(struct machine *);

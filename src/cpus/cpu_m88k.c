@@ -403,6 +403,13 @@ void m88k_irq_interrupt_assert(struct interrupt *interrupt)
 {
 	struct cpu *cpu = (struct cpu *) interrupt->extra;
 	cpu->cd.m88k.irq_asserted = 1;
+
+	/*  Asserted by a device during a dyntrans run (and interrupts are
+	    enabled): end the run soon, so that it is taken (at the start of
+	    the next run) without waiting for the rest of the run.  */
+	if (!(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_IND) &&
+	    cpu->dyntrans_chunk > cpu->n_translated_instrs + 1)
+		cpu->dyntrans_chunk = cpu->n_translated_instrs + 1;
 }
 void m88k_irq_interrupt_deassert(struct interrupt *interrupt)
 {

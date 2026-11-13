@@ -119,6 +119,8 @@ struct mvme187_data {
 	uint32_t	vme_irqstat;
 	struct tick_timer vtimer[2];
 	struct prescaler vpre;
+	uint64_t	wd_elapsed_us;	/*  watchdog count, while enabled  */
+	uint64_t	wd_last_us;
 
 	/*  PCCchip2:  */
 	uint8_t		pcc[0x40];
@@ -273,6 +275,16 @@ void dev_mvme187_at_ns(struct mvme187_data *d, uint64_t ns,
 	at_bclk(d, (ns * (BCLK_HZ / 1000000) + 999) / 1000, f, extra);
 }
 
+/*  Wait states: the bus clock runs ahead of the instruction count, so
+    device events (scheduled in instructions) come that much sooner.  */
+static void add_wait_states(struct mvme187_data *d, int clocks)
+{
+	if (d->machine->emulated_hz != 0)
+		return;
+	d->stall += clocks;
+	machine_shift_events(d->machine, clocks);
+}
+
 /*
  *  A BBRAM (MK48T08) access: the device takes 5 bus clocks with the
  *  PCCchip2's FAST bit, or 9 without, and the whole cycle from the 88100
@@ -288,19 +300,24 @@ void dev_mvme187_bbram_access(struct mvme187_data *d)
 {
 	int device = d->pcc[PCCTWO_GENCTL] & PCC2_GENCTL_FAST ? 5 : 9;
 
-	if (d->machine->emulated_hz == 0)
-		d->stall += BBRAM_CYCLE_OVERHEAD + device - 1;
+	add_wait_states(d, BBRAM_CYCLE_OVERHEAD + device - 1);
 }
 
-/*  A PCCchip2 or VMEchip2 register access: taken to be as slow as a fast
-    BBRAM cycle (5 bus clocks). (187Bug's tick timer interrupt test needs
-    its handler to take about as long as on the real board.)  */
-#define	REG_WAIT_STATES		4
-static void reg_access(struct mvme187_data *d)
+/*  A register access, taking 'clocks' bus clocks (one is the
+    instruction). See PCC2_REG_CLOCKS and VME2_REG_CLOCKS.  */
+static void reg_access(struct mvme187_data *d, int clocks)
 {
-	if (d->machine->emulated_hz == 0)
-		d->stall += REG_WAIT_STATES;
+	add_wait_states(d, clocks - 1);
 }
+
+/*  PCCchip2 registers: taken to be as fast as a fast BBRAM cycle (187Bug's
+    tick timer interrupt test needs its handler to take about as long as on
+    the real board).  */
+#define	PCC2_REG_CLOCKS		5
+/*  VMEchip2 (LCSR) registers: much slower; 187Bug's tick timer tests poll
+    the interrupter status with a budget which needs about 1.7 us per round
+    of a 7-instruction loop. (An estimate.)  */
+#define	VME2_REG_CLOCKS		60
 
 /*  Number of tick timer clocks since the last call (the prescaler divides
     BCLK by 256 - adjust):  */
@@ -621,9 +638,8 @@ static int iack(struct mvme187_data *d, int level)
 		uint32_t pending = d->vme_irqstat & d->lcsr[VME2_IRQEN / 4];
 		int bit;
 
-		if (!(d->lcsr[VME2_VBR / 4] & VME2_IOCTL1_MIEN))
-			return -1;
-
+		/*  (MIEN only gates the request to the CPU: a handler may
+		    clear it before the acknowledge, as 187Bug's does.)  */
 		for (bit = 31; bit >= 0; bit--) {
 			uint32_t vbr = d->lcsr[VME2_VBR / 4];
 			if (!(pending & (1U << bit)) ||
@@ -722,8 +738,49 @@ static void timers_schedule(struct mvme187_data *d)
 	}
 }
 
+/*
+ *  The VMEchip2 watchdog: while enabled, it counts up to the time-out
+ *  selected in $FFF4004C (bits 11-8); then WDTO is set, and with WDBFE the
+ *  BRDFAIL signal (BRFLI), with WDRSE a reset. WDCC restarts it, as does
+ *  disabling it; WDCS clears WDTO.
+ */
+static void watchdog_update(struct mvme187_data *d)
+{
+	static const uint32_t timeout_us[16] = { 512, 1000, 2000, 4000, 8000,
+	    16000, 32000, 64000, 128000, 256000, 512000, 1000000, 4000000,
+	    16000000, 32000000, 64000000 };
+	uint64_t now = dev_mvme187_time_us(d);
+	uint32_t *tctl = &d->lcsr[VME2_TCTL / 4];
+
+	/*  (The counter does not run, and starts at zero, while disabled.)  */
+	if (!(*tctl & VME2_TCTL_WDEN))
+		d->wd_elapsed_us = 0;
+	else if (!(*tctl & VME2_TCTL_WDTO)) {
+		d->wd_elapsed_us += now - d->wd_last_us;
+		if (d->wd_elapsed_us >= timeout_us[(d->lcsr[0x4c / 4] >> 8) &
+		    15]) {
+			*tctl |= VME2_TCTL_WDTO;
+			debugmsg(d->subsys, "watchdog", VERBOSITY_INFO,
+			    "time-out%s", *tctl & VME2_TCTL_WDRSE ?
+			    ": reset" : "");
+			if (*tctl & VME2_TCTL_WDRSE)
+				d->reset_pending = true;
+		}
+	}
+	d->wd_last_us = now;
+
+	/*  BRDFAIL: by software (BDFLO), or from a watchdog time-out:  */
+	if ((*tctl & VME2_TCTL_BDFLO) || ((*tctl & VME2_TCTL_WDTO) &&
+	    (*tctl & VME2_TCTL_WDBFE)))
+		*tctl |= VME2_TCTL_BDFLI;
+	else
+		*tctl &= ~VME2_TCTL_BDFLI;
+}
+
 static void timers_update(struct mvme187_data *d)
 {
+	watchdog_update(d);
+
 	uint64_t now = bclk(d);
 	uint64_t pticks = prescale(&d->ppre, now, d->pcc[PCCTWO_PSCALEADJ]);
 	uint64_t vticks = prescale(&d->vpre, now, d->lcsr[VME2_TCR / 4]);
@@ -862,7 +919,7 @@ DEVICE_ACCESS(mvme187_lcsr)
 	if (writeflag == MEM_WRITE)
 		idata = memory_readmax64(cpu, data, len) << shift;
 
-	reg_access(d);
+	reg_access(d, VME2_REG_CLOCKS);
 	timers_update(d);
 
 	switch (reg) {
@@ -932,8 +989,14 @@ DEVICE_ACCESS(mvme187_lcsr)
 		d->lcsr[reg / 4] = (d->lcsr[reg / 4] & ~(VME2_TCTL_SCON |
 		    VME2_TCTL_BDFLI | VME2_TCTL_WDTO)) | (old &
 		    (VME2_TCTL_SCON | VME2_TCTL_BDFLI | VME2_TCTL_WDTO));
+		/*  The watchdog:  */
+		if (idata & mask & VME2_TCTL_WDCC)
+			d->wd_elapsed_us = 0;
+		if (idata & mask & VME2_TCTL_WDCS)
+			d->lcsr[reg / 4] &= ~VME2_TCTL_WDTO;
 		d->lcsr[reg / 4] &= ~(VME2_TCTL1_COVF | VME2_TCTL2_COVF |
 		    VME2_TCTL_WDCC | VME2_TCTL_WDCS | VME2_TCTL_CPURS);
+		watchdog_update(d);
 		if (idata & VME2_TCTL_SRST) {
 			d->lcsr[reg / 4] &= ~VME2_TCTL_SRST;
 			d->reset_pending = true;
@@ -1131,7 +1194,7 @@ DEVICE_ACCESS(mvme187_pcc)
 	uint64_t idata;
 	size_t i;
 
-	reg_access(d);
+	reg_access(d, PCC2_REG_CLOCKS);
 	timers_update(d);
 
 	if (writeflag == MEM_READ) {
@@ -1404,6 +1467,7 @@ static void board_reset(struct mvme187_data *d, bool power_up)
 	d->lcsr[VME2_TCR / 4] = 256 - 33;	/*  prescaler adjust  */
 	d->vme_irqstat = 0;
 	memset(d->vtimer, 0, sizeof(d->vtimer));
+	d->wd_elapsed_us = 0;
 
 	/*  (Each 16-bit GCSR register is in the low half of a longword.)  */
 	memset(d->gcsr, 0, sizeof(d->gcsr));
