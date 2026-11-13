@@ -93,8 +93,7 @@ Set up its environment once (it is kept in <tt>nvram.bin</tt>):
 check what is in the 88200's caches, which are not emulated, and fail;
 with <tt>"skip_failing_tests": true</tt> in the configuration's
 <tt>"boot"</tt> section, a copy of 187Bug 2.2 in which these tests pass
-at once is loaded. Five 53C710 tests still fail (see
-<tt>doc/mvme187-plan.md</tt>). After the reset, 187Bug shows its
+at once is loaded, and all of the self-test passes. After the reset, 187Bug shows its
 field service menu; <tt>3</tt> enters the debugger. Boot from the disk with
 <pre>
 187-Bug&gt; <b>bo 0</b>

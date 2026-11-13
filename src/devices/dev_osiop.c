@@ -139,6 +139,16 @@
 
 #define	SCNTL1_CON	0x10
 #define	SCNTL1_RST	0x08
+#define	SCNTL1_AESP	0x04
+#define	CTEST2_SFP	0x10
+#define	CTEST2_DFP	0x08
+#define	CTEST4_SLBE	0x10
+#define	CTEST4_SFWR	0x08
+#define	CTEST4_FBL2	0x04
+#define	CTEST7_DFP	0x08
+#define	CTEST5_ADCK	0x80
+#define	CTEST5_BBCK	0x40
+#define	CTEST8_CLF	0x04
 #define	DCNTL_SSM	0x10
 #define	DCNTL_STD	0x04
 #define	DMODE_MAN	0x01
@@ -187,6 +197,14 @@ struct osiop_data {
 	int			msg_in_len, msg_in_pos;
 	struct scsi_transfer	*xfer;
 	bool			check_condition;	/*  bad lun  */
+
+	/*  The FIFOs, as the chip test registers see them (data bytes and
+	    their parity bits):  */
+	uint8_t			sfifo[8], sfifo_par[8];
+	int			sfifo_n;
+	uint8_t			dfifo[4][16], dfifo_par[4][16];
+	int			dfifo_n[4];
+	uint8_t			ctest2_par;	/*  latched SFP, DFP  */
 };
 
 
@@ -936,30 +954,25 @@ static bool scripts_step(struct osiop_data *d)
 		case 5:		/*  MOVE SFBR (op) data TO register  */
 		case 6:		/*  MOVE register (op) data TO SFBR  */
 		case 7: {	/*  MOVE register (op) data TO register  */
-			int a = (w0 >> 16) & 0x3f, oper = (w0 >> 24) & 7;
+			/*
+			 *  The 53C710's operators (bits 26-25; bit 24 is
+			 *  Carry Enable): 00 the data itself, 01 data OR
+			 *  source, 10 data AND source, 11 data + source (+
+			 *  carry). The source is SFBR for opcode 5, else the
+			 *  register. (A register-to-SFBR move is an OR 0.)
+			 */
+			int a = (w0 >> 16) & 0x3f, oper = (w0 >> 25) & 3;
+			bool carry_en = w0 & 0x01000000;
 			uint8_t data = (w0 >> 8) & 0xff, src, res = 0;
 			unsigned int sum;
 
 			src = op == 5 ? d->reg[R_SFBR] :
 			    read_reg_for_script(d, a);
 			switch (oper) {
-			case 0:	/*  MOVE data TO reg, or a plain move  */
-				res = op == 7 ? data : src;
-				break;
-			case 1:	res = (src << 1) | d->carry;
-				d->carry = src >> 7;
-				break;
-			case 2:	res = src | data; break;
-			case 3:	res = src ^ data; break;
-			case 4:	res = src & data; break;
-			case 5:	res = (src >> 1) | (d->carry << 7);
-				d->carry = src & 1;
-				break;
-			case 6:	sum = src + data;
-				d->carry = sum >> 8;
-				res = sum;
-				break;
-			case 7:	sum = src + data + d->carry;
+			case 0:	res = data; break;
+			case 1:	res = src | data; break;
+			case 2:	res = src & data; break;
+			case 3:	sum = src + data + (carry_en ? d->carry : 0);
 				d->carry = sum >> 8;
 				res = sum;
 				break;
@@ -1074,6 +1087,26 @@ DEVICE_TICK(osiop)
  *  Register access
  */
 
+/*  The parity bit of a byte: odd parity, or even with AESP.  */
+static uint8_t scsi_parity(struct osiop_data *d, uint8_t v)
+{
+	int ones = __builtin_popcount(v);
+	int odd_bit = (ones & 1) ? 0 : 1;
+	return d->reg[R_SCNTL1] & SCNTL1_AESP ? !odd_bit : odd_bit;
+}
+
+static void clear_fifos(struct osiop_data *d)
+{
+	d->sfifo_n = 0;
+	memset(d->dfifo_n, 0, sizeof(d->dfifo_n));
+}
+
+static bool dfifo_empty(struct osiop_data *d)
+{
+	return !d->dfifo_n[0] && !d->dfifo_n[1] && !d->dfifo_n[2] &&
+	    !d->dfifo_n[3];
+}
+
 static void chip_reset(struct osiop_data *d)
 {
 	uint8_t scid = d->reg[R_SCID];
@@ -1085,6 +1118,8 @@ static void chip_reset(struct osiop_data *d)
 	d->reg[R_CTEST8] = CHIP_REVISION << 4;
 	d->running = false;
 	d->waiting_resel = false;
+	clear_fifos(d);
+	d->ctest2_par = 0;
 	bus_free(d);
 	update_irq(d);
 }
@@ -1107,7 +1142,8 @@ static uint8_t reg_read(struct osiop_data *d, int r)
 		d->reg[R_DSTAT] = DSTAT_DFE;
 		d->reg[R_ISTAT] &= ~ISTAT_DIP;
 		update_irq(d);
-		return v | DSTAT_DFE;
+		v &= ~DSTAT_DFE;
+		return dfifo_empty(d) ? v | DSTAT_DFE : v;
 	case R_SSTAT0:
 		d->reg[R_SSTAT0] = 0;
 		d->reg[R_ISTAT] &= ~ISTAT_SIP;
@@ -1117,15 +1153,63 @@ static uint8_t reg_read(struct osiop_data *d, int r)
 		/*  Reading CTEST2 clears SIGP.  */
 		v = (d->reg[R_ISTAT] & ISTAT_SIGP) ? 0x40 : 0;
 		d->reg[R_ISTAT] &= ~ISTAT_SIGP;
+		return v | d->ctest2_par;
+	case R_SBDL:
+		/*  Loopback: the chip's own output is on the bus.  */
+		if (d->reg[R_CTEST4] & CTEST4_SLBE)
+			return d->reg[R_SODL];
+		return v;
+	case R_SBCL:
+		if (d->reg[R_CTEST4] & CTEST4_SLBE)
+			return d->reg[R_SOCL];
 		return v;
 	case R_SSTAT1:
 		return 0;
 	case R_SSTAT2:
-		return d->reg[R_SSTAT2] & 0x0f;	/*  SCSI FIFO empty  */
+		/*  Bytes in the SCSI FIFO, and the phase:  */
+		return (d->sfifo_n << 4) | (d->reg[R_SSTAT2] & 0x0f);
 	case R_DFIFO:
 		return 0;
-	case R_CTEST1:
-		return 0xf0;
+	case R_CTEST1: {
+		/*  Empty lanes at the bottom, full lanes at the top:  */
+		int i;
+		v = 0;
+		for (i = 0; i < 4; i++) {
+			if (d->dfifo_n[i] == 0)
+				v |= 0x10 << i;
+			if (d->dfifo_n[i] == 16)
+				v |= 1 << i;
+		}
+		return v;
+	}
+	case R_CTEST3:
+		/*  Unloads the SCSI FIFO (empty: a gross error).  */
+		if (d->sfifo_n == 0) {
+			scsi_int(d, SSTAT0_SGE);
+			return 0;
+		}
+		v = d->sfifo[0];
+		d->ctest2_par = (d->ctest2_par & ~CTEST2_SFP) |
+		    (d->sfifo_par[0] ? CTEST2_SFP : 0);
+		d->sfifo_n --;
+		memmove(d->sfifo, d->sfifo + 1, d->sfifo_n);
+		memmove(d->sfifo_par, d->sfifo_par + 1, d->sfifo_n);
+		return v;
+	case R_CTEST6: {
+		/*  Unloads a lane of the DMA FIFO (with FBL2):  */
+		int lane = d->reg[R_CTEST4] & 3;
+		if (!(d->reg[R_CTEST4] & CTEST4_FBL2) ||
+		    d->dfifo_n[lane] == 0)
+			return 0;
+		v = d->dfifo[lane][0];
+		d->ctest2_par = (d->ctest2_par & ~CTEST2_DFP) |
+		    (d->dfifo_par[lane][0] ? CTEST2_DFP : 0);
+		d->dfifo_n[lane] --;
+		memmove(d->dfifo[lane], d->dfifo[lane] + 1, d->dfifo_n[lane]);
+		memmove(d->dfifo_par[lane], d->dfifo_par[lane] + 1,
+		    d->dfifo_n[lane]);
+		return v;
+	}
 	case R_CTEST8:
 		return (CHIP_REVISION << 4) | (d->reg[R_CTEST8] & 0x0f);
 	}
@@ -1162,6 +1246,55 @@ static void reg_write(struct osiop_data *d, int r, uint8_t v)
 		}
 		if (v & ISTAT_SIGP)
 			d->reg[R_ISTAT] |= ISTAT_SIGP;
+		return;
+
+	case R_SODL:
+		d->reg[r] = v;
+		/*  SFWR: into the SCSI FIFO.  */
+		if ((d->reg[R_CTEST4] & CTEST4_SFWR) && d->sfifo_n < 8) {
+			d->sfifo[d->sfifo_n] = v;
+			d->sfifo_par[d->sfifo_n] = scsi_parity(d, v);
+			d->sfifo_n ++;
+		}
+		return;
+
+	case R_CTEST6: {
+		/*  Loads a lane of the DMA FIFO (with FBL2), with the
+		    parity bit from CTEST7:  */
+		int lane = d->reg[R_CTEST4] & 3;
+		d->reg[r] = v;
+		if ((d->reg[R_CTEST4] & CTEST4_FBL2) && d->dfifo_n[lane] < 16) {
+			d->dfifo[lane][d->dfifo_n[lane]] = v;
+			d->dfifo_par[lane][d->dfifo_n[lane]] =
+			    (d->reg[R_CTEST7] & CTEST7_DFP) ? 1 : 0;
+			d->dfifo_n[lane] ++;
+		}
+		return;
+	}
+
+	case R_CTEST5: {
+		/*  ADCK and BBCK step DNAD up and DBC down by what one DMA
+		    transfer would move: to the next longword, but at most
+		    DBC bytes (and one byte when DBC is zero; as 187Bug's
+		    loopback test expects). They clear themselves.  */
+		uint32_t dnad = get32(d, R_DNAD), dbc = get32(d, R_DCMD) &
+		    0xffffff;
+		uint32_t step = 4 - (dnad & 3);
+		if (step > dbc)
+			step = dbc == 0 ? 1 : dbc;
+		if (v & CTEST5_ADCK)
+			put32(d, R_DNAD, dnad + step);
+		if (v & CTEST5_BBCK)
+			put_dbc(d, (dbc - step) & 0xffffff);
+		d->reg[r] = v & ~(CTEST5_ADCK | CTEST5_BBCK);
+		return;
+	}
+
+	case R_CTEST8:
+		/*  CLF clears the FIFOs (and itself).  */
+		if (v & CTEST8_CLF)
+			clear_fifos(d);
+		d->reg[r] = v & ~CTEST8_CLF;
 		return;
 
 	case R_SCNTL1:

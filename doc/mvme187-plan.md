@@ -27,8 +27,7 @@ gateway).
 - Emulated time: one instruction per bus clock, plus wait states for
   VMEchip2 registers (60 clocks, an estimate from 187Bug's poll budgets),
   BBRAM (a local bus cycle: 16 clocks plus 5 or 9 by the PCCchip2 FAST
-  bit) and PCCchip2/VMEchip2
-  register accesses (5 clocks). Devices can ask for an event at a given
+  bit) and PCCchip2 registers (5 clocks). Devices can ask for an event at a given
   instruction count (machine_add_event); the dyntrans run then stops
   there, so tick timer and CD2401 interrupts come on time rather than at
   the next tick.
@@ -37,7 +36,10 @@ gateway).
   idle; it skips ahead to the next tick or device event, and the host
   sleeps until its clock catches up (machine->realtime_hz). Busy code
   still runs as fast as it can, at most 0.1 s ahead of real time.
-- 53C710: SCRIPTS processor and SCSI target model.
+- 53C710: SCRIPTS processor (with the 53C710's register read/write
+  operators) and SCSI target model; for the chip tests, the SCSI and DMA
+  FIFOs (CTEST3/CTEST6, counts and parity), loopback of SODL/SOCL to
+  SBDL/SBCL, CTEST5 ADCK/BBCK and CTEST8 CLF.
 - DRAM parity: bytes written with the MEMC040's WWP bit get wrong parity;
   reading them with EXTPEN and PAREN is a bus error (VMEchip2 MLPE), with
   PARINT a VMEchip2 PE interrupt. A device on top of the RAM watches the
@@ -55,9 +57,6 @@ gateway).
 - CMMU cache tests (CCHSD, CCHUD, CCHSC, CCHUC, CCHSDWT, CCHUDWT,
   CCHBUR, CCHST, CCHWHIT, CCHLDS, CCHLR, CCHBYP): the cache contents
   are not emulated. "skip_failing_tests" patches them to pass.
-- NCR SFIFO, DFIFO, LPBK, SCRIPTS, IRQ (53C710 diagnostics): FIFO
-  counts and flags, SCSI bus data lines in loopback, the first byte
-  received register and SGE are not emulated.
 
 ## To do
 
