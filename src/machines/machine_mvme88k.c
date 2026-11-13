@@ -83,27 +83,21 @@ MACHINE_SETUP(mvme88k)
 	case MACHINE_MVME88K_187:
 		machine->machine_name = strdup("MVME187");
 
-		/*  The mvme187 device contains 187-specific stuff, such
-		    as motherboard registers, and the memory controller:  */
-		device_add(machine, "mvme187");
+		/*  ROM, SRAM, VMEchip2, PCCchip2, MEMC040 and CMMUs:  */
+		machine->md.mvme187 = dev_mvme187_init(machine);
 
-		/*  PCC2 bus at 0xfff00000:  */
-		snprintf(tmpstr, sizeof(tmpstr), "pcc2 addr=0x%x", PCC2_BASE);
-		device_add(machine, tmpstr);
-
-		/*  VME2 bus at 0xfff40000:  */
-		snprintf(tmpstr, sizeof(tmpstr), "vme addr=0x%x", VME2_BASE);
-		device_add(machine, tmpstr);
-
-		/*  Cirrus Logic serial console at 0xfff45000:  */
+		/*  Cirrus Logic CD2401 serial controller:  */
 		snprintf(tmpstr, sizeof(tmpstr), "clmpcc irq=%s.cpu[%i].pcc2 "
 		    "addr=0x%08x name2=cl0", machine->path,
 		    machine->bootstrap_cpu, 0xfff45000);
 		machine->main_console_handle =
 		    (size_t) device_add(machine, tmpstr);
 
-		/*  ie0 ethernet: TODO  */
-		device_add(machine, "unreadable addr=0xfff46000 len=0x1000");
+		/*  82596CA Ethernet at 0xfff46000:  */
+		snprintf(tmpstr, sizeof(tmpstr), "i82596 irq=%s.cpu[%i].pcc2.%i "
+		    "addr=0x%08x", machine->path,
+		    machine->bootstrap_cpu, PCC2V_IE, 0xfff46000);
+		device_add(machine, tmpstr);
 
 		/*  53C710 SCSI at 0xfff47000:  */
 		snprintf(tmpstr, sizeof(tmpstr), "osiop irq=%s.cpu[%i].pcc2.%i "
@@ -115,12 +109,6 @@ MACHINE_SETUP(mvme88k)
 		snprintf(tmpstr, sizeof(tmpstr),
 		    "mk48txx addr=0x%x", 0xfffc0000);
 		device_add(machine, tmpstr);
-
-		/*  VMES (?): TODO  */
-		device_add(machine, "unreadable addr=0xff780000 len=0x80000");
-
-		/*  VME devices: TODO  */
-		device_add(machine, "unreadable addr=0xffff0000 len=0x10000");
 
 		break;
 
@@ -168,6 +156,49 @@ MACHINE_SETUP(mvme88k)
 
 	/*  TODO: r3 and r7 must be set correctly to let
 	    OpenBSD/mvme88k detect correct boot device.  */
+}
+
+
+/*
+ *  mvme187_load_rom():
+ *
+ *  Loads a 187Bug EPROM image. The 88100 starts at address 0, where the
+ *  EPROM appears after a reset (ROM0 in the VMEchip2).
+ */
+int mvme187_load_rom(struct machine *machine, const char *filename,
+	uint64_t *entrypointp)
+{
+	unsigned char *buf;
+	FILE *f;
+	long size;
+
+	if (machine->md.mvme187 == NULL || machine->prom_emulation)
+		return 0;
+
+	f = fopen(filename, "rb");
+	if (f == NULL)
+		return 0;
+	fseek(f, 0, SEEK_END);
+	size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	if (size < 0x1000 || size > 0x400000) {
+		fclose(f);
+		return 0;
+	}
+
+	CHECK_ALLOCATION(buf = (unsigned char *) malloc(size));
+	if (fread(buf, 1, size, f) != (size_t) size) {
+		fclose(f);
+		free(buf);
+		return 0;
+	}
+	fclose(f);
+
+	dev_mvme187_set_rom(machine->md.mvme187, buf, size);
+	free(buf);
+
+	*entrypointp = 0;
+	return 1;
 }
 
 

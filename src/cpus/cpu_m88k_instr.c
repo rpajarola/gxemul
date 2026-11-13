@@ -50,6 +50,24 @@
 /*
  *  nop:  Do nothing.
  */
+/*
+ *  illegal:  An instruction that is not implemented (or not valid): the
+ *  unimplemented opcode exception.
+ */
+X(illegal)
+{
+	uint32_t iword = 0;
+	unsigned char ib[4];
+
+	SYNCH_PC;
+	if (cpu->memory_rw(cpu, cpu->mem, cpu->pc, ib, 4, MEM_READ,
+	    CACHE_INSTRUCTION | NO_EXCEPTIONS))
+		iword = (ib[0] << 24) | (ib[1] << 16) | (ib[2] << 8) | ib[3];
+	debugmsg_cpu(cpu, SUBSYS_CPU, "", VERBOSITY_ERROR,
+	    "unimplemented opcode 0x%08x at 0x%08x", iword, (int) cpu->pc);
+	m88k_exception(cpu, M88K_EXCEPTION_UNIMPLEMENTED_OPCODE, 0);
+}
+
 X(nop)
 {
 }
@@ -788,6 +806,154 @@ X(subu_ci)
 
 
 /*
+ *  Signed add/sub with carry in/out: overflow causes an integer overflow
+ *  exception (and the destination and carry are not changed).
+ *
+ *  arg[0] = pointer to destination register
+ *  arg[1] = pointer to source register s1
+ *  arg[2] = pointer to source register s2
+ */
+static inline void m88k_add_signed(struct cpu *cpu, struct m88k_instr_call *ic,
+	bool sub, bool cin, bool cout)
+{
+	uint32_t a = reg(ic->arg[1]), b = reg(ic->arg[2]), c, res;
+	uint64_t full;
+
+	if (sub) {
+		b = ~b;
+		c = cin ? ((cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_C) ? 1 : 0)
+		    : 1;
+	} else
+		c = cin && (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_C) ? 1 : 0;
+
+	full = (uint64_t) a + b + c;
+	res = full;
+
+	/*  Signed overflow: the operands have the same sign, and the
+	    result has the other one.  */
+	if (!((a ^ b) & 0x80000000) && ((a ^ res) & 0x80000000)) {
+		SYNCH_PC;
+		m88k_exception(cpu, M88K_EXCEPTION_INTEGER_OVERFLOW, 0);
+		return;
+	}
+
+	if (cout) {
+		cpu->cd.m88k.cr[M88K_CR_PSR] &= ~M88K_PSR_C;
+		if (full >> 32)
+			cpu->cd.m88k.cr[M88K_CR_PSR] |= M88K_PSR_C;
+	}
+	reg(ic->arg[0]) = res;
+}
+X(add_co)	{ m88k_add_signed(cpu, ic, false, false, true); }
+X(add_ci)	{ m88k_add_signed(cpu, ic, false, true, false); }
+X(add_cio)	{ m88k_add_signed(cpu, ic, false, true, true); }
+X(sub)		{ m88k_add_signed(cpu, ic, true, false, false); }
+X(sub_co)	{ m88k_add_signed(cpu, ic, true, false, true); }
+X(sub_ci)	{ m88k_add_signed(cpu, ic, true, true, false); }
+X(sub_cio)	{ m88k_add_signed(cpu, ic, true, true, true); }
+
+
+/*
+ *  tbnd:  Trap (bounds check exception) if s1 > s2 or imm16 (unsigned)
+ *
+ *  arg[1] = pointer to register s1
+ *  arg[2] = pointer to register s2 (tbnd), or the immediate (tbnd_imm)
+ */
+X(tbnd)
+{
+	if ((uint32_t) reg(ic->arg[1]) > (uint32_t) reg(ic->arg[2])) {
+		SYNCH_PC;
+		m88k_exception(cpu, M88K_EXCEPTION_BOUNDS_CHECK_VIOLATION, 0);
+	}
+}
+X(tbnd_imm)
+{
+	if ((uint32_t) reg(ic->arg[1]) > (uint32_t) ic->arg[2]) {
+		SYNCH_PC;
+		m88k_exception(cpu, M88K_EXCEPTION_BOUNDS_CHECK_VIOLATION, 0);
+	}
+}
+
+
+/*
+ *  The bcnd/tcnd condition: the M5 field selects the classes of s1 that
+ *  pass: bit 0 greater than zero, bit 1 zero, bit 2 less than zero (but
+ *  not 0x80000000), bit 3 0x80000000.
+ */
+static inline bool m88k_cnd(uint32_t m5, uint32_t v)
+{
+	int bit;
+
+	if (v == 0x80000000)
+		bit = 8;
+	else if ((int32_t) v < 0)
+		bit = 4;
+	else if (v == 0)
+		bit = 2;
+	else
+		bit = 1;
+	return (m5 & bit) != 0;
+}
+
+
+/*
+ *  tcnd:  Trap on condition
+ *
+ *  arg[0] = the M5 condition mask
+ *  arg[1] = pointer to register s1
+ *  arg[2] = the vector
+ */
+X(tcnd)
+{
+	SYNCH_PC;
+
+	if (!(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE)
+	    && ic->arg[2] < M88K_EXCEPTION_USER_TRAPS_START) {
+		m88k_exception(cpu, M88K_EXCEPTION_PRIVILEGE_VIOLATION, 0);
+		return;
+	}
+
+	if (m88k_cnd(ic->arg[0], reg(ic->arg[1])))
+		m88k_exception(cpu, ic->arg[2], 1);
+}
+
+
+/*
+ *  bcnd_generic, bcnd_n_generic:  bcnd with any condition mask
+ *
+ *  arg[0] = pointer to register s1
+ *  arg[1] = the M5 condition mask
+ *  arg[2] = offset from the start of the page
+ */
+X(bcnd_generic)
+{
+	if (m88k_cnd(ic->arg[1], reg(ic->arg[0]))) {
+		cpu->pc = (cpu->pc & 0xfffff000) + (int32_t)ic->arg[2];
+		quick_pc_to_pointers(cpu);
+	}
+}
+X(bcnd_n_generic)
+{
+	bool cond = m88k_cnd(ic->arg[1], reg(ic->arg[0]));
+	SYNCH_PC;
+	if (cond) {
+		cpu->cd.m88k.delay_target = (cpu->pc & ~0xfff)
+		    + (int32_t)ic->arg[2];
+		cpu->delay_slot = TO_BE_DELAYED;
+	} else
+		cpu->delay_slot = NOT_DELAYED;
+	ic[1].f(cpu, ic+1);
+	cpu->n_translated_instrs ++;
+	if (cond && !(cpu->delay_slot & EXCEPTION_IN_DELAY_SLOT)) {
+		cpu->delay_slot = NOT_DELAYED;
+		cpu->pc = cpu->cd.m88k.delay_target;
+		quick_pc_to_pointers(cpu);
+	} else
+		cpu->delay_slot = NOT_DELAYED;
+}
+
+
+/*
  *  ldcr:   Load value from a control register, store in register d.
  *  fldcr:  Load value from a floating point control register, store in reg d.
  *
@@ -857,711 +1023,277 @@ X(fstcr)
 
 
 /*
- *  fadd.xxx:  Floating point addition
- *  fsub.xxx:  Floating point subtraction
- *  fmul.xxx:  Floating point multiplication
- *  fdiv.xxx:  Floating point multiplication
+ *  SFU1 (floating point unit) arithmetic: fmul, fcvt, flt, fadd, fsub, fcmp,
+ *  int, nint, trnc and fdiv, in all single/double combinations.
  *
- *  arg[0] = pointer to destination register
- *  arg[1] = pointer to source register s1
- *  arg[2] = pointer to source register s2
+ *  arg[0] = the instruction word
  *
- *  Note: For 'd' variants, arg[x] points to a _pair_ of registers!
+ *  Double precision values are in register pairs rN (high word), rN+1.
+ *
+ *  The 88100 itself traps (precise or imprecise SFU1 exceptions) for many
+ *  cases (NaN, infinity or denormalized operands, underflow, ...) and
+ *  leaves them to the operating system to complete. Here the IEEE result is
+ *  computed directly, as the completion would, with the FPSR flags set.
+ *  Only an exception enabled in the FPCR traps: invalid operation, divide
+ *  by zero and integer conversion overflow precisely (the destination is
+ *  not written), overflow, underflow and inexact are only flagged.
  */
-X(fadd_sss)
+#define	FPECR_FIOV	0x80
+#define	FPECR_FUNIMP	0x40
+#define	FPECR_FPRV	0x20
+#define	FPECR_FROP	0x10
+#define	FPECR_FDVZ	0x08
+#define	FPECR_FUNF	0x04
+#define	FPECR_FOVF	0x02
+#define	FPECR_FINX	0x01
+#define	FP_INV		0x10	/*  FPSR/FPCR bits  */
+#define	FP_DVZ		0x08
+#define	FP_UNF		0x04
+#define	FP_OVF		0x02
+#define	FP_INX		0x01
+
+static double fpu_get(struct cpu *cpu, int r, int t)
 {
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint32_t d;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint32_t s1 = reg(ic->arg[1]);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
+	if (t == 0) {
+		uint32_t w = cpu->cd.m88k.r[r];
+		float f;
+		memcpy(&f, &w, 4);
+		return f;
+	} else {
+		uint64_t w = ((uint64_t) cpu->cd.m88k.r[r] << 32) |
+		    cpu->cd.m88k.r[(r + 1) & 31];
+		double f;
+		memcpy(&f, &w, 8);
+		return f;
 	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-
-	d = ieee_store_float_value(f1.f + f2.f, IEEE_FMT_S);
-
-	reg(ic->arg[0]) = d;
 }
-X(fadd_dss)
+
+static void fpu_set(struct cpu *cpu, int r, int t, double v)
 {
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint32_t s1 = reg(ic->arg[1]);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
+	if (t == 0) {
+		float f = v;
+		uint32_t w;
+		memcpy(&w, &f, 4);
+		if (r != 0)
+			cpu->cd.m88k.r[r] = w;
+	} else {
+		uint64_t w;
+		memcpy(&w, &v, 8);
+		if (r != 0)
+			cpu->cd.m88k.r[r] = w >> 32;
+		if (((r + 1) & 31) != 0)
+			cpu->cd.m88k.r[(r + 1) & 31] = w;
 	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-
-	d = ieee_store_float_value(f1.f + f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
 }
-X(fadd_dsd)
+
+static int fpu_host_rounding(int rm)
 {
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint64_t s2 = reg(ic->arg[2]);
-	uint32_t s1 = reg(ic->arg[1]);
-	s2 = (s2 << 32) + reg(ic->arg[2] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
+	switch (rm & 3) {
+	case 1:	return FE_TOWARDZERO;
+	case 2:	return FE_DOWNWARD;
+	case 3:	return FE_UPWARD;
 	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_D);
-
-	d = ieee_store_float_value(f1.f + f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
+	return FE_TONEAREST;
 }
-X(fadd_dds)
+
+/*  A precise SFU1 exception for the instruction at the pc:  */
+static void fpu_precise(struct cpu *cpu, uint32_t iw, int cause)
 {
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint64_t s1 = reg(ic->arg[1]);
-	s1 = (s1 << 32) + reg(ic->arg[1] + 4);
+	int s1 = (iw >> 16) & 31, s2 = iw & 31;
+	uint32_t *fcr = cpu->cd.m88k.fcr;
 
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_D);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-
-	d = ieee_store_float_value(f1.f + f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
+	fcr[0] = cause;				/*  FPECR  */
+	fcr[1] = cpu->cd.m88k.r[s1];		/*  FPHS1  */
+	fcr[2] = cpu->cd.m88k.r[(s1 + 1) & 31];	/*  FPLS1  */
+	fcr[3] = cpu->cd.m88k.r[s2];		/*  FPHS2  */
+	fcr[4] = cpu->cd.m88k.r[(s2 + 1) & 31];	/*  FPLS2  */
+	fcr[5] = iw & 0xffff;			/*  FPPT  */
+	fcr[5] = (fcr[5] & ~0x1f) | ((iw >> 21) & 31);
+	m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
 }
-X(fadd_ddd)
+
+X(fpu)
 {
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint64_t s1 = reg(ic->arg[1]);
-	uint64_t s2 = reg(ic->arg[2]);
-	s1 = (s1 << 32) + reg(ic->arg[1] + 4);
-	s2 = (s2 << 32) + reg(ic->arg[2] + 4);
+	uint32_t iw = ic->arg[0];
+	int d = (iw >> 21) & 31, s1 = (iw >> 16) & 31, s2 = iw & 31;
+	int op = (iw >> 11) & 31;
+	int t1 = (iw >> 9) & 3, t2 = (iw >> 7) & 3, td = (iw >> 5) & 3;
+	uint32_t fpcr = cpu->cd.m88k.fcr[63];
+	int flags = 0, exc, old_round;
+	double a, b, r = 0;
+
+	SYNCH_PC;
 
 	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
 		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
 		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
 		return;
 	}
 
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_D);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_D);
-
-	d = ieee_store_float_value(f1.f + f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
-}
-X(fsub_sss)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint32_t d;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint32_t s1 = reg(ic->arg[1]);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
+	/*  Reserved (extended precision) types are unimplemented.  */
+	if (t1 == 2 || t1 == 3 || t2 == 2 || t2 == 3 || td == 2 || td == 3) {
+		fpu_precise(cpu, iw, FPECR_FUNIMP);
 		return;
 	}
 
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
+	old_round = fegetround();
+	fesetround(fpu_host_rounding(fpcr >> 14));
+	feclearexcept(FE_ALL_EXCEPT);
 
-	d = ieee_store_float_value(f1.f - f2.f, IEEE_FMT_S);
-	reg(ic->arg[0]) = d;
-}
-X(fsub_sds)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint32_t d;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint64_t s1 = reg(ic->arg[1]);
-	s1 = (s1 << 32) + reg(ic->arg[1] + 4);
+	switch (op) {
 
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
+	case 0x00:	/*  fmul  */
+	case 0x05:	/*  fadd  */
+	case 0x06:	/*  fsub  */
+	case 0x0e:	/*  fdiv  */
+		a = fpu_get(cpu, s1, t1);
+		b = fpu_get(cpu, s2, t2);
+		switch (op) {
+		case 0x00: r = a * b; break;
+		case 0x05: r = a + b; break;
+		case 0x06: r = a - b; break;
+		default:   r = a / b;
+		}
+		if (td == 0) {
+			volatile float f = r;
+			r = f;
+		}
+		break;
+
+	case 0x01:	/*  fcvt  */
+		r = fpu_get(cpu, s2, t2);
+		if (td == 0) {
+			volatile float f = r;
+			r = f;
+		}
+		break;
+
+	case 0x04:	/*  flt  */
+		r = (double) (int32_t) cpu->cd.m88k.r[s2];
+		if (td == 0) {
+			volatile float f = r;
+			r = f;
+		}
+		break;
+
+	case 0x07: {	/*  fcmp  */
+		uint32_t res = 0;
+		a = fpu_get(cpu, s1, t1);
+		b = fpu_get(cpu, s2, t2);
+		if (isnan(a) || isnan(b)) {
+			/*  Not comparable.  */
+			res = M88K_CMP_NE | 1;
+			flags |= FP_INV;
+		} else {
+			res = 2;
+			res |= a == b ? M88K_CMP_EQ : M88K_CMP_NE;
+			res |= a > b ? M88K_CMP_GT : M88K_CMP_LE;
+			res |= a < b ? M88K_CMP_LT : M88K_CMP_GE;
+			if (b >= 0) {
+				/*  Range: s1 against 0 .. s2.  */
+				if (a > b || a < 0)
+					res |= 1 << 8;	/*  ou  */
+				if (a >= 0 && a <= b)
+					res |= 1 << 9;	/*  ib  */
+				if (a > 0 && a < b)
+					res |= 1 << 10;	/*  in  */
+				if (a <= 0 || a >= b)
+					res |= 1 << 11;	/*  ob  */
+			}
+		}
+		feclearexcept(FE_ALL_EXCEPT);
+		fesetround(old_round);
+		if ((flags & FP_INV) && (fpcr & FP_INV)) {
+			cpu->cd.m88k.fcr[62] |= flags;
+			fpu_precise(cpu, iw, FPECR_FROP);
+			return;
+		}
+		cpu->cd.m88k.fcr[62] |= flags;
+		if (d != 0)
+			cpu->cd.m88k.r[d] = res;
 		return;
 	}
 
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_D);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-
-	d = ieee_store_float_value(f1.f - f2.f, IEEE_FMT_S);
-	reg(ic->arg[0]) = d;
-}
-X(fsub_dss)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint32_t s1 = reg(ic->arg[1]);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
+	case 0x09:	/*  int   */
+	case 0x0a:	/*  nint  */
+	case 0x0b: {	/*  trnc  */
+		double v = fpu_get(cpu, s2, t2), rounded;
+		if (op == 0x0a)
+			fesetround(FE_TONEAREST);
+		else if (op == 0x0b)
+			fesetround(FE_TOWARDZERO);
+		rounded = nearbyint(v);
+		fesetround(old_round);
+		if (isnan(v) || rounded > 2147483647.0 ||
+		    rounded < -2147483648.0) {
+			cpu->cd.m88k.fcr[62] |= FP_INV;
+			if (fpcr & FP_INV) {
+				fpu_precise(cpu, iw, FPECR_FIOV);
+				return;
+			}
+			if (d != 0)
+				cpu->cd.m88k.r[d] = isnan(v) || v > 0 ?
+				    0x7fffffff : 0x80000000;
+			return;
+		}
+		if (rounded != v)
+			cpu->cd.m88k.fcr[62] |= FP_INX;
+		if (d != 0)
+			cpu->cd.m88k.r[d] = (int32_t) rounded;
 		return;
 	}
 
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-
-	d = ieee_store_float_value(f1.f - f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
-}
-X(fsub_dsd)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint64_t s2 = reg(ic->arg[2]);
-	uint32_t s1 = reg(ic->arg[1]);
-	s2 = (s2 << 32) + reg(ic->arg[2] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
+	default:
+		fesetround(old_round);
+		fpu_precise(cpu, iw, FPECR_FUNIMP);
 		return;
 	}
 
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_D);
+	exc = fetestexcept(FE_ALL_EXCEPT);
+	fesetround(old_round);
 
-	d = ieee_store_float_value(f1.f - f2.f, IEEE_FMT_D);
+	if (exc & FE_INVALID)	flags |= FP_INV;
+	if (exc & FE_DIVBYZERO)	flags |= FP_DVZ;
+	if (exc & FE_OVERFLOW)	flags |= FP_OVF;
+	if (exc & FE_UNDERFLOW)	flags |= FP_UNF;
+	if (exc & FE_INEXACT)	flags |= FP_INX;
 
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
-}
-X(fsub_dds)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint64_t s1 = reg(ic->arg[1]);
-	s1 = (s1 << 32) + reg(ic->arg[1] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
+	/*  Enabled invalid operation or divide by zero: precise trap.  */
+	if (flags & fpcr & FP_INV) {
+		fpu_precise(cpu, iw, FPECR_FROP);
+		return;
+	}
+	if (flags & fpcr & FP_DVZ) {
+		fpu_precise(cpu, iw, FPECR_FDVZ);
 		return;
 	}
 
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_D);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-
-	d = ieee_store_float_value(f1.f - f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
-}
-X(fsub_ddd)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint64_t s1 = reg(ic->arg[1]);
-	uint64_t s2 = reg(ic->arg[2]);
-	s1 = (s1 << 32) + reg(ic->arg[1] + 4);
-	s2 = (s2 << 32) + reg(ic->arg[2] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_D);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_D);
-
-	d = ieee_store_float_value(f1.f - f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
-}
-X(fmul_sss)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint32_t d;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint32_t s1 = reg(ic->arg[1]);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-
-	d = ieee_store_float_value(f1.f * f2.f, IEEE_FMT_S);
-	reg(ic->arg[0]) = d;
-}
-X(fmul_dss)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint32_t s1 = reg(ic->arg[1]);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-
-	d = ieee_store_float_value(f1.f * f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
-}
-X(fmul_dsd)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint64_t s2 = reg(ic->arg[2]);
-	uint32_t s1 = reg(ic->arg[1]);
-	s2 = (s2 << 32) + reg(ic->arg[2] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_D);
-
-	d = ieee_store_float_value(f1.f * f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
-}
-X(fmul_dds)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint64_t s1 = reg(ic->arg[1]);
-	s1 = (s1 << 32) + reg(ic->arg[1] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_D);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-
-	d = ieee_store_float_value(f1.f * f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
-}
-X(fmul_ddd)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint64_t s1 = reg(ic->arg[1]);
-	uint64_t s2 = reg(ic->arg[2]);
-	s1 = (s1 << 32) + reg(ic->arg[1] + 4);
-	s2 = (s2 << 32) + reg(ic->arg[2] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_D);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_D);
-
-	d = ieee_store_float_value(f1.f * f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
-}
-X(fdiv_sss)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint32_t d;
-	uint32_t s1 = reg(ic->arg[1]);
-	uint32_t s2 = reg(ic->arg[2]);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-
-	if (f2.f == 0) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FDVZ;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	d = ieee_store_float_value(f1.f / f2.f, IEEE_FMT_S);
-
-	reg(ic->arg[0]) = d;
-}
-X(fdiv_dss)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint32_t s1 = reg(ic->arg[1]);
-	uint32_t s2 = reg(ic->arg[2]);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-
-	if (f2.f == 0) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FDVZ;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	d = ieee_store_float_value(f1.f / f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
-}
-X(fdiv_dsd)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint32_t s1 = reg(ic->arg[1]);
-	uint64_t s2 = reg(ic->arg[2]);
-	s2 = (s2 << 32) + reg(ic->arg[2] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_D);
-
-	if (f2.f == 0) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FDVZ;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	d = ieee_store_float_value(f1.f / f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
-}
-X(fdiv_ddd)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t d;
-	uint64_t s1 = reg(ic->arg[1]);
-	uint64_t s2 = reg(ic->arg[2]);
-	s1 = (s1 << 32) + reg(ic->arg[1] + 4);
-	s2 = (s2 << 32) + reg(ic->arg[2] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_D);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_D);
-
-	if (f2.f == 0) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FDVZ;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	d = ieee_store_float_value(f1.f / f2.f, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = d >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = d;	/*  and low word.  */
+	cpu->cd.m88k.fcr[62] |= flags;
+	fpu_set(cpu, d, td, r);
 }
 
 
 /*
- *  fcmp.sXX:  Floating point comparison
+ *  fxcr:  Exchange a floating point control register.
  *
- *  arg[0] = pointer to destination register
- *  arg[1] = pointer to source register s1
- *  arg[2] = pointer to source register s2
- *
- *  Note: For 'd' variants, arg[x] points to a _pair_ of registers!
+ *  arg[0] = pointer to register d
+ *  arg[1] = pointer to register s1
+ *  arg[2] = 6-bit control register number
  */
-static uint32_t m88k_fcmp_common(struct ieee_float_value *f1,
-	struct ieee_float_value *f2)
+X(fxcr)
 {
-	uint32_t d;
+	uint32_t tmp;
 
-	/*  TODO: Implement all bits correctly, e.g. "in range" bits.  */
-	d = 0;
-	if (isnan(f1->f) || isnan(f2->f))
-		// This bit is set if the two numbers are not comparable.
-		d |= (1 << 0);
-	else {
-		// This bit is set if the two numbers are comparable.
-		d |= (1 << 1);
+	SYNCH_PC;
 
-		if (f1->f == f2->f)
-			d |= (1 << 2);
-		else
-			d |= (1 << 3);
-
-		if (f1->f > f2->f)
-			d |= (1 << 4);
-		else
-			d |= (1 << 5);
-
-		if (f1->f < f2->f)
-			d |= (1 << 6);
-		else
-			d |= (1 << 7);
-	}
-
-	return d;
-}
-X(fcmp_sss)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint32_t s1 = reg(ic->arg[1]);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
+	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE || ic->arg[2] >= 62) {
+		tmp = cpu->cd.m88k.fcr[ic->arg[2]];
+		m88k_fstcr(cpu, reg(ic->arg[1]), ic->arg[2]);
+		reg(ic->arg[0]) = tmp;
+	} else {
+		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = 0x20;	/*  FPRV  */
 		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
 	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-	reg(ic->arg[0]) = m88k_fcmp_common(&f1, &f2);
-}
-X(fcmp_ssd)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t s2 = reg(ic->arg[2]);
-	uint32_t s1 = reg(ic->arg[1]);
-	s2 = (s2 << 32) + reg(ic->arg[2] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_S);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_D);
-	reg(ic->arg[0]) = m88k_fcmp_common(&f1, &f2);
-}
-X(fcmp_sds)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint32_t s2 = reg(ic->arg[2]);
-	uint64_t s1 = reg(ic->arg[1]);
-	s1 = (s1 << 32) + reg(ic->arg[1] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_D);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_S);
-	reg(ic->arg[0]) = m88k_fcmp_common(&f1, &f2);
-}
-X(fcmp_sdd)
-{
-	struct ieee_float_value f1;
-	struct ieee_float_value f2;
-	uint64_t s1 = reg(ic->arg[1]);
-	uint64_t s2 = reg(ic->arg[2]);
-	s1 = (s1 << 32) + reg(ic->arg[1] + 4);
-	s2 = (s2 << 32) + reg(ic->arg[2] + 4);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	ieee_interpret_float_value(s1, &f1, IEEE_FMT_D);
-	ieee_interpret_float_value(s2, &f2, IEEE_FMT_D);
-	reg(ic->arg[0]) = m88k_fcmp_common(&f1, &f2);
-}
-
-
-/*
- *  flt.ss and flt.ds:  Convert integer to floating point.
- *
- *  arg[0] = pointer to destination register
- *  arg[1] = pointer to source register s2
- *
- *  Note: For flt.ds, arg[0] points to a _pair_ of registers!
- */
-X(flt_ss)
-{
-	int32_t x = reg(ic->arg[1]);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	reg(ic->arg[0]) = ieee_store_float_value((double)x, IEEE_FMT_S);
-}
-X(flt_ds)
-{
-	int32_t x = reg(ic->arg[1]);
-	uint64_t result;
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	result = ieee_store_float_value((double)x, IEEE_FMT_D);
-
-	reg(ic->arg[0]) = result >> 32;	/*  High 32-bit word,  */
-	reg(ic->arg[0] + 4) = result;	/*  and low word.  */
-}
-
-
-/*
- *  trnc.ss and trnc.sd:  Truncate floating point to interger.
- *
- *  arg[0] = pointer to destination register
- *  arg[1] = pointer to source register s2
- *
- *  Note: For trnc.sd, arg[1] points to a _pair_ of registers!
- */
-X(trnc_ss)
-{
-	struct ieee_float_value f1;
-	ieee_interpret_float_value(reg(ic->arg[1]), &f1, IEEE_FMT_S);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	reg(ic->arg[0]) = (int32_t) f1.f;
-}
-X(trnc_sd)
-{
-	struct ieee_float_value f1;
-	uint64_t x = reg(ic->arg[1]);
-	x = (x << 32) + reg(ic->arg[1] + 4);
-	ieee_interpret_float_value(x, &f1, IEEE_FMT_D);
-
-	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_SFD1) {
-		SYNCH_PC;
-		cpu->cd.m88k.fcr[M88K_FPCR_FPECR] = M88K_FPECR_FUNIMP;
-		m88k_exception(cpu, M88K_EXCEPTION_SFU1_PRECISE, 0);
-		return;
-	}
-
-	reg(ic->arg[0]) = (int32_t) f1.f;
 }
 
 
@@ -1605,89 +1337,42 @@ X(rte)
 
 	m88k_stcr(cpu, cpu->cd.m88k.cr[M88K_CR_EPSR], M88K_CR_PSR, 1);
 
-	if (cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_E) {
-		debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-		    "rte: NIP: TODO: single-step support");
-		goto abort_dump;
-	}
+	/*
+	 *  The pipeline is reloaded from SNIP and SFIP: the instruction at
+	 *  NIP (if valid) runs first, then the one at FIP (if valid), and
+	 *  execution goes on after FIP. NIP and FIP are normally
+	 *  consecutive; if not, NIP is in the delay slot of a branch to FIP.
+	 *  (The E bits are not used; software clears them.)
+	 */
+	{
+		uint32_t snip = cpu->cd.m88k.cr[M88K_CR_SNIP];
+		uint32_t sfip = cpu->cd.m88k.cr[M88K_CR_SFIP];
+		uint32_t nip = snip & M88K_NIP_ADDR, fip = sfip & M88K_FIP_ADDR;
+		bool nv = (snip & M88K_NIP_V) != 0, fv = (sfip & M88K_FIP_V) != 0;
+		struct m88k_instr_call *nic;
 
-	if (cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_E) {
-		debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-		    "rte: TODO: FIP single-step support");
-		goto abort_dump;
-	}
-
-	/*  First try the NIP, if it is Valid:  */
-	cpu->pc = cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_ADDR;
-
-	/*  If the NIP is not valid, then try the FIP:  */
-	if (!(cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_V)) {
-		/*  Neither the NIP nor the FIP valid?  */
-		if (!(cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_V)) {
-			if ((cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_ADDR)
-			    != (cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_ADDR) + 4) {
-				debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-		    		    "rte: TODO: Neither FIP nor NIP has the "
-				    "Valid bit set?!");
-				goto abort_dump;
-			}
-
-			/*  For now, continue anyway, using NIP.  */
-		} else {
-			cpu->pc = cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_ADDR;
-		}
-	} else if (cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_V &&
-	    cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_V &&
-	    (cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_ADDR)
-	    != (cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_ADDR) + 4) {
-		/*
-		 *  The NIP instruction should first be executed (this
-		 *  is the one the exception handler choose to return to),
-		 *  and then the FIP instruction should run (the target
-		 *  of a delayed branch).
-		 */
-
-		uint32_t nip = cpu->cd.m88k.cr[M88K_CR_SNIP] & M88K_NIP_ADDR;
-		uint32_t fip = cpu->cd.m88k.cr[M88K_CR_SFIP] & M88K_FIP_ADDR;
-
-		cpu->pc = nip;
 		cpu->delay_slot = NOT_DELAYED;
-		quick_pc_to_pointers(cpu);
 
-		if (cpu->pc != nip) {
-			debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-			    "NIP execution caused exception?! TODO");
-			goto abort_dump;
+		if (nv && fv && fip != nip + 4) {
+			cpu->pc = nip;
+			quick_pc_to_pointers(cpu);
+			cpu->cd.m88k.delay_target = fip;
+			cpu->delay_slot = TO_BE_DELAYED;
+			nic = cpu->cd.m88k.next_ic;
+			nic->f(cpu, nic);
+			cpu->n_translated_instrs ++;
+			if (!(cpu->delay_slot & EXCEPTION_IN_DELAY_SLOT)) {
+				cpu->delay_slot = NOT_DELAYED;
+				cpu->pc = fip;
+				quick_pc_to_pointers(cpu);
+			} else
+				cpu->delay_slot = NOT_DELAYED;
+			return;
 		}
 
-		instr(to_be_translated)(cpu, cpu->cd.m88k.next_ic);
-
-		if ((cpu->pc & 0xfffff000) != (nip & 0xfffff000)) {
-			debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-			    "instruction in delay slot when returning via"
-			    " rte caused an exception?! nip=0x%08x, but pc "
-			    "changed to 0x%08x! TODO", nip, (int)cpu->pc);
-			goto abort_dump;
-		}
-
-		cpu->pc = fip;
-		cpu->delay_slot = NOT_DELAYED;
+		cpu->pc = nv ? nip : fip;
 		quick_pc_to_pointers(cpu);
-		return;
 	}
-
-	/*  fatal("RTE: NIP=0x%08" PRIx32", FIP=0x%08" PRIx32"\n",
-	    cpu->cd.m88k.cr[M88K_CR_SNIP], cpu->cd.m88k.cr[M88K_CR_SFIP]);  */
-
-	quick_pc_to_pointers(cpu);
-	return;
-
-abort_dump:
-	debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-	    "rte failed. NIP=0x%08" PRIx32", FIP=0x%08" PRIx32,
-	    cpu->cd.m88k.cr[M88K_CR_SNIP], cpu->cd.m88k.cr[M88K_CR_SFIP]);
-
-	ABORT_EXECUTION;
 }
 
 
@@ -1728,6 +1413,8 @@ X(xmem_slow)
 		size = (iword >> 26) & 1;
 		user = 0;
 	}
+	if (!size)
+		scaled = 0;	/*  (a scaled byte is not scaled)  */
 
 	tmp = cpu->cd.m88k.r[d];
 
@@ -1841,6 +1528,16 @@ X(tb0)
 {
 	SYNCH_PC;
 
+	/*  Code uses "tb1 0,r0,vec" as a barrier, after which pending
+	    exceptions have been taken: so are interrupts which came up
+	    meanwhile (e.g. from a device access just before). The
+	    interrupt returns to this instruction.  */
+	if (cpu->cd.m88k.irq_asserted &&
+	    !(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_IND)) {
+		m88k_exception(cpu, M88K_EXCEPTION_INTERRUPT, 0);
+		return;
+	}
+
 	if (!(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE)
 	    && ic->arg[2] < M88K_EXCEPTION_USER_TRAPS_START) {
 		m88k_exception(cpu, M88K_EXCEPTION_PRIVILEGE_VIOLATION, 0);
@@ -1853,6 +1550,16 @@ X(tb0)
 X(tb1)
 {
 	SYNCH_PC;
+
+	/*  Code uses "tb1 0,r0,vec" as a barrier, after which pending
+	    exceptions have been taken: so are interrupts which came up
+	    meanwhile (e.g. from a device access just before). The
+	    interrupt returns to this instruction.  */
+	if (cpu->cd.m88k.irq_asserted &&
+	    !(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_IND)) {
+		m88k_exception(cpu, M88K_EXCEPTION_INTERRUPT, 0);
+		return;
+	}
 
 	if (!(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE)
 	    && ic->arg[2] < M88K_EXCEPTION_USER_TRAPS_START) {
@@ -2096,6 +1803,164 @@ void COMBINE(idle)(struct cpu *cpu, struct m88k_instr_call *ic, int low_addr)
 }
 
 
+/*
+ *  idle_spin:  The backward branch which closes a spin loop (see
+ *              m88k_spin_loop() below). It does what the branch does, and
+ *              when that goes around the loop once more, the CPU idles.
+ */
+X(idle_spin)
+{
+	struct m88k_cpu *m = &cpu->cd.m88k;
+	int i;
+
+	for (i = 0; i < M88K_N_SPIN_LOOPS; i++)
+		if (m->spin_branch[i] == ic)
+			break;
+	if (i == M88K_N_SPIN_LOOPS) {
+		/*  Should not happen: translate the branch again.  */
+		ic->f = TO_BE_TRANSLATED;
+		m->next_ic = ic;
+		cpu->n_translated_instrs --;
+		return;
+	}
+
+	m->spin_f[i](cpu, ic);
+
+	if (m->next_ic == m->spin_head[i] &&
+	    !(cpu->delay_slot & EXCEPTION_IN_DELAY_SLOT)) {
+		/*  Nothing changed in the last round; wait at the head.  */
+		cpu->pc = (cpu->pc & ~((M88K_IC_ENTRIES_PER_PAGE-1) <<
+		    M88K_INSTR_ALIGNMENT_SHIFT)) + (((size_t)m->spin_head[i] -
+		    (size_t)m->cur_ic_page) / sizeof(struct m88k_instr_call)
+		    << M88K_INSTR_ALIGNMENT_SHIFT);
+		cpu->wants_to_idle = true;
+		cpu->n_translated_instrs += N_DYNTRANS_IDLE_BREAK;
+		m->next_ic = &nothing_call;
+	}
+}
+
+
+/*
+ *  m88k_spin_loop():
+ *
+ *  Is the code from 'head' to the branch at 'end' (both offsets in a page
+ *  of instruction words) a loop which only reads memory and branches? E.g.
+ *  the UNIX SYSTEM V/88 idle loop:
+ *
+ *	tb1	1,r0,0xff
+ *	ld	r13,r7,0x82d0		(runrun)
+ *	bcnd.n	eq0,r13,out
+ *	or.u	r13,r0,0x6000
+ *	...
+ *	ld	r13,r10,0xdbe0
+ *	ld	r12,r11,0x82d4
+ *	cmp	r13,r13,r12
+ *	bb1.n	eq,r13,head
+ *	or.u	r13,r0,0x6000
+ *
+ *  If such a loop goes around once without leaving, it would do the same
+ *  again until memory changes (from an interrupt or DMA), so the CPU can
+ *  idle. The loop must start with "tb1 n,r0,vec" (where interrupts are
+ *  taken), contain only loads, logical operations with immediates,
+ *  compares and branches out of the loop, and must not carry values from
+ *  one round to the next in registers.
+ */
+static bool m88k_spin_loop(const unsigned char *page, int head, int end,
+	bool delayed)
+{
+	uint32_t written = 0, written_so_far = 0;
+	int pass, a, last = end + (delayed ? 4 : 0);
+
+	if (last > 0xffc || end - head > 64 * 4)
+		return false;
+
+	for (pass = 0; pass < 2; pass++) {
+		for (a = head; a <= last; a += 4) {
+			uint32_t w = (page[a] << 24) | (page[a+1] << 16) |
+			    (page[a+2] << 8) | page[a+3];
+			int op6 = w >> 26, d = (w >> 21) & 31,
+			    s1 = (w >> 16) & 31, s2 = w & 31;
+			uint32_t reads = 0, writes = 0;
+
+			if (a == head) {
+				/*  tb1 n,r0,vec  */
+				if (op6 != 0x3c || ((w >> 10) & 0x3f) != 0x36 ||
+				    s1 != 0)
+					return false;
+				continue;
+			}
+
+			switch (op6) {
+			case 0x02: case 0x03: case 0x05:	/*  ld*  */
+			case 0x06: case 0x07:
+			case 0x10: case 0x11: case 0x12:	/*  and, mask  */
+			case 0x13: case 0x16: case 0x17:	/*  or  */
+			case 0x1f:				/*  cmp imm  */
+				reads = 1 << s1;
+				writes = 1 << d;
+				break;
+			case 0x3d:
+				if ((w & 0xfc00fc00) != 0xf4007c00)
+					return false;		/*  cmp  */
+				reads = (1 << s1) | (1 << s2);
+				writes = 1 << d;
+				break;
+			case 0x34: case 0x35: case 0x36:	/*  bb0, bb1  */
+			case 0x37: case 0x3a: case 0x3b:	/*  bcnd  */
+			{
+				int target = a + 4 * (int16_t)(w & 0xffff);
+				if (op6 >= 0x3a)
+					reads = 1 << s1;	/*  bcnd  */
+				else
+					reads = 1 << s1;	/*  bb  */
+				if (a == end) {
+					if (target != head)
+						return false;
+				} else if (target >= head && target <= last)
+					return false;
+				break;
+			}
+			default:
+				return false;
+			}
+
+			reads &= ~1;
+			writes &= ~1;
+			if (pass == 0)
+				written |= writes;
+			else {
+				/*  A register written in the loop must be
+				    written before it is read.  */
+				if (reads & written & ~written_so_far)
+					return false;
+				written_so_far |= writes;
+			}
+		}
+	}
+	return true;
+}
+
+static void m88k_spin_loop_install(struct cpu *cpu,
+	struct m88k_instr_call *ic, int head, int end)
+{
+	struct m88k_cpu *m = &cpu->cd.m88k;
+	int i;
+
+	/*  A free slot, or one of a branch which has been translated anew:  */
+	for (i = 0; i < M88K_N_SPIN_LOOPS; i++)
+		if (m->spin_branch[i] == NULL ||
+		    m->spin_branch[i]->f != instr(idle_spin))
+			break;
+	if (i == M88K_N_SPIN_LOOPS)
+		return;
+
+	m->spin_branch[i] = ic;
+	m->spin_head[i] = ic - ((end - head) >> M88K_INSTR_ALIGNMENT_SHIFT);
+	m->spin_f[i] = ic->f;
+	ic->f = instr(idle_spin);
+}
+
+
 /*****************************************************************************/
 
 
@@ -2112,7 +1977,7 @@ X(to_be_translated)
 	uint32_t addr, low_pc, iword;
 	unsigned char *page;
 	unsigned char ib[4];
-	uint32_t op26, op10, op11, d, s1, s2, cr6, imm16;
+	uint32_t op26, op10, d, s1, s2, cr6, imm16;
 	int32_t d16, d26; //, simm16;
 	int offset, shift;
 	int in_crosspage_delayslot = 0;
@@ -2145,8 +2010,10 @@ X(to_be_translated)
 		/*  fatal("TRANSLATION MISS!\n");  */
 		if (!cpu->memory_rw(cpu, cpu->mem, addr, ib,
 		    sizeof(ib), MEM_READ, CACHE_INSTRUCTION)) {
-			fatal("to_be_translated(): read failed: TODO\n");
-			goto bad;
+			/*  An instruction access exception (or a bus
+			    error) has been taken.  */
+			ic->f = TO_BE_TRANSLATED;
+			return;
 		}
 	}
 
@@ -2182,7 +2049,6 @@ X(to_be_translated)
 	}
 
 	op26   = (iword >> 26) & 0x3f;
-	op11   = (iword >> 11) & 0x1f;
 	op10   = (iword >> 10) & 0x3f;
 	d      = (iword >> 21) & 0x1f;
 	s1     = (iword >> 16) & 0x1f;
@@ -2197,12 +2063,10 @@ X(to_be_translated)
 
 	case 0x00:
 	case 0x01:
+		/*  (Also with r0, and also the all-zero word: these still
+		    access memory.)  */
 		ic->f = instr(xmem_slow);
 		ic->arg[0] = iword;
-		if (d == M88K_ZERO_REG)
-			ic->f = instr(nop);
-		if (iword == 0)
-			goto bad;
 		break;
 
 	case 0x02:	/*  ld.hu  */
@@ -2347,162 +2211,23 @@ X(to_be_translated)
 			ic->arg[2] = cr6;
 			if (s1 != s2)
 				goto bad;
+		} else if ((iword & 0x0000f800) == 0x0000c800) {
+			ic->f = instr(fxcr);
+			ic->arg[0] = (size_t) &cpu->cd.m88k.r[d];
+			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
+			ic->arg[2] = cr6;
+			if (d == M88K_ZERO_REG)
+				ic->arg[0] = (size_t)
+				    &cpu->cd.m88k.zero_scratch;
+			if (s1 != s2)
+				goto bad;
 		} else
 			goto bad;
 		break;
 
-	case 0x21:
-		switch (op11) {
-
-		case 0x00:	/*  fmul  */
-			if (d == 0) {
-				/*  d = 0 isn't allowed. for now, let's abort execution.  */
-				fatal("TODO: exception for d = 0 in fmul.xxx instruction\n");
-				goto bad;
-			}
-			ic->arg[0] = (size_t) &cpu->cd.m88k.r[d];
-			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
-			ic->arg[2] = (size_t) &cpu->cd.m88k.r[s2];
-			switch ((iword >> 5) & 0x3f) {
-			case 0x00:	ic->f = instr(fmul_sss); break;
-			case 0x01:	ic->f = instr(fmul_dss); break;
-			case 0x05:	ic->f = instr(fmul_dsd); break;
-			case 0x11:	ic->f = instr(fmul_dds); break;
-			case 0x15:	ic->f = instr(fmul_ddd); break;
-			default:if (!cpu->translation_readahead)
-					fatal("Unimplemented fmul combination 0x%x.\n",
-					    (iword >> 5) & 0x3f);
-				goto bad;
-			}
-			break;
-
-		case 0x04:	/*  flt  */
-			if (d == 0) {
-				/*  d = 0 isn't allowed. for now, let's abort execution.  */
-				fatal("TODO: exception for d = 0 in flt.xx instruction\n");
-				goto bad;
-			}
-			ic->arg[0] = (size_t) &cpu->cd.m88k.r[d];
-			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s2];
-			if ((iword >> 5) & 1) {
-				ic->f = instr(flt_ds);
-				if (d & 1) {
-					fatal("TODO: double precision load into uneven register r%i?\n", d);
-					goto bad;
-				}
-			} else {
-				ic->f = instr(flt_ss);
-			}
-			break;
-
-		case 0x05:	/*  fadd  */
-			if (d == 0) {
-				/*  d = 0 isn't allowed. for now, let's abort execution.  */
-				fatal("TODO: exception for d = 0 in fadd.xxx instruction\n");
-				goto bad;
-			}
-			ic->arg[0] = (size_t) &cpu->cd.m88k.r[d];
-			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
-			ic->arg[2] = (size_t) &cpu->cd.m88k.r[s2];
-			switch ((iword >> 5) & 0x3f) {
-			case 0x00:	ic->f = instr(fadd_sss); break;
-			case 0x01:	ic->f = instr(fadd_dss); break;
-			case 0x05:	ic->f = instr(fadd_dsd); break;
-			case 0x11:	ic->f = instr(fadd_dds); break;
-			case 0x15:	ic->f = instr(fadd_ddd); break;
-			default:if (!cpu->translation_readahead)
-					fatal("Unimplemented fadd combination 0x%x.\n",
-					    (iword >> 5) & 0x3f);
-				goto bad;
-			}
-			break;
-
-		case 0x06:	/*  fsub  */
-			if (d == 0) {
-				/*  d = 0 isn't allowed. for now, let's abort execution.  */
-				fatal("TODO: exception for d = 0 in fsub.xxx instruction\n");
-				goto bad;
-			}
-			ic->arg[0] = (size_t) &cpu->cd.m88k.r[d];
-			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
-			ic->arg[2] = (size_t) &cpu->cd.m88k.r[s2];
-			switch ((iword >> 5) & 0x3f) {
-			case 0x00:	ic->f = instr(fsub_sss); break;
-			case 0x01:	ic->f = instr(fsub_dss); break;
-			case 0x05:	ic->f = instr(fsub_dsd); break;
-			case 0x10:	ic->f = instr(fsub_sds); break;
-			case 0x11:	ic->f = instr(fsub_dds); break;
-			case 0x15:	ic->f = instr(fsub_ddd); break;
-			default:if (!cpu->translation_readahead)
-					fatal("Unimplemented fsub combination 0x%x.\n",
-					    (iword >> 5) & 0x3f);
-				goto bad;
-			}
-			break;
-
-		case 0x07:	/*  fcmp  */
-			if (d == 0) {
-				/*  d = 0 isn't allowed. for now, let's abort execution.  */
-				fatal("TODO: exception for d = 0 in fcmp.xxx instruction\n");
-				goto bad;
-			}
-			ic->arg[0] = (size_t) &cpu->cd.m88k.r[d];
-			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
-			ic->arg[2] = (size_t) &cpu->cd.m88k.r[s2];
-			switch ((iword >> 5) & 0x3f) {
-			case 0x00:	ic->f = instr(fcmp_sss); break;
-			case 0x04:	ic->f = instr(fcmp_ssd); break;
-			case 0x10:	ic->f = instr(fcmp_sds); break;
-			case 0x14:	ic->f = instr(fcmp_sdd); break;
-			default:if (!cpu->translation_readahead)
-					fatal("Unimplemented fcmp combination 0x%x.\n",
-					    (iword >> 5) & 0x3f);
-				goto bad;
-			}
-			break;
-
-		case 0x0b:	/*  trnc  */
-			if (d == 0) {
-				/*  d = 0 isn't allowed. for now, let's abort execution.  */
-				fatal("TODO: exception for d = 0 in trnc.xx instruction\n");
-				goto bad;
-			}
-			ic->arg[0] = (size_t) &cpu->cd.m88k.r[d];
-			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s2];
-			if ((iword >> 7) & 1) {
-				ic->f = instr(trnc_sd);
-				if (s2 & 1) {
-					fatal("TODO: double precision truncation into uneven register r%i?\n", d);
-					goto bad;
-				}
-			} else {
-				ic->f = instr(trnc_ss);
-			}
-			break;
-
-		case 0x0e:	/*  fdiv  */
-			if (d == 0) {
-				/*  d = 0 isn't allowed. for now, let's abort execution.  */
-				fatal("TODO: exception for d = 0 in fdiv.xxx instruction\n");
-				goto bad;
-			}
-			ic->arg[0] = (size_t) &cpu->cd.m88k.r[d];
-			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
-			ic->arg[2] = (size_t) &cpu->cd.m88k.r[s2];
-			switch ((iword >> 5) & 0x3f) {
-			case 0x00:	ic->f = instr(fdiv_sss); break;
-			case 0x01:	ic->f = instr(fdiv_dss); break;
-			case 0x05:	ic->f = instr(fdiv_dsd); break;
-			case 0x15:	ic->f = instr(fdiv_ddd); break;
-			default:if (!cpu->translation_readahead)
-					fatal("Unimplemented fdiv combination 0x%x.\n",
-					    (iword >> 5) & 0x3f);
-				goto bad;
-			}
-			break;
-
-		default:goto bad;
-		}
+	case 0x21:	/*  SFU1: floating point  */
+		ic->f = instr(fpu);
+		ic->arg[0] = iword;
 		break;
 
 	case 0x30:	/*  br     */
@@ -2593,13 +2318,18 @@ X(to_be_translated)
 		ic->f = m88k_bcnd[d + 32 * (op26 & 1)];
 		samepage_function = m88k_bcnd[64 + d + 32 * (op26 & 1)];
 
-		if (ic->f == NULL)
-			goto bad;
-
 		ic->arg[0] = (size_t) &cpu->cd.m88k.r[s1];
 
 		offset = (addr & 0xffc) + d16;
 		ic->arg[2] = offset;
+
+		if (ic->f == NULL) {
+			/*  An unusual condition mask:  */
+			ic->f = op26 & 1 ? instr(bcnd_n_generic) :
+			    instr(bcnd_generic);
+			ic->arg[1] = d;
+			break;
+		}
 
 		if (offset >= 0 && offset <= 0xffc &&
 		    samepage_function != NULL) {
@@ -2670,8 +2400,21 @@ X(to_be_translated)
 			}
 			break;
 
+		case 0x3a:	/*  tcnd  */
+			ic->arg[0] = d;
+			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
+			ic->arg[2] = iword & 0x1ff;
+			ic->f = instr(tcnd);
+			break;
+
 		default:goto bad;
 		}
+		break;
+
+	case 0x3e:	/*  tbnd (immediate)  */
+		ic->f = instr(tbnd_imm);
+		ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
+		ic->arg[2] = imm16;
 		break;
 
 	case 0x3d:
@@ -2723,10 +2466,12 @@ X(to_be_translated)
 			if (iword & 0x200)
 				scaled = 1;
 
-			if (wt) {
-				fatal("wt bit not yet implemented! TODO\n");
-				goto bad;
-			}
+			/*  Write-through (a cache hint): no cache here.  */
+			(void) wt;
+
+			/*  Scaling a byte access is the same as not scaling.  */
+			if (opsize == 0)
+				scaled = 0;
 
 			ic->arg[0] = (size_t) &cpu->cd.m88k.r[d];
 			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
@@ -2769,8 +2514,6 @@ X(to_be_translated)
 				/*  xmem:  */
 				ic->f = instr(xmem_slow);
 				ic->arg[0] = iword;
-				if (d == M88K_ZERO_REG)
-					ic->f = instr(nop);
 			}
 		} else switch ((iword >> 8) & 0xff) {
 		case 0x40:	/*  and    */
@@ -2790,6 +2533,13 @@ X(to_be_translated)
 		case 0x68:	/*  divu   */
 		case 0x6c:	/*  mul    */
 		case 0x70:	/*  add    */
+		case 0x71:	/*  add.co   */
+		case 0x72:	/*  add.ci   */
+		case 0x73:	/*  add.cio  */
+		case 0x74:	/*  sub    */
+		case 0x75:	/*  sub.co   */
+		case 0x76:	/*  sub.ci   */
+		case 0x77:	/*  sub.cio  */
 		case 0x78:	/*  div    */
 		case 0x7c:	/*  cmp    */
 		case 0x80:	/*  clr    */
@@ -2820,6 +2570,13 @@ X(to_be_translated)
 			case 0x68: ic->f = instr(divu);  break;
 			case 0x6c: ic->f = instr(mul);   break;
 			case 0x70: ic->f = instr(add);   break;
+			case 0x71: ic->f = instr(add_co); break;
+			case 0x72: ic->f = instr(add_ci); break;
+			case 0x73: ic->f = instr(add_cio); break;
+			case 0x74: ic->f = instr(sub);   break;
+			case 0x75: ic->f = instr(sub_co); break;
+			case 0x76: ic->f = instr(sub_ci); break;
+			case 0x77: ic->f = instr(sub_cio); break;
 			case 0x78: ic->f = instr(div);   break;
 			case 0x7c: ic->f = instr(cmp);   break;
 			case 0x80: ic->f = instr(clr);   break;
@@ -2853,7 +2610,9 @@ X(to_be_translated)
 				    opc != 0x75 /*  sub.co */ && opc != 0x77 /*  sub.cio */ &&
 				    opc != 0x68 /*  divu   */ && opc != 0x69 /* divu.d   */ &&
 				    opc != 0x6c /*  mul    */ && opc != 0x6d /* mulu.d   */ &&
-				    opc != 0x6e /*  muls   */ && opc != 0x78 /*  div     */)
+				    opc != 0x6e /*  muls   */ && opc != 0x78 /*  div     */ &&
+				    opc != 0x70 /*  add    */ && opc != 0x72 /*  add.ci  */ &&
+				    opc != 0x74 /*  sub    */ && opc != 0x76 /*  sub.ci  */)
 					ic->f = instr(nop);
 				else
 					ic->arg[0] = (size_t)
@@ -2910,6 +2669,11 @@ X(to_be_translated)
 			if (d == M88K_ZERO_REG)
 				ic->f = instr(nop);
 			break;
+		case 0xf8:	/*  tbnd  */
+			ic->f = instr(tbnd);
+			ic->arg[1] = (size_t) &cpu->cd.m88k.r[s1];
+			ic->arg[2] = (size_t) &cpu->cd.m88k.r[s2];
+			break;
 		case 0xfc:
 			switch (iword & 0xff) {
 			case 0x00:
@@ -2932,6 +2696,17 @@ X(to_be_translated)
 		break;
 
 	default:goto bad;
+	}
+
+	/*  A backward branch within the page may close a spin loop:  */
+	if (page != NULL && !single_step && (op26 == 0x34 || op26 == 0x35 ||
+	    op26 == 0x36 || op26 == 0x37 || op26 == 0x3a || op26 == 0x3b) &&
+	    ic->f != instr(idle) && ic->f != instr(idle_with_tb1)) {
+		int end = addr & 0xffc;
+		int head = end + 4 * (int16_t)(iword & 0xffff);
+		if (head >= 0 && head < end &&
+		    m88k_spin_loop(page, head, end, op26 & 1))
+			m88k_spin_loop_install(cpu, ic, head, end);
 	}
 
 

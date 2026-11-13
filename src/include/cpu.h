@@ -458,6 +458,10 @@ struct cpu {
 
 	/*  Instruction translation cache:  */
 	int		n_translated_instrs;
+
+	/*  Instructions to run in a dyntrans call: N_SAFE_DYNTRANS_LIMIT,
+	    or fewer to stop at a device event (see machine_add_event).  */
+	int		dyntrans_chunk;
 	unsigned char	*translation_cache;
 	size_t		translation_cache_cur_ofs;
 

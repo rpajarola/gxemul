@@ -262,6 +262,14 @@ struct m88k_cpu {
 	/*  Delayed-branch target (for exception handling):  */
 	uint32_t	delay_target;
 
+	/*  Spin (idle) loops: the closing branch's own function, and the
+	    loop's first instruction (see m88k_spin_loop()).  */
+#define	M88K_N_SPIN_LOOPS	32
+	struct m88k_instr_call *spin_branch[M88K_N_SPIN_LOOPS];
+	struct m88k_instr_call *spin_head[M88K_N_SPIN_LOOPS];
+	void		(*spin_f[M88K_N_SPIN_LOOPS])(struct cpu *,
+			    struct m88k_instr_call *);
+
 
 	/*
 	 *  Instruction translation cache, internal TLB structure, and 32-bit
@@ -290,6 +298,8 @@ void m88k_ldcr(struct cpu *cpu, uint32_t *r32ptr, int cr);
 void m88k_stcr(struct cpu *cpu, uint32_t value, int cr, int rte);
 void m88k_fstcr(struct cpu *cpu, uint32_t value, int fcr);
 void m88k_exception(struct cpu *cpu, int vector, int is_trap);
+void m88k_bus_error(struct cpu *cpu, int instr, uint32_t paddr);
+void m88k_cpu_reset(struct cpu *cpu);
 
 /*  memory_m88k.c:  */
 int m88k_translate_v2p(struct cpu *cpu, uint64_t vaddr,

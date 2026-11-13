@@ -270,6 +270,15 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 
 	cpu->n_translated_instrs = 0;
 
+	/*  Stop early for a device event? (See machine_add_event.)  */
+	cpu->dyntrans_chunk = N_SAFE_DYNTRANS_LIMIT;
+	if (cpu->machine->events.n > 0) {
+		int64_t left = (int64_t) (cpu->machine->events.next -
+		    cpu->ninstrs);
+		if (left < cpu->dyntrans_chunk)
+			cpu->dyntrans_chunk = left < 1 ? 1 : left;
+	}
+
 	cpu->cd.DYNTRANS_ARCH.cur_physpage = (struct DYNTRANS_TC_PHYSPAGE *)
 	    cpu->cd.DYNTRANS_ARCH.cur_ic_page;
 
@@ -341,7 +350,7 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 			S; I; S; I; S; I; S; I; S; I; S; I;
 
 			cpu->n_translated_instrs += 24;
-			if (cpu->n_translated_instrs >= N_SAFE_DYNTRANS_LIMIT
+			if (cpu->n_translated_instrs >= cpu->dyntrans_chunk
 			    || about_to_enter_single_step)
 				break;
 		}
@@ -355,6 +364,20 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 
 		for (;;) {
 			struct DYNTRANS_IC *ic;
+
+			/*  Close to a device event: one instruction at a
+			    time, to stop right at it.  */
+			if (cpu->dyntrans_chunk < N_SAFE_DYNTRANS_LIMIT &&
+			    cpu->dyntrans_chunk - cpu->n_translated_instrs
+			    < 120) {
+				while (cpu->n_translated_instrs <
+				    cpu->dyntrans_chunk &&
+				    !about_to_enter_single_step) {
+					I;
+					cpu->n_translated_instrs ++;
+				}
+				break;
+			}
 
 			I; I; I; I; I;   I; I; I; I; I;
 			I; I; I; I; I;   I; I; I; I; I;
@@ -373,7 +396,7 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 			I; I; I; I; I;   I; I; I; I; I;
 
 			cpu->n_translated_instrs += 120;
-			if (cpu->n_translated_instrs >= N_SAFE_DYNTRANS_LIMIT
+			if (cpu->n_translated_instrs >= cpu->dyntrans_chunk
 			    || about_to_enter_single_step)
 				break;
 		}
@@ -381,6 +404,29 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 
 	if (cpu->wants_to_idle) {
 		cpu->n_translated_instrs -= N_DYNTRANS_IDLE_BREAK;
+
+		/*
+		 *  Where time is counted in instructions, an idle loop
+		 *  would spin until something happens: skip ahead to the
+		 *  next tick or device event (and tell machine_run how far,
+		 *  for the ticks). The host waits for its clock meanwhile.
+		 */
+		if (cpu->machine->realtime_hz != 0) {
+			struct tick_functions *tf =
+			    &cpu->machine->tick_functions;
+			int64_t left = 1 << 20;
+			for (int te = 0; te < tf->n_entries; te++)
+				if (tf->ticks_till_next[te] < left)
+					left = tf->ticks_till_next[te];
+			if (cpu->machine->events.n > 0 &&
+			    (int64_t) (cpu->machine->events.next -
+			    cpu->ninstrs) < left)
+				left = cpu->machine->events.next -
+				    cpu->ninstrs;
+			if (cpu->n_translated_instrs < left)
+				cpu->n_translated_instrs = left;
+			cpu->dyntrans_chunk = cpu->n_translated_instrs;
+		}
 
 		// TODO: More arch specific interrupt checks
 		if (false
@@ -466,6 +512,10 @@ int DYNTRANS_RUN_INSTR_DEF(struct cpu *cpu)
 #endif
 
 	cpu->ninstrs += n_instrs;
+
+	/*  (Now counted in ninstrs; devices which run between calls, e.g.
+	    from ticks, use ninstrs + n_translated_instrs as the time.)  */
+	cpu->n_translated_instrs = 0;
 
 	/*  Return the nr of instructions executed:  */
 	return n_instrs;
@@ -750,8 +800,14 @@ void DYNTRANS_PC_TO_POINTERS_GENERIC(struct cpu *cpu)
 	if (l3->host_load[x3] == NULL) {
 #endif
 		int q = DYNTRANS_PAGESIZE - 1;
-		unsigned char *host_page = memory_paddr_to_hostaddr(cpu->mem,
-		    physaddr, MEM_READ);
+		unsigned char *host_page = NULL;
+
+		/*  (Only RAM: a device over the page, such as a ROM mapped
+		    over RAM, is reached through memory_rw instead.)  */
+		if (!memory_page_has_device(cpu->mem, physaddr,
+		    DYNTRANS_PAGESIZE))
+			host_page = memory_paddr_to_hostaddr(cpu->mem,
+			    physaddr, MEM_READ);
 		if (host_page != NULL) {
 			cpu->update_translation_table(cpu, cached_pc & ~q,
 			    host_page, 0, physaddr);
@@ -1842,6 +1898,18 @@ cpu->cd.DYNTRANS_ARCH.vph_tlb_entry[r].valid);
 		    translations_bitmap));
 		x /= addr_per_translation_range;
 
+		/*
+		 *  The first translation on a page whose translations were
+		 *  invalidated (by a write) while running on it: make it
+		 *  non-writable again, as when the page is entered, or later
+		 *  writes to it would not invalidate this translation.
+		 */
+		if (cpu->cd.DYNTRANS_ARCH.cur_physpage->translations_bitmap
+		    == 0)
+			cpu->invalidate_translation_caches(cpu,
+			    cpu->cd.DYNTRANS_ARCH.cur_physpage->physaddr,
+			    JUST_MARK_AS_NON_WRITABLE | INVALIDATE_PADDR);
+
 		cpu->cd.DYNTRANS_ARCH.cur_physpage->
 		    translations_bitmap |= (1 << x);
 	}
@@ -1874,7 +1942,12 @@ cpu->cd.DYNTRANS_ARCH.vph_tlb_entry[r].valid);
 		goto bad;
 	}
 	if (ic->f == NULL) {
+#ifdef DYNTRANS_M88K
+		fatal("INTERNAL ERROR: ic->f == NULL! (iword 0x%08x at 0x%08x)\n",
+		    (int) iword, (int) addr);
+#else
 		fatal("INTERNAL ERROR: ic->f == NULL!\n");
+#endif
 		goto bad;
 	}
 
@@ -1953,6 +2026,29 @@ cpu->cd.DYNTRANS_ARCH.vph_tlb_entry[r].valid);
 bad:	/*
 	 *  Nothing was translated. (Unimplemented or illegal instruction.)
 	 */
+
+#ifdef DYNTRANS_M88K
+	/*  The 88100 takes an unimplemented opcode exception.  */
+	ic->f = instr(illegal);
+
+	/*  This is a translation too: mark its part of the page (see the
+	    tail above), so that writing code there later invalidates it.  */
+	{
+		struct DYNTRANS_TC_PHYSPAGE *pp = (struct DYNTRANS_TC_PHYSPAGE *)
+		    cpu->cd.DYNTRANS_ARCH.cur_ic_page;
+		int x = (addr & (DYNTRANS_PAGESIZE - 1)) / (DYNTRANS_PAGESIZE /
+		    (8 * sizeof(pp->translations_bitmap)));
+		if (pp->translations_bitmap == 0)
+			cpu->invalidate_translation_caches(cpu, pp->physaddr,
+			    JUST_MARK_AS_NON_WRITABLE | INVALIDATE_PADDR);
+		pp->translations_bitmap |= (1 << x);
+	}
+
+	if (cpu->translation_readahead)
+		return;
+	ic->f(cpu, ic);
+	return;
+#endif
 
 	/*  Clear the translation, in case it was "half-way" done:  */
 	ic->f = TO_BE_TRANSLATED;

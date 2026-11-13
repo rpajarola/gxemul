@@ -36,6 +36,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #include "arcbios.h"
 #include "cpu.h"
@@ -815,6 +816,52 @@ bool emul_simple_init(struct emul *emul, char* tap_devname)
 
 
 /*
+ *  emul_idle_realtime():
+ *
+ *  For machines whose time is counted in instructions (realtime_hz of
+ *  them per second): while the CPU idles, emulated time jumps to the next
+ *  device event, so the host waits for its clock to catch up. Busy code
+ *  may run ahead of real time, but by at most a tenth of a second; code
+ *  slower than real time does not have to catch up later.
+ */
+void emul_idle_realtime(struct machine *m)
+{
+	static struct timeval ref_tv;
+	static uint64_t ref_instrs;
+	static bool started;
+	const int64_t max_lead = 100000;	/*  us  */
+	struct timeval tv;
+	uint64_t n = m->realtime_us != NULL ? m->realtime_us(m) :
+	    m->cpus[0]->ninstrs * 1000000 / m->realtime_hz;
+	int64_t emu_us, wall_us, lead;
+
+	gettimeofday(&tv, NULL);
+	if (!started) {
+		started = true;
+		ref_tv = tv;
+		ref_instrs = n;
+	}
+
+	/*  (n and ref_instrs are in emulated microseconds.)  */
+	emu_us = (int64_t) (n - ref_instrs);
+	wall_us = (int64_t) (tv.tv_sec - ref_tv.tv_sec) * 1000000 +
+	    (tv.tv_usec - ref_tv.tv_usec);
+	lead = emu_us - wall_us;
+
+	if (lead > max_lead || lead < -max_lead) {
+		/*  Rebase, keeping a lead of at most max_lead.  */
+		int64_t keep = lead > 0 ? max_lead : 0;
+		ref_tv = tv;
+		ref_instrs = n - (uint64_t) keep;
+		lead = keep;
+	}
+
+	if (lead > 0)
+		usleep(lead > 10000 ? 10000 : lead);
+}
+
+
+/*
  *  emul_run():
  *
  *	o)  Set up things needed before running an emulation.
@@ -928,6 +975,8 @@ void emul_run(struct emul *emul)
 
 			if (console_any_input_available(emul)) {
 				debugmsg(SUBSYS_EMUL, "idle", VERBOSITY_DEBUG, "not idling; console input is available");
+			} else if (emul->machines[0]->realtime_hz != 0) {
+				emul_idle_realtime(emul->machines[0]);
 			} else {
 				debugmsg(SUBSYS_EMUL, "idle", VERBOSITY_DEBUG, "idling the host processor...");
 

@@ -43,9 +43,22 @@
 #include "thirdparty/m8820x_pte.h"
 
 
+uint32_t m8820x_probe(struct cpu *cpu, struct m8820x_cmmu *cmmu,
+	uint32_t vaddr, int supervisor, uint32_t *paddr);
+
+
+/*  Cache: 256 sets of 4 lines of 16 bytes (the 88204 has 1024 sets).  */
+#define	N_SETS		256
+
 struct m8820x_data {
 	int		cpu_nr;
 	int		cmmu_nr;
+
+	/*  The cache data, tag and set status ports read and write this
+	    (no cache is emulated; diagnostics only see their own data):  */
+	uint32_t	cache_data[N_SETS][4][4];
+	uint32_t	cache_tag[N_SETS][4];
+	uint32_t	cache_status[N_SETS];
 };
 
 
@@ -56,74 +69,61 @@ struct m8820x_data {
  */
 static void m8820x_command(struct cpu *cpu, struct m8820x_data *d)
 {
-	uint32_t *regs = cpu->cd.m88k.cmmu[d->cmmu_nr]->reg;
-	int cmd = regs[CMMU_SCR];
+	struct m8820x_cmmu *cmmu = cpu->cd.m88k.cmmu[d->cmmu_nr];
+	uint32_t *regs = cmmu->reg;
+	int cmd = regs[CMMU_SCR] & 0x3f;
 	uint32_t sar = regs[CMMU_SAR];
 	size_t i;
-	uint32_t super, all;
+	uint32_t super, mask;
 
-	switch (cmd) {
+	/*  Cache flushes, copybacks and invalidates (no cache contents):  */
+	if (cmd >= 0x10 && cmd <= 0x1f) {
+		if ((cmd & 3) == 3 && (cmd & 0x0c) != 0x08)
+			for (i = 0; i < N_SETS; i++)
+				d->cache_status[i] |= 0x0000ff00;
+		return;
+	}
 
-	case CMMU_FLUSH_CACHE_CB_LINE:
-	case CMMU_FLUSH_CACHE_CB_PAGE:
-	case CMMU_FLUSH_CACHE_INV_LINE:
-	case CMMU_FLUSH_CACHE_INV_PAGE:
-	case CMMU_FLUSH_CACHE_INV_ALL:
-	case CMMU_FLUSH_CACHE_CBI_LINE:
-	case CMMU_FLUSH_CACHE_CBI_PAGE:
-	case CMMU_FLUSH_CACHE_CBI_SEGMENT:
-	case CMMU_FLUSH_CACHE_CBI_ALL:
-		/*  TODO  */
-		break;
+	/*  Probe user (0x20-0x23) or supervisor (0x24-0x27) address:  */
+	if (cmd >= 0x20 && cmd <= 0x27) {
+		uint32_t paddr;
+		regs[CMMU_SSR] = m8820x_probe(cpu, cmmu, sar, cmd >= 0x24,
+		    &paddr);
+		if (regs[CMMU_SSR] & CMMU_SSR_V)
+			regs[CMMU_SAR] = paddr;
+		return;
+	}
 
-	case CMMU_FLUSH_USER_ALL:
-	case CMMU_FLUSH_USER_PAGE:
-	case CMMU_FLUSH_SUPER_ALL:
-	case CMMU_FLUSH_SUPER_PAGE:
-		/*  TODO: Segment invalidation.  */
+	/*  Invalidate user (0x30-0x33) or supervisor (0x34-0x37) PATC
+	    entries: line (= page), page, segment, all.  */
+	if (cmd >= 0x30 && cmd <= 0x37) {
+		super = cmd >= 0x34 ? M8820X_PATC_SUPERVISOR_BIT : 0;
+		switch (cmd & 3) {
+		case 0: case 1:	mask = 0xfffff000; break;
+		case 2:		mask = 0xffc00000; break;
+		default:	mask = 0;
+		}
 
-		all = super = 0;
-		if (cmd == CMMU_FLUSH_USER_ALL ||
-		    cmd == CMMU_FLUSH_SUPER_ALL)
-			all = 1;
-		if (cmd == CMMU_FLUSH_SUPER_ALL ||
-		    cmd == CMMU_FLUSH_SUPER_PAGE)
-			super = M8820X_PATC_SUPERVISOR_BIT;
-
-		/*  TODO: Don't invalidate EVERYTHING like this!  */
 		cpu->invalidate_translation_caches(cpu, 0, INVALIDATE_ALL);
 
 		for (i=0; i<N_M88200_PATC_ENTRIES; i++) {
-			uint32_t v = cpu->cd.m88k.cmmu[d->cmmu_nr]
-			    ->patc_v_and_control[i];
-			uint32_t p = cpu->cd.m88k.cmmu[d->cmmu_nr]
-			    ->patc_p_and_supervisorbit[i];
+			uint32_t v = cmmu->patc_v_and_control[i];
+			uint32_t p = cmmu->patc_p_and_supervisorbit[i];
 
-			/*  Already invalid? Then skip this entry.  */
 			if (!(v & PG_V))
 				continue;
-
-			/*  Super/user mismatch? Then skip the entry.  */
 			if ((p & M8820X_PATC_SUPERVISOR_BIT) != super)
 				continue;
-
-			/*  If not all pages are to be invalidated, there
-			    must be a virtual address match:  */
-			if (!all && (sar & 0xfffff000) != (v & 0xfffff000))
+			if ((sar & mask) != (v & mask))
 				continue;
 
-			/*  Finally, invalidate the entry:  */
-			cpu->cd.m88k.cmmu[d->cmmu_nr]->patc_v_and_control[i]
-			    = v & ~PG_V;
+			cmmu->patc_v_and_control[i] = v & ~PG_V;
 		}
-
-		break;
-
-	default:
-		fatal("[ m8820x_command: FATAL ERROR! unimplemented "
-		    "command 0x%02x ]\n", cmd);
-		exit(1);
+		return;
 	}
+
+	/*  Other codes are no-ops.  */
+	debug("[ m8820x: command 0x%02x ignored ]\n", cmd);
 }
 
 
@@ -135,51 +135,64 @@ DEVICE_ACCESS(m8820x)
 	uint64_t idata = 0, odata = 0;
 	struct m8820x_data *d = (struct m8820x_data *) extra;
 	struct cpu* c = cpu->machine->cpus[d->cpu_nr];
-	uint32_t *regs = c->cd.m88k.cmmu[d->cmmu_nr]->reg;
-	uint32_t *batc = c->cd.m88k.cmmu[d->cmmu_nr]->batc;
+	struct m8820x_cmmu *cmmu = c->cd.m88k.cmmu[d->cmmu_nr];
+	uint32_t *regs = cmmu->reg;
+	uint32_t *batc = cmmu->batc;
+	int r = relative_addr / sizeof(uint32_t);
+	int set = (regs[CMMU_SAR] >> 4) & (N_SETS - 1);
+
+	/*  Only 32-bit accesses.  */
+	if (len != 4 || (relative_addr & 3))
+		return 0;
 
 	if (writeflag == MEM_WRITE)
 		idata = memory_readmax64(cpu, data, len);
 
 	if (writeflag == MEM_READ)
-		odata = regs[relative_addr / sizeof(uint32_t)];
+		odata = regs[r];
 
-	switch (relative_addr / sizeof(uint32_t)) {
+	switch (r) {
 
 	case CMMU_IDR:
-		if (writeflag == MEM_WRITE) {
-			fatal("m8820x: write to CMMU_IDR: TODO\n");
-			exit(1);
-		}
+		/*  The ID field is writable.  */
+		if (writeflag == MEM_WRITE)
+			regs[r] = (regs[r] & 0x00ffffff) | (idata & 0xff000000);
 		break;
 
 	case CMMU_SCR:
-		if (writeflag == MEM_READ) {
-			fatal("m8820x: read from CMMU_SCR: TODO\n");
-			exit(1);
-		} else {
-			regs[relative_addr / sizeof(uint32_t)] = idata;
+		if (writeflag == MEM_WRITE) {
+			regs[r] = idata & 0x3f;
 			m8820x_command(c, d);
 		}
 		break;
 
 	case CMMU_SSR:
-		if (writeflag == MEM_WRITE) {
-			fatal("m8820x: write to CMMU_SSR: TODO\n");
-			exit(1);
-		}
+		if (writeflag == MEM_WRITE)
+			regs[r] = idata & 0xc3df;
+		break;
+
+	case CMMU_SAR:
+	case CMMU_PFAR:
+		if (writeflag == MEM_WRITE)
+			regs[r] = idata;
+		break;
+
+	case CMMU_SCTR:
+		if (writeflag == MEM_WRITE)
+			regs[r] = idata & 0xe000;
 		break;
 
 	case CMMU_PFSR:
-	case CMMU_PFAR:
-	case CMMU_SAR:
-	case CMMU_SCTR:
-	case CMMU_SAPR:		/*  TODO: Invalidate something for  */
-	case CMMU_UAPR:		/*  SAPR and UAPR writes?  */
-		/*  TODO: Don't invalidate everything.  */
-		c->invalidate_translation_caches(c, 0, INVALIDATE_ALL);
 		if (writeflag == MEM_WRITE)
-			regs[relative_addr / sizeof(uint32_t)] = idata;
+			regs[r] = idata & 0x00070000;
+		break;
+
+	case CMMU_SAPR:
+	case CMMU_UAPR:
+		if (writeflag == MEM_WRITE) {
+			regs[r] = idata & 0xfffff2c1;
+			c->invalidate_translation_caches(c, 0, INVALIDATE_ALL);
+		}
 		break;
 
 	case CMMU_BWP0:
@@ -191,33 +204,52 @@ DEVICE_ACCESS(m8820x)
 	case CMMU_BWP6:
 	case CMMU_BWP7:
 		if (writeflag == MEM_WRITE) {
-			uint32_t old;
-			int i = (relative_addr / sizeof(uint32_t)) - CMMU_BWP0;
-
-			regs[relative_addr / sizeof(uint32_t)] = idata;
-
-			/*  Also write to the specific batc registers:  */
-			old = batc[i];
-			batc[i] = idata;
-			if (old != idata) {
-				/*  TODO: Don't invalidate everything?  */
+			int i = r - CMMU_BWP0;
+			regs[r] = idata;
+			if (batc[i] != idata) {
+				batc[i] = idata;
 				c->invalidate_translation_caches(
 				    c, 0, INVALIDATE_ALL);
 			}
 		}
 		break;
 
-	case CMMU_CSSP0:
-		/*  TODO: Actually care about cache details.  */
+	case CMMU_CDP0:
+	case CMMU_CDP1:
+	case CMMU_CDP2:
+	case CMMU_CDP3: {
+		/*  Line (port) and word (SAR bits 3-2):  */
+		int line = r - CMMU_CDP0, word = (regs[CMMU_SAR] >> 2) & 3;
+		if (writeflag == MEM_WRITE)
+			d->cache_data[set][line][word] = idata;
+		else
+			odata = d->cache_data[set][line][word];
+		break;
+	}
+
+	case CMMU_CTP0:
+	case CMMU_CTP1:
+	case CMMU_CTP2:
+	case CMMU_CTP3:
+		if (writeflag == MEM_WRITE)
+			d->cache_tag[set][r - CMMU_CTP0] = idata & 0xfffff000;
+		else
+			odata = d->cache_tag[set][r - CMMU_CTP0];
 		break;
 
-	default:fatal("[ m8820x: unimplemented %s offset 0x%x",
-		    writeflag == MEM_WRITE? "write to" : "read from",
-		    (int) relative_addr);
+	case CMMU_CSSP0:
 		if (writeflag == MEM_WRITE)
-			fatal(": 0x%x", (int)idata);
-		fatal(" ]\n");
-		exit(1);
+			d->cache_status[set] = idata & 0x3ffff000;
+		else
+			odata = d->cache_status[set];
+		break;
+
+	default:
+		/*  Unused register addresses read as zero.  */
+		if (writeflag == MEM_WRITE)
+			debug("[ m8820x: write to offset 0x%x: 0x%x ]\n",
+			    (int) relative_addr, (int) idata);
+		odata = 0;
 	}
 
 	if (writeflag == MEM_READ)
@@ -230,6 +262,7 @@ DEVICE_ACCESS(m8820x)
 DEVINIT(m8820x)
 {
 	struct m8820x_data *d;
+	int i;
 
 	CHECK_ALLOCATION(d = (struct m8820x_data *) malloc(sizeof(struct m8820x_data)));
 	memset(d, 0, sizeof(struct m8820x_data));
@@ -239,10 +272,13 @@ DEVINIT(m8820x)
 	d->cmmu_nr = devinit->addr2 & 1;
 	d->cpu_nr = devinit->addr2 >> 1;
 
+	/*  All lines invalid after reset:  */
+	for (i = 0; i < N_SETS; i++)
+		d->cache_status[i] = 0x0000ff00;
+
 	memory_device_register(devinit->machine->memory, devinit->name,
 	    devinit->addr, M8820X_LENGTH, dev_m8820x_access, (void *)d,
 	    DM_DEFAULT, NULL);
 
 	return 1;
 }
-

@@ -109,6 +109,8 @@ int memory_points_to_string(struct cpu *cpu, struct memory *mem,
 char *memory_conv_to_string(struct cpu *cpu, struct memory *mem,
 	uint64_t addr, char *buf, int bufsize);
 
+bool memory_page_has_device(struct memory *mem, uint64_t paddr,
+	uint64_t pagesize);
 unsigned char *memory_paddr_to_hostaddr(struct memory *mem,
 	uint64_t paddr, int writeflag);
 

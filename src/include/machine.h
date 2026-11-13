@@ -81,6 +81,16 @@ struct tick_functions {
 	void	**extra;
 };
 
+/*  Device events at a given instruction count (see machine_add_event):  */
+#define	MAX_MACHINE_EVENTS	8
+struct machine_events {
+	int		n;
+	uint64_t	next;		/*  the earliest  */
+	uint64_t	when[MAX_MACHINE_EVENTS];
+	void		(*f[MAX_MACHINE_EVENTS])(struct cpu *, void *);
+	void		*extra[MAX_MACHINE_EVENTS];
+};
+
 struct display_md {
 	/*  Framebuffer windows (see display.c):  */
 	int	in_use;
@@ -140,6 +150,15 @@ struct machine {
 
 	/*  Tick functions (e.g. hardware devices):  */
 	struct tick_functions tick_functions;
+	struct machine_events events;
+
+	/*  Instructions per second of real time, to keep emulated time
+	    from running ahead of the host's clock while idle (0 = no), and
+	    the emulated time in microseconds (if it is not just the
+	    instructions counted at that rate):  */
+	uint64_t	realtime_hz;
+	uint64_t	(*realtime_us)(struct machine *);
+	void		*realtime_extra;
 
 	char	*cpu_name;  /*  TODO: remove this, there could be several
 				cpus with different names in a machine  */
@@ -201,6 +220,7 @@ struct machine {
 		struct of_data		*of_data;
 		struct dec3000_data	*dec3000;
 		struct jensen_data	*jensen;
+		struct mvme187_data	*mvme187;
 	} md;
 
 	/*  Bus-specific interrupt data:  */
@@ -413,6 +433,9 @@ int machine_name_to_type(char *stype, char *ssubtype, int *type, int *subtype);
 void machine_add_breakpoint_string(struct machine *machine, char *str);
 void machine_add_tickfunction(struct machine *machine,
 	void (*func)(struct cpu *, void *), void *extra, int clockshift);
+void machine_add_event(struct machine *machine, uint64_t when,
+	void (*func)(struct cpu *, void *), void *extra);
+void machine_shift_events(struct machine *machine, uint64_t n);
 void machine_statistics_init(struct machine *, char *fname);
 void machine_register(char *name, MACHINE_SETUP_TYPE(setup));
 void machine_setup(struct machine *);
@@ -429,6 +452,9 @@ int dec3000_load_rom(struct machine *machine, const char *filename,
 	uint64_t *entrypointp);
 /*  machine_jensen.c:  */
 int jensen_load_rom(struct machine *machine, const char *filename,
+	uint64_t *entrypointp);
+/*  machine_mvme88k.c:  */
+int mvme187_load_rom(struct machine *machine, const char *filename,
 	uint64_t *entrypointp);
 
 void machine_entry_add_subtype(struct machine_entry *me, const char *name,

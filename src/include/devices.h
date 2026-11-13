@@ -170,6 +170,20 @@ void dev_jensen_set_rom(struct jensen_data *d, const unsigned char *image,
 	size_t len);
 uint64_t dev_jensen_srom(struct jensen_data *d, struct cpu *cpu);
 
+/*  dev_mvme187.c:  */
+struct mvme187_data;
+struct mvme187_data *dev_mvme187_init(struct machine *machine);
+void dev_mvme187_set_rom(struct mvme187_data *d, const unsigned char *image,
+	size_t len);
+uint64_t dev_mvme187_time_us(struct mvme187_data *d);
+uint64_t dev_mvme187_time_ns(struct mvme187_data *d);
+void dev_mvme187_at_ns(struct mvme187_data *d, uint64_t ns,
+	void (*f)(struct cpu *, void *), void *extra);
+void dev_mvme187_bbram_access(struct mvme187_data *d);
+void dev_mvme187_brdid_defaults(struct machine *machine, uint8_t *nvram);
+void dev_mvme187_set_scc(struct mvme187_data *d, int (*f)(void *, int),
+	void (*reset)(void *), void *extra);
+
 struct dec_ioasic_data *dev_dec_ioasic_init(struct cpu *cpu, struct memory *mem, uint64_t baseaddr, int rackmount_flag, struct interrupt* irq);
 
 /*  dev_asc.c:  */

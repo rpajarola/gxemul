@@ -40,7 +40,10 @@
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <fenv.h>
+#include <math.h>
 
+#include "control.h"
 #include "cpu.h"
 #include "float_emul.h"
 #include "interrupt.h"
@@ -51,6 +54,7 @@
 #include "symbol.h"
 
 #include "thirdparty/m8820x_pte.h"
+#include "thirdparty/m8820x.h"
 #include "thirdparty/m88k_dmt.h"
 #include "thirdparty/mvmeprom.h"
 
@@ -399,6 +403,13 @@ void m88k_irq_interrupt_assert(struct interrupt *interrupt)
 {
 	struct cpu *cpu = (struct cpu *) interrupt->extra;
 	cpu->cd.m88k.irq_asserted = 1;
+
+	/*  Asserted by a device during a dyntrans run (and interrupts are
+	    enabled): end the run soon, so that it is taken (at the start of
+	    the next run) without waiting for the rest of the run.  */
+	if (!(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_IND) &&
+	    cpu->dyntrans_chunk > cpu->n_translated_instrs + 1)
+		cpu->dyntrans_chunk = cpu->n_translated_instrs + 1;
 }
 void m88k_irq_interrupt_deassert(struct interrupt *interrupt)
 {
@@ -493,6 +504,12 @@ void m88k_ldcr(struct cpu *cpu, uint32_t *r32ptr, int cr)
 }
 
 
+/*  PSR bits which exist (on the 88100 or the 88110); the others are
+    reserved, and read as zero.  */
+#define	M88K_PSR_IMPLEMENTED	(M88K_PSR_MODE | M88K_PSR_BO | M88K_PSR_SER \
+	| M88K_PSR_C | M88K_PSR_SGN | M88K_PSR_SRM | M88K_PSR_TRACE | 0x3ff)
+
+
 /*
  *  m88k_stcr():
  *
@@ -525,22 +542,20 @@ void m88k_stcr(struct cpu *cpu, uint32_t value, int cr, int rte)
 			    "instruction only, according to the M88100 "
 			    "manual! Continuing anyway.");
 
-		if (value & M88K_PSR_MXM) {
-			debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_ERROR,
-			    "stcr: TODO: MXM support");
-			cpu->running = false;
-			return;
-		}
+		/*  (MXM: misaligned accesses are truncated.)  */
 
 		if ((old & M88K_PSR_MODE) != (value & M88K_PSR_MODE))
 			cpu->invalidate_translation_caches(
 			    cpu, 0, INVALIDATE_ALL);
 
-		cpu->cd.m88k.cr[cr] = value;
+		/*  Reserved bits read as zero. (UNIX SYSTEM V/88 keeps
+		    the interrupt level in bits 12-10 of a saved PSR, and
+		    relies on this.)  */
+		cpu->cd.m88k.cr[cr] = value & M88K_PSR_IMPLEMENTED;
 		break;
 
 	case M88K_CR_EPSR:
-		cpu->cd.m88k.cr[cr] = value;
+		cpu->cd.m88k.cr[cr] = value & M88K_PSR_IMPLEMENTED;
 		break;
 
 	case M88K_CR_SXIP:
@@ -597,19 +612,17 @@ void m88k_stcr(struct cpu *cpu, uint32_t value, int cr, int rte)
 void m88k_fstcr(struct cpu *cpu, uint32_t value, int fcr)
 {
 	switch (fcr) {
-
-	case 0:
-	case 62:
-	case 63:
-		// Don't warn for writes with the value zero for these, for now.
-		if (value == 0)
-			break;
-
-		// fall through
-	
-	default:debugmsg_cpu(cpu, SUBSYS_CPU, "m88k", VERBOSITY_WARNING,
-		    "WARNING: fstcr: write 0x%08x to UNIMPLEMENTED fcr = 0x%02x (%s)",
-		    value, fcr, m88k_fcr_name(cpu, fcr));
+	case 62:	/*  FPSR: the accrued exception flags  */
+		value &= 0x1f;
+		break;
+	case 63:	/*  FPCR: rounding mode and exception enables  */
+		value &= 0xc01f;
+		break;
+	default:
+		if (fcr > 8) {
+			/*  Not implemented by the 88100.  */
+			value = 0;
+		}
 	}
 
 	cpu->cd.m88k.fcr[fcr] = value;
@@ -660,101 +673,52 @@ static void m88k_memory_transaction_debug_dump(struct cpu *cpu, int n)
  *
  *  Cause an exception.
  */
+/*  Exception names, for watches on the control socket:  */
+static const char *m88k_exception_name(int vector)
+{
+	static const char *names[] = { "reset", "interrupt",
+	    "instruction_access", "data_access", "misaligned_access",
+	    "unimplemented_opcode", "privilege_violation", "bounds_check",
+	    "illegal_integer_divide", "integer_overflow", "error" };
+
+	if (vector >= 0 && vector < (int) (sizeof(names) / sizeof(names[0])))
+		return names[vector];
+	if (vector == M88K_EXCEPTION_SFU1_PRECISE)
+		return "sfu1_precise";
+	if (vector == M88K_EXCEPTION_SFU1_IMPRECISE)
+		return "sfu1_imprecise";
+	return "trap";
+}
+
 void m88k_exception(struct cpu *cpu, int vector, int is_trap)
 {
 	bool update_shadow_regs = true;
-	bool implemented = false;
+	uint32_t from_pc = cpu->pc;
 
 	// TODO: Use a const char * instead or something like that, inside the switch...
 
 	switch (vector) {
-
 	case M88K_EXCEPTION_RESET:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "RESET", VERBOSITY_INFO, "");
-		implemented = true;
-		break;
-
 	case M88K_EXCEPTION_INTERRUPT:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "INTERRUPT", VERBOSITY_INFO, "");
-		implemented = true;
-		break;
-
 	case M88K_EXCEPTION_INSTRUCTION_ACCESS:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "INSTRUCTION_ACCESS", VERBOSITY_INFO, "");
-		implemented = true;
-		break;
-
 	case M88K_EXCEPTION_DATA_ACCESS:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "DATA_ACCESS", VERBOSITY_INFO, "");
-		implemented = true;
-		break;
-
 	case M88K_EXCEPTION_MISALIGNED_ACCESS:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "MISALIGNED_ACCESS", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_UNIMPLEMENTED_OPCODE:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "UNIMPLEMENTED_OPCODE", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_PRIVILEGE_VIOLATION:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "PRIVILEGE_VIOLATION", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_BOUNDS_CHECK_VIOLATION:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "BOUNDS_CHECK_VIOLATION", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_ILLEGAL_INTEGER_DIVIDE:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "ILLEGAL_INTEGER_DIVIDE", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_INTEGER_OVERFLOW:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "INTEGER_OVERFLOW", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_ERROR:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "ERROR", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_SFU1_PRECISE:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "SFU1_PRECISE", VERBOSITY_ERROR, "");
-		break;
-
 	case M88K_EXCEPTION_SFU1_IMPRECISE:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "SFU1_IMPRECISE", VERBOSITY_ERROR, "");
+		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "exception",
+		    VERBOSITY_DEBUG, "vector %i, pc=0x%08x", vector,
+		    (int) cpu->pc);
 		break;
-
-	case 0x80:	/*  up to OpenBSD 5.2  */
-	case 0x1c2:	/*  from OpenBSD 5.3 and forward...  */
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "syscall", VERBOSITY_INFO,
-		    "r13=%i", cpu->cd.m88k.r[13]);
-#if 0
-		fatal("[ syscall %i(", cpu->cd.m88k.r[13]);
-		m88k_cpu_functioncall_trace(cpu, 8);
-		fatal(") ]\n");
-#endif
-		break;
-
-	case MVMEPROM_VECTOR:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "MVMEPROM_VECTOR", VERBOSITY_INFO, "");
-		break;
-
 	default:
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "unknown vector",
-		    vector < M88K_EXCEPTION_USER_TRAPS_START ? VERBOSITY_ERROR
-		    : VERBOSITY_INFO, "0x%03x", vector);
-	}
-
-	if (vector < M88K_EXCEPTION_USER_TRAPS_START && !implemented) {
-		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "unimplemented",
-		    VERBOSITY_ERROR, "vector=0x%03x pc=0x%08x",
-			vector,
-			(int)cpu->pc);
-		for (int j = 0; j < cpu->machine->ncpus; ++j)
-			cpu->machine->cpus[j]->running = false;
-		m88k_pc_to_pointers(cpu);
-		return;
+		debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "exception",
+		    VERBOSITY_DEBUG, "vector 0x%03x, pc=0x%08x", vector,
+		    (int) cpu->pc);
 	}
 
 	/*  Stuff common for all exceptions:  */
@@ -889,13 +853,95 @@ void m88k_exception(struct cpu *cpu, int vector, int is_trap)
 			break;
 #endif
 
-		default:debugmsg_cpu(cpu, SUBSYS_EXCEPTION, "m88k",
-			    VERBOSITY_ERROR, "internal error");
-			cpu->running = false;
+		default:
+			/*  The faulting instruction is not completed; rte
+			    continues at SNIP (the handler emulates or skips
+			    it).  */
+			break;
 		}
 	}
 
 	m88k_pc_to_pointers(cpu);
+
+	/*  A watch on the control socket may stop here, at the handler's
+	    first instruction:  */
+	if (control_watch_exceptions && control_exception(cpu,
+	    m88k_exception_name(vector), vector, from_pc,
+	    vector == M88K_EXCEPTION_DATA_ACCESS ?
+	    cpu->cd.m88k.cr[M88K_CR_DMA0] : 0))
+		cpu->cd.m88k.next_ic = &nothing_call;
+}
+
+
+/*
+ *  m88k_cpu_reset():
+ *
+ *  A hardware reset: the CPU starts at address 0 in supervisor mode with
+ *  interrupts disabled, and the CMMUs are back to their reset state
+ *  (translation off; the hardwired BATC entries remain).
+ */
+void m88k_cpu_reset(struct cpu *cpu)
+{
+	int i, j;
+
+	cpu->cd.m88k.cr[M88K_CR_PSR] = M88K_PSR_MODE | M88K_PSR_IND;
+	if (cpu->byte_order == EMUL_LITTLE_ENDIAN)
+		cpu->cd.m88k.cr[M88K_CR_PSR] |= M88K_PSR_BO;
+	cpu->cd.m88k.cr[M88K_CR_VBR] = 0;
+	cpu->cd.m88k.cr[M88K_CR_SSBR] = 0;
+	cpu->delay_slot = NOT_DELAYED;
+
+	for (i = 0; i < MAX_M8820X_CMMUS; i++) {
+		struct m8820x_cmmu *cmmu = cpu->cd.m88k.cmmu[i];
+		if (cmmu == NULL)
+			continue;
+		cmmu->reg[CMMU_SCTR] = 0;
+		cmmu->reg[CMMU_PFSR] = 0;
+		cmmu->reg[CMMU_SAPR] = 0;
+		cmmu->reg[CMMU_UAPR] = 0;
+		for (j = 0; j < 8; j++)
+			cmmu->batc[j] = 0;
+		for (j = 0; j < N_M88200_PATC_ENTRIES; j++)
+			cmmu->patc_v_and_control[j] = 0;
+	}
+
+	/*  Forget every virtual page mapping, also untracked ones:  */
+	cpu->invalidate_translation_caches(cpu, 0, INVALIDATE_ALL);
+	memset(cpu->cd.m88k.host_load, 0, sizeof(cpu->cd.m88k.host_load));
+	memset(cpu->cd.m88k.host_store, 0, sizeof(cpu->cd.m88k.host_store));
+	memset(cpu->cd.m88k.phys_addr, 0, sizeof(cpu->cd.m88k.phys_addr));
+	memset(cpu->cd.m88k.phys_page, 0, sizeof(cpu->cd.m88k.phys_page));
+	memset(cpu->cd.m88k.vaddr_to_tlbindex, 0,
+	    sizeof(cpu->cd.m88k.vaddr_to_tlbindex));
+	for (i = 0; i < M88K_MAX_VPH_TLB_ENTRIES; i++)
+		cpu->cd.m88k.vph_tlb_entry[i].valid = 0;
+
+	cpu->pc = 0;
+	m88k_pc_to_pointers(cpu);
+}
+
+
+/*
+ *  m88k_bus_error():
+ *
+ *  A local bus cycle ended with TEA (nothing answered, or a device refused
+ *  it). The CMMU of the access reports a bus error, with the physical
+ *  address, and the CPU takes an instruction or data access exception.
+ */
+void m88k_bus_error(struct cpu *cpu, int instr, uint32_t paddr)
+{
+	struct m8820x_cmmu *cmmu = cpu->cd.m88k.cmmu[instr? 0 : 1];
+	struct m8820x_cmmu *other = cpu->cd.m88k.cmmu[instr? 1 : 0];
+
+	if (cmmu != NULL) {
+		cmmu->reg[CMMU_PFSR] = CMMU_PFSR_BERROR << 16;
+		cmmu->reg[CMMU_PFAR] = paddr;
+	}
+	if (other != NULL)
+		other->reg[CMMU_PFSR] = CMMU_PFSR_SUCCESS << 16;
+
+	m88k_exception(cpu, instr ? M88K_EXCEPTION_INSTRUCTION_ACCESS
+	    : M88K_EXCEPTION_DATA_ACCESS, 0);
 }
 
 
