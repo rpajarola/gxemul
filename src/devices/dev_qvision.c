@@ -1137,7 +1137,11 @@ DEVICE_ACCESS(qvision_dac2)
  *	33CAh..33CDh	an 8x8 1-bit pattern for fills (1 bits are the
  *			foreground colour, 0 bits the background), written
  *			twice: lines 0..3, then lines 4..7
- *	33CEh		write 1 to start; bit 0 reads as busy (never)
+ *	33CEh		write 1 to start; bit 0 reads as busy (never); bit 6:
+ *			backwards (screen-to-screen copies): the source and
+ *			destination are the bottom right pixels, and the
+ *			engine goes right to left, bottom to top. QV.DLL sets
+ *			it to copy downwards
  *
  *  Lines of 8-bit pixels are 1024 pixels apart. The lines of a 1-bit
  *  source in video memory are padded to 32 bits (most significant bit
@@ -1214,11 +1218,23 @@ static void qv_blt_host_byte(struct qv_data *d, uint8_t b)
 		qv_blt_host_line(d);
 }
 
+/*  The 16 bytes of a BitBLT register group, as hex, for debug messages.  */
+static const char *qv_hex16(const uint8_t *r, int which)
+{
+	static char buf[3][33];
+	int i;
+
+	for (i = 0; i < 16; i++)
+		snprintf(buf[which] + i * 2, 3, "%02x", r[i]);
+	return buf[which];
+}
+
 static void qv_blt_start(struct qv_data *d)
 {
 	uint8_t *b0 = d->blt[0], *b1 = d->blt[1], *b2 = d->blt[2];
 	int w = qv_le16(b0 + 2) & 0xfff, h = qv_le16(b0 + 4) & 0xfff;
 	int source = d->gc[0x5a] & 3, linear = b0[0x0a] & 1, x, y;
+	int backwards = (b1[0x0e] & 0x40) != 0;
 	uint32_t src, dst;	/*  bits if linear, else pixels  */
 
 	d->blt_host = 0;
@@ -1240,13 +1256,19 @@ static void qv_blt_start(struct qv_data *d)
 		src /= 8;
 
 	debugmsg(d->subsys, "qvision", VERBOSITY_DEBUG,
-	    "BitBLT 0x%02x %ix%i src %s 0x%x%s dst 0x%x fg 0x%02x bg 0x%02x "
+	    "BitBLT 0x%02x %ix%i src %s 0x%x%s dst 0x%x%s fg 0x%02x bg 0x%02x "
 	    "rop 0x%x pattern %02x%02x%02x%02x%02x%02x%02x%02x\n", d->gc[0x5a],
 	    w, h, source == 0? "cpu" : source == 2? "pattern" : "vram", src,
-	    d->blt_mono? " (1-bit)" : "", dst, d->gc[0x43], d->gc[0x44],
+	    d->blt_mono? " (1-bit)" : "", dst, backwards? " backwards" : "",
+	    d->gc[0x43], d->gc[0x44],
 	    d->blt_rop, d->pattern[0], d->pattern[1], d->pattern[2],
 	    d->pattern[3], d->pattern[4], d->pattern[5], d->pattern[6],
 	    d->pattern[7]);
+	debugmsg(d->subsys, "qvision", VERBOSITY_DEBUG,
+	    "BitBLT registers: 23C0h %s 33C0h %s 63C0h %s GC 5Ah..5Fh "
+	    "%02x %02x %02x %02x %02x %02x\n", qv_hex16(b0, 0),
+	    qv_hex16(b1, 1), qv_hex16(b2, 2), d->gc[0x5a], d->gc[0x5b],
+	    d->gc[0x5c], d->gc[0x5d], d->gc[0x5e], d->gc[0x5f]);
 
 	if (w == 0 || h == 0 || w > QV_BLT_PITCH)
 		return;
@@ -1277,16 +1299,18 @@ static void qv_blt_start(struct qv_data *d)
 					    - 1)] >> (7 - (bit & 7))) & 1);
 				}
 		} else {
-			/*  Overlapping copies go the safe way:  */
-			int y0 = 0, x0 = 0, step = 1;
-			if (dst > src) {
-				y0 = h - 1; x0 = w - 1; step = -1;
-			}
-			for (y = y0; y >= 0 && y < h; y += step)
-				for (x = x0; x >= 0 && x < w; x += step)
-					qv_blt_put(d, dst + y * QV_BLT_PITCH + x,
-					    d->vram[(src + y * QV_BLT_PITCH + x)
+			/*  Backwards, the source and destination are the
+			    last pixels (bottom right), and the engine goes
+			    right to left, bottom to top; the driver chooses
+			    the direction for overlapping copies.  */
+			for (y = 0; y < h; y++)
+				for (x = 0; x < w; x++) {
+					uint32_t o = y * QV_BLT_PITCH + x;
+					if (backwards)
+						o = -o;
+					qv_blt_put(d, dst + o, d->vram[(src + o)
 					    & (QV_VRAM_SIZE - 1)]);
+				}
 		}
 		break;
 	case 2:	/*  A fill with the pattern (aligned to the screen):  */
