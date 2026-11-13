@@ -2886,17 +2886,18 @@ static const struct {
 	bool		big_endian;
 	uint32_t	ret[2];		/*  instructions which return "passed"  */
 	struct rom_test	tests[MAX_ROM_TESTS];
+	bool		sum16_at_end;	/*  ones' complement checksum  */
 } failing_tests[] = {
 	{ "KN02-BA", "V5.7j", 0xa0020000, 0x194a4, false,
 	    { 0x03e00008, 0x00001021 },		/*  jr ra; move v0,zero  */
 	    { { 0xa00212a0, 0x27bdffb8 }, { 0xa0021650, 0x27bdffd8 },
-	    { 0xa0021ef0, 0x27bdffc8 } } },
+	    { 0xa0021ef0, 0x27bdffc8 } }, false },
 	{ "PMAG-BA", "V5.3a", 0xa0020000, 0x1594, false,
 	    { 0x03e00008, 0x00001021 },
-	    { { 0xa00204c0, 0x3c0ea002 }, { 0xa0021b80, 0x3c02a002 } } },
+	    { { 0xa00204c0, 0x3c0ea002 }, { 0xa0021b80, 0x3c02a002 } }, false },
 	{ "PMAGB-BA", "V1.1", 0xa0020000, 0xcfc4, false,
 	    { 0x03e00008, 0x24020001 },		/*  jr ra; li v0,1  */
-	    { { 0xa0023f88, 0x27bdff80 }, { 0xa00283e0, 0x27bdff80 } } },
+	    { { 0xa0023f88, 0x27bdff80 }, { 0xa00283e0, 0x27bdff80 } }, false },
 	{ "187-Diag>", "01/14/94", 0xff800000, 0, true,
 	    { 0xf400c401, 0xf4405800 },		/*  jmp.n r1; or r2,r0,r0  */
 	    { { 0xff84aff0, 0x67ff0048 },	/*  CCHSD  */
@@ -2910,7 +2911,8 @@ static const struct {
 	    { 0xff848070, 0x67ff0068 },		/*  CCHWHIT  */
 	    { 0xff84bb40, 0x67ff00a8 },		/*  CCHLDS  */
 	    { 0xff84b7a0, 0x67ff00b8 },		/*  CCHLR  */
-	    { 0xff84c590, 0x67ff0048 } } },	/*  CCHBYP  */
+	    { 0xff84c590, 0x67ff0048 } },	/*  CCHBYP  */
+	    true },	/*  (187Bug checks its checksum in System mode)  */
 };
 
 static bool contains(const unsigned char *buf, size_t len, const char *s)
@@ -2996,6 +2998,17 @@ static char *rom_without_failing_tests(const char *path)
 		if (t < MAX_ROM_TESTS && failing_tests[r].tests[t].addr) {
 			/*  (Undo a partial patch of another version.)  */
 			patched = 0;
+		}
+		if (patched > 0 && failing_tests[r].sum16_at_end) {
+			/*  The last halfword is the 16-bit ones' complement sum
+			    of the others (big-endian).  */
+			uint64_t sum = 0;
+			for (i = 0; i + 2 < len; i += 2)
+				sum += (buf[i] << 8) | buf[i + 1];
+			while (sum >> 16)
+				sum = (sum & 0xffff) + (sum >> 16);
+			buf[len - 2] = sum >> 8;
+			buf[len - 1] = sum;
 		}
 		break;
 	}
