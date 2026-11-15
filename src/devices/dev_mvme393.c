@@ -102,8 +102,8 @@ static void dev_mvme393_display_key(struct machine *m, int ch)
 		dev_mvme393_enqueue_key(8, 1);             /* XK_BackSpace press */
 		dev_mvme393_enqueue_key(8, 0);             /* XK_BackSpace release */
 	} else if (ch == '\t') {
-		dev_mvme393_enqueue_key(10, 1);            /* XK_Tab press */
-		dev_mvme393_enqueue_key(10, 0);            /* XK_Tab release */
+		dev_mvme393_enqueue_key(9, 1);             /* XK_Tab press */
+		dev_mvme393_enqueue_key(9, 0);             /* XK_Tab release */
 	} else if (ch == 27) {
 		dev_mvme393_enqueue_key(27, 1);            /* XK_Escape press */
 		dev_mvme393_enqueue_key(27, 0);            /* XK_Escape release */
