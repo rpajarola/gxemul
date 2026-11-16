@@ -1446,17 +1446,30 @@ static void handle_event(const SDL_Event *ev)
 			last_keydown_scancode = SDL_SCANCODE_UNKNOWN;
 			last_keydown_repeat = false;
 			ungrab();
+			if (win->machine != NULL && win->machine->display_key_event != NULL)
+				win->machine->display_key_event(win->machine, 0, -1);
 			break;
 		}
 		break;
 
 	case SDL_KEYDOWN:
 		if ((win = fb_window_of(ev->key.windowID)) != NULL &&
-		    !menu_key_event(win, &ev->key))
-			key_down(win, &ev->key);
+		    !menu_key_event(win, &ev->key)) {
+			if ((ev->key.keysym.mod & KMOD_CTRL) &&
+			    (ev->key.keysym.mod & (KMOD_ALT | KMOD_GUI)))
+				ungrab();
+			if (win->machine != NULL && win->machine->display_key_event != NULL)
+				win->machine->display_key_event(win->machine, ev->key.keysym.sym, 1);
+			else
+				key_down(win, &ev->key);
+		}
 		break;
 
 	case SDL_KEYUP:
+		if ((win = fb_window_of(ev->key.windowID)) != NULL) {
+			if (win->machine != NULL && win->machine->display_key_event != NULL)
+				win->machine->display_key_event(win->machine, ev->key.keysym.sym, 0);
+		}
 		if (ev->key.keysym.scancode == last_keydown_scancode) {
 			last_keydown_scancode = SDL_SCANCODE_UNKNOWN;
 			last_keydown_repeat = false;
@@ -1470,6 +1483,7 @@ static void handle_event(const SDL_Event *ev)
 		    keyboard that takes it, were sent by key_down(), and the
 		    menus take all keys while they are open.)  */
 		if ((win = fb_window_of(ev->text.windowID)) != NULL &&
+		    (win->machine == NULL || win->machine->display_key_event == NULL) &&
 		    !(SDL_GetModState() & KMOD_CTRL) &&
 		    !(key_mods(win->machine, SDL_GetModState()) &
 		    DISPLAY_MOD_ALT) && SWIN(win)->menu_depth == 0)
