@@ -842,7 +842,7 @@ void dev_mvme393_init(struct machine *machine, struct mvme187_data *mvme187)
 	machine->display_key_handler = dev_mvme393_display_key;
 	machine->display_key_event = dev_mvme393_key_event;
 
-	machine_add_tickfunction(machine, dev_mvme393_tick, d, 12);
+	machine_add_tickfunction(machine, dev_mvme393_tick, d, 14);
 }
 
 DEVINIT(mvme393)
