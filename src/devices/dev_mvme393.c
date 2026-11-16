@@ -22,6 +22,7 @@
 #include "misc.h"
 
 #if defined(WITH_SDL) || defined(WITH_SDL2)
+#include <SDL.h>
 #include <SDL_keycode.h>
 #endif
 
@@ -149,17 +150,17 @@ static int dev_mvme393_sdl_to_keycode(int sym)
 	case SDLK_DOWN:		return 28;
 
 	/* Keypad */
-	case SDLK_KP_0:		return '0';
-	case SDLK_KP_1:		return '1';
-	case SDLK_KP_2:		return '2';
-	case SDLK_KP_3:		return '3';
-	case SDLK_KP_4:		return '4';
-	case SDLK_KP_5:		return '5';
-	case SDLK_KP_6:		return '6';
-	case SDLK_KP_7:		return '7';
-	case SDLK_KP_8:		return '8';
-	case SDLK_KP_9:		return '9';
-	case SDLK_KP_PERIOD:	return '.';
+	case SDLK_KP_0:		return (SDL_GetModState() & KMOD_NUM) ? '0' : 15;  /* XK_Insert */
+	case SDLK_KP_1:		return (SDL_GetModState() & KMOD_NUM) ? '1' : 30;  /* XK_End */
+	case SDLK_KP_2:		return (SDL_GetModState() & KMOD_NUM) ? '2' : 28;  /* XK_Down */
+	case SDLK_KP_3:		return (SDL_GetModState() & KMOD_NUM) ? '3' : 14;  /* XK_Next */
+	case SDLK_KP_4:		return (SDL_GetModState() & KMOD_NUM) ? '4' : 24;  /* XK_Left */
+	case SDLK_KP_5:		return (SDL_GetModState() & KMOD_NUM) ? '5' : -1;
+	case SDLK_KP_6:		return (SDL_GetModState() & KMOD_NUM) ? '6' : 26;  /* XK_Right */
+	case SDLK_KP_7:		return (SDL_GetModState() & KMOD_NUM) ? '7' : 29;  /* XK_Home */
+	case SDLK_KP_8:		return (SDL_GetModState() & KMOD_NUM) ? '8' : 25;  /* XK_Up */
+	case SDLK_KP_9:		return (SDL_GetModState() & KMOD_NUM) ? '9' : 31;  /* XK_Prior */
+	case SDLK_KP_PERIOD:	return (SDL_GetModState() & KMOD_NUM) ? '.' : 127; /* XK_Delete */
 	case SDLK_KP_DIVIDE:	return '/';
 	case SDLK_KP_MULTIPLY:	return '*';
 	case SDLK_KP_MINUS:	return '-';

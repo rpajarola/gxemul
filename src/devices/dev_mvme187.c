@@ -1657,13 +1657,13 @@ struct mvme187_data *dev_mvme187_init(struct machine *machine)
 	memory_device_register(mem, "reserved1", 0xfff00000, 0x40000,
 	    dev_mvme187_nodev_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "reserved2", 0xfff40200, 0xe00,
-	    dev_mvme187_nodev_access, d, DM_DEFAULT, NULL);
+	    dev_mvme187_ack_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "vsbchip2", 0xfff41000, 0x1000,
-	    dev_mvme187_nodev_access, d, DM_DEFAULT, NULL);
+	    dev_mvme187_ack_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "reserved3", 0xfff44000, 0x1000,
-	    dev_mvme187_nodev_access, d, DM_DEFAULT, NULL);
+	    dev_mvme187_ack_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "reserved4", 0xfff48000, 0x28000,
-	    dev_mvme187_nodev_access, d, DM_DEFAULT, NULL);
+	    dev_mvme187_ack_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "reserved5", 0xfff70000, 0x7000,
 	    dev_mvme187_ack_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "reserved6", 0xfff78000, 0x7000,
@@ -1671,9 +1671,9 @@ struct mvme187_data *dev_mvme187_init(struct machine *machine)
 	memory_device_register(mem, "reserved7", 0xfff80000, 0x20000,
 	    dev_mvme187_ack_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "reserved8", 0xfffa0000, 0x20000,
-	    dev_mvme187_nodev_access, d, DM_DEFAULT, NULL);
+	    dev_mvme187_ack_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "reserved9", 0xfffd0000, 0x10000,
-	    dev_mvme187_nodev_access, d, DM_DEFAULT, NULL);
+	    dev_mvme187_ack_access, d, DM_DEFAULT, NULL);
 	memory_device_register(mem, "vme_a16", 0xffff0000, 0x10000,
 	    dev_mvme187_a16_access, d, DM_DEFAULT, NULL);
 
