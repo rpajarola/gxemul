@@ -712,6 +712,9 @@ void DYNTRANS_PC_TO_POINTERS_GENERIC(struct cpu *cpu)
 	/*  Virtual to physical address translation:  */
 	ok = 0;
 #ifdef MODE32
+#ifdef DYNTRANS_M88K
+	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE)
+#endif
 	if (cpu->cd.DYNTRANS_ARCH.host_load[index] != NULL) {
 		physaddr = cpu->cd.DYNTRANS_ARCH.phys_addr[index];
 		ok = 1;
@@ -795,6 +798,9 @@ void DYNTRANS_PC_TO_POINTERS_GENERIC(struct cpu *cpu)
 	physaddr &= ~(DYNTRANS_PAGESIZE - 1);
 
 #ifdef MODE32
+#ifdef DYNTRANS_M88K
+	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE)
+#endif
 	if (cpu->cd.DYNTRANS_ARCH.host_load[index] == NULL) {
 #else
 	if (l3->host_load[x3] == NULL) {
@@ -872,6 +878,9 @@ void DYNTRANS_PC_TO_POINTERS_GENERIC(struct cpu *cpu)
 	/*  Here, ppp points to a valid physical page struct.  */
 
 #ifdef MODE32
+#ifdef DYNTRANS_M88K
+	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE)
+#endif
 	if (cpu->cd.DYNTRANS_ARCH.host_load[index] != NULL)
 		cpu->cd.DYNTRANS_ARCH.phys_page[index] = ppp;
 #else
@@ -921,11 +930,14 @@ void DYNTRANS_PC_TO_POINTERS_FUNC(struct cpu *cpu)
 	uint64_t
 #endif
 	    cached_pc = cpu->pc;
-	struct DYNTRANS_TC_PHYSPAGE *ppp;
+	struct DYNTRANS_TC_PHYSPAGE *ppp = NULL;
 
 #ifdef MODE32
 	int index;
 	index = DYNTRANS_ADDR_TO_PAGENR(cached_pc);
+#ifdef DYNTRANS_M88K
+	if (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE)
+#endif
 	ppp = cpu->cd.DYNTRANS_ARCH.phys_page[index];
 	if (ppp != NULL)
 		goto have_it;

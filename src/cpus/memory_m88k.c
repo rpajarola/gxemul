@@ -116,7 +116,7 @@ uint32_t m8820x_probe(struct cpu *cpu, struct m8820x_cmmu *cmmu,
 		if (!(batc & BATC_V) || (vaddr & 0xfff80000) !=
 		    (batc & 0xfff80000))
 			continue;
-		if (!supervisor != !(batc & BATC_SO))
+		if (!supervisor && (batc & BATC_SO))
 			continue;
 		*paddr = ((batc & 0x0007ffc0) << 13) | (vaddr & 0x0007ffff);
 		return CMMU_SSR_V | CMMU_SSR_BH |
@@ -203,9 +203,8 @@ int m88k_translate_v2p(struct cpu *cpu, uint64_t vaddr64,
 		if (!(batc & BATC_V))
 			continue;
 
-		/*  ... and have a matching supervisor/user bit:  */
-		if ((supervisor && !(batc & BATC_SO)) ||
-		    (!supervisor && (batc & BATC_SO)))
+		/*  Supervisor-only bit: user cannot access if SO is set:  */
+		if (!supervisor && (batc & BATC_SO))
 			continue;
 
 		/*  ... and matching virtual address:  */
