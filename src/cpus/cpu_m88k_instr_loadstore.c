@@ -267,15 +267,13 @@ void LS_N(struct cpu *cpu, struct m88k_instr_call *ic)
 	 *  1)  .usr used in non-supervisor mode
 	 *  2)  the page pointer is NULL
 	 *  3)  unaligned access
+	 *  4)  User mode access (host_load/host_store are supervisor only)
 	 */
 	if (unlikely(
-#ifdef LS_USR
 	    !(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE) ||
-#endif
-
 	    p == NULL
 #ifndef LS_1
-	    || addr & (LS_SIZE - 1)
+	    || (addr & (LS_SIZE - 1))
 #endif
 	    )) {
 		LS_GENERIC_N(cpu, ic);

@@ -1607,8 +1607,7 @@ void DYNTRANS_UPDATE_TRANSLATION_TABLE(struct cpu *cpu, uint64_t vaddr_page,
 	(void)useraccess;  // shut up compiler warning about unused var
 
 #ifdef DYNTRANS_M88K
-	/*  TODO  */
-	if (useraccess)
+	if (useraccess || !(cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE))
 		return;
 #endif
 

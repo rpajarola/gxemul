@@ -527,6 +527,9 @@ not just the device in question.
 	    && (cpu->cd.mips.cpu_type.mmu_model != MMU3K ||
             !(cpu->cd.mips.coproc[0]->reg[COP0_STATUS] & MIPS1_ISOL_CACHES))
 #endif
+#ifdef MEM_M88K
+	    && (cpu->cd.m88k.cr[M88K_CR_PSR] & M88K_PSR_MODE)
+#endif
 	    && !(misc_flags & PHYSICAL)
 	    && !(ok & MEMORY_NOT_FULL_PAGE)
 	    && !no_exceptions)
