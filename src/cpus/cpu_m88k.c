@@ -761,9 +761,11 @@ void m88k_exception(struct cpu *cpu, int vector, int is_trap)
 				cpu->cd.m88k.cr[M88K_CR_SNIP] = cpu->cd.m88k.delay_target | M88K_NIP_V;
 				cpu->cd.m88k.cr[M88K_CR_SFIP] = 0;
 			} else {
-				/*  Perhaps something like this could work:  */
-				cpu->cd.m88k.cr[M88K_CR_SNIP] = (cpu->pc + 4) | M88K_NIP_V;
-				cpu->cd.m88k.cr[M88K_CR_SFIP] = cpu->cd.m88k.delay_target | M88K_NIP_V;
+				/*  For interrupt or trap in a delay slot:
+				    Re-execute the delay slot instruction at cpu->pc,
+				    then proceed to delay_target:  */
+				cpu->cd.m88k.cr[M88K_CR_SNIP] = cpu->pc | M88K_NIP_V;
+				cpu->cd.m88k.cr[M88K_CR_SFIP] = cpu->cd.m88k.delay_target | M88K_FIP_V;
 			}
 		} else {
 			cpu->cd.m88k.cr[M88K_CR_SNIP] = (cpu->pc + 4) | M88K_NIP_V;
@@ -803,10 +805,12 @@ void m88k_exception(struct cpu *cpu, int vector, int is_trap)
 			break;
 
 		case M88K_EXCEPTION_INTERRUPT:
-			/*  When returning with rte, we want to re-  */
-			/*  execute the interrupted instruction:  */
-			cpu->cd.m88k.cr[M88K_CR_SNIP] -= 4;
-			cpu->cd.m88k.cr[M88K_CR_SFIP] -= 4;
+			/*  When returning with rte from a non-delay-slot instruction,
+			    we want to re-execute the interrupted instruction:  */
+			if (cpu->delay_slot != EXCEPTION_IN_DELAY_SLOT) {
+				cpu->cd.m88k.cr[M88K_CR_SNIP] -= 4;
+				cpu->cd.m88k.cr[M88K_CR_SFIP] -= 4;
+			}
 			break;
 
 		case M88K_EXCEPTION_INSTRUCTION_ACCESS:
