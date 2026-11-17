@@ -5838,4 +5838,39 @@ Changelog for GXemul:
 
 ==============  RELEASE 1.0.27  ==============
 
+20261115	AlphaStation 200/400 ("Avanti", Alpha):
+		- Models 200 4/166, 200 4/233, 400 4/233 and 250 4/266 (21064
+		  and 21064A), running the genuine DROM, SRM V7.0 and ARC 4.58
+		  consoles from the flash, switchable through CMOS.
+		- DECchip 21071 (APECS): COMANCHE memory controller, EPIC PCI
+		  bridge with direct mapped and scatter/gather DMA windows.
+		- 82378 SIO, 128-byte RTC CMOS, 8254 counter 2 output and gate
+		  in port 61h.
+		- NCR/Symbios 53C810 SCSI controller with SCRIPTS processor.
+		- On-board DECchip 21040 Ethernet; DE500-BA (21143) on the 400.
+		- ZLXp-E1 (DECchip 21030 "TGA") graphics with Bt485.
+		- Tru64 UNIX V5.1A and V5.1B install and run (CDE, networking);
+		  Windows NT Server 4.0 installs and runs, with Service Pack 6a.
+		- 21143/21040: descriptor skip length, empty descriptors.
+		- Simulated network: TCP to the guest with a sliding window
+		  and retransmission.
+20261116	AlphaStation 200/400: 53C810 simple arbitration (SCNTL0 START,
+		  SSTAT0 AIP, SBDL), which SRM V7.1 and later poll at power-up.
+		  The consoles on the Alpha Systems Firmware Update CDs (SRM
+		  V6.9-4 to V7.2-1) can be flashed and run; see
+		  machine_avanti.html.
 
+
+
+==============  RELEASE 1.0.31  ==============
+
+20261116	Motorola M88K: preserve SNIP and SFIP on interrupt/trap in
+		  branch delay slots. In delay slots, SNIP holds the delay slot
+		  instruction and SFIP holds the branch destination.
+		  Decrementing SFIP corrupted return targets upon rte, causing
+		  kernel data faults and misaligned access panics during process
+		  cleanup (hat_unload/hat_ptfree) on Motorola System V/88.
+
+
+
+==============  RELEASE 1.0.32  ==============
