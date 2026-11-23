@@ -5898,3 +5898,10 @@ Changelog for GXemul:
 
 
 ==============  RELEASE 1.0.34  ==============
+
+20261123	The control socket's keyboard types the control characters
+		in text as they are (\r, \t, \b and ESC as Return, Tab,
+		BackSpace and Escape type them), so MCP's enter, which adds a
+		\r to the text, presses Return. They typed nothing and were
+		counted as typed. A character that can't be typed is an error.
+		(Antoni Sawicki)

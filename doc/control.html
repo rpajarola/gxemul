@@ -610,7 +610,9 @@ client at the same time; see <a href="misc.html#vnc">VNC</a>.
 </table>
 
 <p><tt>keyboard</tt> types on the display's keyboard, as a VNC client or
-the SDL window does: the characters of <tt>text</tt> (Latin-1), or the
+the SDL window does: the characters of <tt>text</tt> (Latin-1, and
+control characters as they are, so <tt>\r</tt>, <tt>\t</tt>,
+<tt>\b</tt> and ESC are Return, Tab, BackSpace and Escape), or the
 <tt>keys</tt>, named as X11 keysyms: <tt>"a"</tt>, <tt>"space"</tt>,
 <tt>"Return"</tt>, <tt>"BackSpace"</tt>, <tt>"Tab"</tt>,
 <tt>"Escape"</tt>, <tt>"Delete"</tt>, <tt>"Insert"</tt>,

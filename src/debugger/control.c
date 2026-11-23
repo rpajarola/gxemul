@@ -2669,7 +2669,15 @@ CTL_HANDLER(cmd_keyboard)
 			if (typed >= room)
 				return fail(err, "busy", "the keyboard's input is "
 				    "full after %i characters", typed);
-			display_keysym(m, c, 0);
+			/*  A control character, such as the \r that MCP's enter
+			    adds, is typed as it is (as the Return, Tab,
+			    BackSpace and Escape keys type \r, \t, \b and ESC);
+			    display_keysym() takes only keysyms:  */
+			if (c < 0x20 || c == 0x7f)
+				display_char(m, c, 0);
+			else if (!display_keysym(m, c, 0))
+				return fail(err, "bad_arg", "character 0x%02x can't "
+				    "be typed (after %i characters)", c, typed);
 			typed ++;
 		}
 	} else {
