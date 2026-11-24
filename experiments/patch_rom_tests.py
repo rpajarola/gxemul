@@ -8,6 +8,13 @@
 #	    3/cache/isol, 3/cache/seg	need a real R3000 data cache
 #	    3/rtc/time			needs real-time I/O timing
 #
+#	KN02-AA V5.3s (5000/200 system ROM):
+#	    7/cache/isol		needs real R3000 caches
+#	    7/ecc/gen			needs the check bits of every word
+#					read from memory
+#	    7/rtc/period		needs a periodic interrupt within a
+#					CPU-timed loop
+#
 #	PMAG-BA V5.3a (option ROM of the color frame buffer):
 #	    0/curs, 0/ptrn		read the Bt459's signature registers,
 #					which gxemul does not compute
@@ -72,6 +79,16 @@ ROMS = [
             ('3/cache/seg', 0xa00212a0, 0x27bdffb8),
             ('3/cache/isol', 0xa0021650, 0x27bdffd8),
             ('3/rtc/time', 0xa0021ef0, 0x27bdffc8),
+        ],
+    },
+    {
+        'name': 'KN02-AA V5.3s',
+        'id': (b'KN02-AA', b'V5.3s'),
+        'base': 0xe334,
+        'tests': [
+            ('7/cache/isol', 0xa0022b50, 0x27bdffe8),
+            ('7/ecc/gen', 0xa0024db0, 0x27bdffd8),
+            ('7/rtc/period', 0xa0026320, 0x27bdffe0),
         ],
     },
     {

@@ -509,6 +509,8 @@ int memory_device_dispatch(struct cpu *cpu, struct memory *mem,
  */
 void memory_device_remove(struct memory *mem, int i)
 {
+	int j;
+
 	if (i < 0 || i >= mem->n_mmapped_devices) {
 		fatal_error(SUBSYS_MEMORY, "memory_device_remove",
 		    "invalid device number %i", i);
@@ -516,16 +518,27 @@ void memory_device_remove(struct memory *mem, int i)
 
 	mem->n_mmapped_devices --;
 
-	if (i == mem->n_mmapped_devices)
-		return;
-
-	memmove(&mem->devices[i], &mem->devices[i+1],
-	    sizeof(struct memory_device) * (mem->n_mmapped_devices - i));
+	if (i < mem->n_mmapped_devices)
+		memmove(&mem->devices[i], &mem->devices[i+1],
+		    sizeof(struct memory_device) *
+		    (mem->n_mmapped_devices - i));
 
 	if (i <= mem->last_accessed_device)
 		mem->last_accessed_device --;
 	if (mem->last_accessed_device < 0)
 		mem->last_accessed_device = 0;
+
+	/*  The addresses that devices are at may now be fewer:  */
+	mem->mmap_dev_minaddr = 0xffffffffffffffffULL;
+	mem->mmap_dev_maxaddr = 0;
+	for (j=0; j<mem->n_mmapped_devices; j++) {
+		if (mem->devices[j].baseaddr < mem->mmap_dev_minaddr)
+			mem->mmap_dev_minaddr = mem->devices[j].baseaddr &
+			    ~mem->dev_dyntrans_alignment;
+		if (mem->devices[j].endaddr > mem->mmap_dev_maxaddr)
+			mem->mmap_dev_maxaddr = ((mem->devices[j].endaddr - 1)
+			    | mem->dev_dyntrans_alignment) + 1;
+	}
 }
 
 

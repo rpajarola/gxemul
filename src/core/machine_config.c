@@ -3223,6 +3223,9 @@ void machine_config_export_free(struct mc_export *e)
  *
  *	KN02-BA V5.7j (5000/1xx system ROM):  3/cache/seg and 3/cache/isol
  *	    need a real R3000 data cache, and 3/rtc/time real-time I/O timing.
+ *	KN02-AA V5.3s (5000/200 system ROM):  7/cache/isol needs real R3000
+ *	    caches, 7/ecc/gen the check bits of every word read from memory,
+ *	    and 7/rtc/period a periodic interrupt within a CPU-timed loop.
  *	PMAG-BA V5.3a (color frame buffer option ROM):  0/curs and 0/ptrn
  *	    read the Bt459's signature registers, which aren't computed.
  *	PMAGB-BA V1.1 (HX frame buffer option ROM):  the Signature Analysis
@@ -3258,6 +3261,10 @@ static const struct {
 	    { 0x03e00008, 0x00001021 },		/*  jr ra; move v0,zero  */
 	    { { 0xa00212a0, 0x27bdffb8 }, { 0xa0021650, 0x27bdffd8 },
 	    { 0xa0021ef0, 0x27bdffc8 } }, false },
+	{ "KN02-AA", "V5.3s", 0xa0020000, 0xe334, false,
+	    { 0x03e00008, 0x00001021 },
+	    { { 0xa0022b50, 0x27bdffe8 }, { 0xa0024db0, 0x27bdffd8 },
+	    { 0xa0026320, 0x27bdffe0 } }, false },
 	{ "PMAG-BA", "V5.3a", 0xa0020000, 0x1594, false,
 	    { 0x03e00008, 0x00001021 },
 	    { { 0xa00204c0, 0x3c0ea002 }, { 0xa0021b80, 0x3c02a002 } }, false },

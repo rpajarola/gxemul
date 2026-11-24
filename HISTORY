@@ -5911,3 +5911,12 @@ Changelog for GXemul:
 		LANCE: a write to the Ethernet address ROM is a warning (shown
 		  with --log), not an error that stops the machine. The KN02-AA
 		  PROM's 7/cache/isol test writes there.
+		DECstation 5000/200: the real KN02-AA V5.3s PROM
+		  (prom_emulation no) powers up as on the real machine: it
+		  shows its banner, runs its self-tests, and shows ">>". It
+		  tells a power-up from a reset by reading memory, which gives
+		  bus errors while the ECC check bits are random (until
+		  written): gxemul does this once, for the word that it reads.
+		  It showed the PC and SP of a reset instead, without the
+		  tests. skip_failing_tests knows the KN02-AA's 7/cache/isol,
+		  7/ecc/gen and 7/rtc/period.

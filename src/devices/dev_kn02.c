@@ -144,6 +144,70 @@ DEVICE_ACCESS(kn02)
 }
 
 
+/*
+ *  Memory after a power-up:  until a word of it is written, its ECC check
+ *  bits are random, and reading it is a bus error.  The PROM tells a
+ *  power-up from a reset this way, reading the memory at 0x40000 with such
+ *  errors caught:  after a power-up it runs the self-tests, and after a
+ *  reset (when the memory is still valid) it shows the PC and SP at the
+ *  time of the reset instead.
+ *
+ *  Only the first word there is emulated:  reading it before it is written
+ *  is a bus error, once, and then the device goes away (at the next tick).
+ */
+
+#define	KN02_POWERUP_ADDR	0x40000
+#define	KN02_POWERUP_TICK_SHIFT	16
+
+struct kn02_powerup_data {
+	bool		valid;		/*  no more bus errors  */
+	bool		removed;
+};
+
+
+DEVICE_ACCESS(kn02_powerup)
+{
+	struct kn02_powerup_data *d = (struct kn02_powerup_data *) extra;
+	unsigned char *p;
+
+	if (writeflag == MEM_READ && !d->valid) {
+		d->valid = true;
+		return 0;
+	}
+	d->valid = true;
+
+	/*  Until the device is removed, it is plain RAM:  */
+	p = memory_paddr_to_hostaddr(mem, KN02_POWERUP_ADDR + relative_addr,
+	    writeflag);
+	if (writeflag == MEM_WRITE)
+		memcpy(p, data, len);
+	else if (p != NULL)
+		memcpy(data, p, len);
+	else
+		memset(data, 0, len);
+
+	return 1;
+}
+
+
+DEVICE_TICK(kn02_powerup)
+{
+	struct kn02_powerup_data *d = (struct kn02_powerup_data *) extra;
+	struct memory *mem = cpu->mem;
+	int i;
+
+	if (!d->valid || d->removed)
+		return;
+
+	for (i=0; i<mem->n_mmapped_devices; i++)
+		if (mem->devices[i].extra == d) {
+			memory_device_remove(mem, i);
+			break;
+		}
+	d->removed = true;
+}
+
+
 DEVINIT(kn02)
 {
 	struct kn02_data *d;
@@ -193,6 +257,20 @@ DEVINIT(kn02)
 	memory_device_register(devinit->machine->memory, devinit->name,
 	    devinit->addr, DEV_KN02_LENGTH, dev_kn02_access, d,
 	    DM_DYNTRANS_OK, &d->csr[0]);
+
+	/*  (Only the real PROM looks at the memory after a power-up.)  */
+	if (!devinit->machine->prom_emulation) {
+		struct kn02_powerup_data *p;
+
+		CHECK_ALLOCATION(p = (struct kn02_powerup_data *)
+		    malloc(sizeof(struct kn02_powerup_data)));
+		memset(p, 0, sizeof(struct kn02_powerup_data));
+		memory_device_register(devinit->machine->memory,
+		    "kn02_powerup", KN02_POWERUP_ADDR, sizeof(uint32_t),
+		    dev_kn02_powerup_access, p, DM_DEFAULT, NULL);
+		machine_add_tickfunction(devinit->machine,
+		    dev_kn02_powerup_tick, p, KN02_POWERUP_TICK_SHIFT);
+	}
 
 	return 1;
 }

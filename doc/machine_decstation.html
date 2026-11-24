@@ -892,7 +892,10 @@ on framebuffer would be nice.)</font>
 <p>Some of the tests fail only because GXemul doesn't emulate what they
 check: on the KN02-BA V5.7j, <tt>3/cache/seg</tt> and
 <tt>3/cache/isol</tt> (a real R3000 data cache) and <tt>3/rtc/time</tt>
-(real-time I/O timing), on the PMAG-BA V5.3a,
+(real-time I/O timing), on the KN02-AA V5.3s, <tt>7/cache/isol</tt>
+(real R3000 caches), <tt>7/ecc/gen</tt> (the check bits of every word
+read from memory) and <tt>7/rtc/period</tt> (a periodic interrupt within
+a loop timed by the CPU), on the PMAG-BA V5.3a,
 <tt>0/curs</tt> and <tt>0/ptrn</tt> (the Bt459's signature registers),
 and on the PMAGB-BA V1.1, two parts of <tt>0/patt</tt> and
 <tt>0/line</tt> (the <a href="#HX">HX</a>'s signature registers).
@@ -949,7 +952,7 @@ interface, a PMAD-AA.)
 <p>The PROM then finds the disks with the SCSI ROM's own driver:
 
 <pre>
-	KN02-AA V5.3s    (PC: 0x0, SP: 0xa0007f00)
+	KN02-AA V5.3s
 	>><b>cnfg</b>
 	 7: KN02-AA  DEC      V5.3s    TCF0  (0220cpu with 128 MB memory)
 	 6: PMAD-AA  DEC      V5.3a    TCF0  (enet: 10-20-30-00-00-10)
@@ -967,6 +970,15 @@ interface, a PMAD-AA.)
 <p>(<tt>-a</tt> boots OSF/1 multi-user; without it, it comes
 up single-user.)
 
+<p>At power-up, the PROM shows its banner, then runs its self-tests
+(those that <tt>testaction</tt> chooses: <tt>q</tt>, the quick ones, by
+default), and then shows the <tt>&gt;&gt;</tt> prompt. It tells a power-up
+from a reset by reading memory, which causes bus errors while its ECC
+check bits are still random; GXemul emulates this for the first word
+that the PROM reads. After a reset (e.g. when an operating system
+reboots), the memory is valid, and the PROM shows the PC and SP at the
+time of the reset in its banner instead, without running the tests.
+
 <p>An option ROM is one byte wide, with each byte in its own 32-bit word
 of the slot's address space; an option ROM image has one ROM
 byte per byte of the file (the low byte of each word).
@@ -976,9 +988,12 @@ and 6 ROMs are soldered to the 5000/200's system module, but the ROM of
 an option card can be dumped the same way, and loaded in its slot.
 
 <p>The diagnostics in the PMAZ-AA and PMAD-AA ROMs pass (e.g.
-<tt>t 5/cntl</tt>, <tt>t 5/sram</tt>). Some of the PROM's own tests of
-the system module (slot 7: caches, serial lines, and memory ECC) fail,
-as those are not emulated in that detail.
+<tt>t 5/cntl</tt>, <tt>t 5/sram</tt>), and so do the PROM's tests of the
+serial lines (in the DC7085's maintenance mode, which loops each line
+back). Its tests of the caches, of the memory's ECC, and of the RTC's
+periodic interrupt fail, as those are not emulated in that detail;
+<tt>"skip_failing_tests": true</tt> (see <a href="#PROM">above</a>)
+makes them pass.
 </p>
 
 
