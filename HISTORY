@@ -5903,3 +5903,8 @@ Changelog for GXemul:
 		  and other exceptions to 0xbfc00180, not to the R4000's
 		  addresses (they went to 0xbfc00200 and 0xbfc00280). The
 		  KN02-AA PROM's bus error handler never ran.
+		DC7085: in maintenance mode, each line's transmitter is looped
+		  back to its receiver, and nothing from outside is received; a
+		  master clear empties the receive silo; and the transmit line
+		  number is cleared with TRDY. The KN02-AA PROM's serial line
+		  tests pass.

@@ -151,7 +151,9 @@ DEVICE_TICK(dc7085)
 			return;
 	}
 
-	lk201_tick(cpu->machine, &d->lk201);
+	/*  (In maintenance mode, the lines outside are not received.)  */
+	if (!(d->regs.dc_csr & CSR_MAINT))
+		lk201_tick(cpu->machine, &d->lk201);
 
 	avail = d->cur_rx_queue_pos_write != d->cur_rx_queue_pos_read;
 
@@ -186,8 +188,18 @@ DEVICE_ACCESS(dc7085)
 			d->regs.dc_csr &= ~(CSR_TIE | CSR_RIE | CSR_MSE
 			    | CSR_CLR | CSR_MAINT);
 			d->regs.dc_csr |= idata;
+
+			/*  Master clear empties the receive silo:  */
+			if (idata & CSR_CLR) {
+				d->cur_rx_queue_pos_read =
+				    d->cur_rx_queue_pos_write;
+				d->regs.dc_csr &= ~CSR_RDONE;
+				INTERRUPT_DEASSERT(d->irq);
+			}
+
 			if (!(d->regs.dc_csr & CSR_MSE))
-				d->regs.dc_csr &= ~(CSR_TRDY | CSR_RDONE);
+				d->regs.dc_csr &= ~(CSR_TRDY | CSR_TX_LINE_NUM
+				    | CSR_RDONE);
 			goto do_return;
 		} else {
 			odata = d->regs.dc_csr;
@@ -224,7 +236,7 @@ DEVICE_ACCESS(dc7085)
 	case 0x10:	/*  TCR:  */
 		if (writeflag == MEM_WRITE) {
 			d->regs.dc_tcr = idata;
-			d->regs.dc_csr &= ~CSR_TRDY;
+			d->regs.dc_csr &= ~(CSR_TRDY | CSR_TX_LINE_NUM);
 			INTERRUPT_DEASSERT(d->irq);
 			goto do_return;
 		} else {
@@ -238,9 +250,14 @@ DEVICE_ACCESS(dc7085)
 			    RBUF_LINE_NUM_SHIFT) & 0x3;
 			idata &= 0xff;
 
-			lk201_tx_data(&d->lk201, line_no, idata);
+			/*  Maintenance mode loops each transmitter back to
+			    its receiver (the ROM's dz self-tests use it):  */
+			if (d->regs.dc_csr & CSR_MAINT)
+				add_to_rx_queue(d, idata, line_no);
+			else
+				lk201_tx_data(&d->lk201, line_no, idata);
 
-			d->regs.dc_csr &= ~CSR_TRDY;
+			d->regs.dc_csr &= ~(CSR_TRDY | CSR_TX_LINE_NUM);
 			INTERRUPT_DEASSERT(d->irq);
 		} else {
 			/*  read:  As if a terminal (or modem) were connected
