@@ -563,7 +563,8 @@ int get_cmd_args(int argc, char *argv[], struct emul *emul,
 
 	// If -V is used, -q is ignored.
 	if (single_step && quiet_mode) {
-		fatal_error(SUBSYS_STARTUP, "main", "ignoring -q, because -V is used");
+		debugmsg(SUBSYS_STARTUP, "main", VERBOSITY_WARNING,
+		    "ignoring -q, because -V is used");
 		quiet_mode = 0;
 	}
 
