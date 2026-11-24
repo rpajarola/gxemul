@@ -5920,3 +5920,7 @@ Changelog for GXemul:
 		  It showed the PC and SP of a reset instead, without the
 		  tests. skip_failing_tests knows the KN02-AA's 7/cache/isol,
 		  7/ecc/gen and 7/rtc/period.
+		MC146818: the DECstations keep the time of the year in a 1972
+		  calendar (a leap year), as the PROMs and Ultrix read and set
+		  it: day n of the year is day n of 1972. After February of
+		  other years, Ultrix's date was a day ahead.

@@ -595,6 +595,24 @@ static void mc146818_update_time(struct mc_data *d)
 		d->reg[4 * MC_YEAR] = d->dec_year;
 
 		/*
+		 *  On the DECstations, the time of the year is kept in a 1972
+		 *  calendar (a leap year), as the PROMs, Ultrix, and NetBSD
+		 *  read and set it: day n of this year is day n of 1972.
+		 *  (After February of other years, that's the date of the day
+		 *  before; the host's date made Ultrix a day ahead.)
+		 */
+		if (d->dec_year == 72) {
+			static const int mdays_1972[12] = { 31, 29, 31, 30,
+			    31, 30, 31, 31, 30, 31, 30, 31 };
+			int yday = tmp->tm_yday, mon = 0;
+
+			while (mon < 11 && yday >= mdays_1972[mon])
+				yday -= mdays_1972[mon++];
+			d->reg[4 * MC_MONTH] = mon + 1;
+			d->reg[4 * MC_DOM]   = yday + 1;
+		}
+
+		/*
 		 *  Linux on DECstation stores the year in register 63,
 		 *  but no other DECstation OS does? (Hm.)  It is NVRAM,
 		 *  though, which the 5000/1xx PROM's self-test writes
