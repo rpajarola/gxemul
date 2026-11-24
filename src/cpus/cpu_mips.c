@@ -1954,9 +1954,11 @@ void mips_cpu_exception(struct cpu *cpu, int exccode, int tlb, uint64_t vaddr,
 	else
 		cpu->delay_slot = NOT_DELAYED;
 
-	/*  TODO: This is true for MIPS64, but how about others?  */
+	/*  TODO: This is true for MIPS64, but how about others?
+	    (R2000/R3000 have theirs at 0xbfc00100 and 0xbfc00180.)  */
 	if (reg[COP0_STATUS] & STATUS_BEV)
-		base = 0xffffffffbfc00200ULL;
+		base = exc_model == EXC3K ?
+		    0xffffffffbfc00100ULL : 0xffffffffbfc00200ULL;
 	else
 		base = 0xffffffff80000000ULL;
 

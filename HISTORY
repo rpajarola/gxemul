@@ -5898,3 +5898,8 @@ Changelog for GXemul:
 
 
 ==============  RELEASE 1.0.34  ==============
+
+20261124	MIPS R2000/R3000: with BEV set, a UTLB miss goes to 0xbfc00100
+		  and other exceptions to 0xbfc00180, not to the R4000's
+		  addresses (they went to 0xbfc00200 and 0xbfc00280). The
+		  KN02-AA PROM's bus error handler never ran.
