@@ -5908,3 +5908,6 @@ Changelog for GXemul:
 		  master clear empties the receive silo; and the transmit line
 		  number is cleared with TRDY. The KN02-AA PROM's serial line
 		  tests pass.
+		LANCE: a write to the Ethernet address ROM is a warning (shown
+		  with --log), not an error that stops the machine. The KN02-AA
+		  PROM's 7/cache/isol test writes there.

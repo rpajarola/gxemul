@@ -969,12 +969,16 @@ DEVICE_ACCESS(le)
 
 		if (writeflag == MEM_READ) {
 			odata = (a << 24) + (a << 16) + (a << 8) + a;
-		} else {
-			debugmsg(SUBSYS_DEVICE, "le", VERBOSITY_DEBUG, "[ le: WRITE to ethernet addr (%08lx):",
-			    (long)relative_addr);
-			for (i=0; i<len; i++)
-				fatal_error(SUBSYS_DEVICE, "le", " %02x", data[i]);
-			fatal_error(SUBSYS_DEVICE, "le", " ]\n");
+		} else if (debugmsg_is_active(d->subsys, VERBOSITY_WARNING)) {
+			/*  (The KN02-AA PROM's 7/cache/isol test writes here.)  */
+			char hexbuf[64];
+			size_t hpos = 0;
+			for (i = 0; i < len && hpos + 4 < sizeof(hexbuf); i++)
+				hpos += snprintf(hexbuf + hpos,
+				    sizeof(hexbuf) - hpos, " %02x", data[i]);
+			debugmsg(d->subsys, "le", VERBOSITY_WARNING,
+			    "write to the ethernet address ROM (0x%05x):%s",
+			    (int)relative_addr, hexbuf);
 		}
 
 		retval = 13;	/*  13 cycles  */
