@@ -131,6 +131,8 @@ struct machine_config {
 	bool		net_nat;	/*  the simulated gateway  */
 	char		*net_nat_net;	/*  e.g. "10.0.0.0/8"  */
 	char		*net_nat_gateway;	/*  "" = the last address  */
+	int		n_net_forwards;	/*  host ports passed to the guest  */
+	char		**net_forwards;
 	struct mc_net_link net_udp;
 	struct mc_net_link net_l2tp;
 	uint32_t	net_l2tp_session;

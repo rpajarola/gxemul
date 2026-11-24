@@ -5901,3 +5901,12 @@ Changelog for GXemul:
 
 20261124	Simulated gateway: the ACK of the guest's FIN counts the FIN
 		  (a FIN takes one sequence number).
+		Port forwarding through the simulated gateway: "forwards" in
+		  the "nat" part of a machine.json's "network" ("Port forwards
+		  to the guest" on the configuration window's Network page;
+		  older files have it in "network" itself) lists TCP ports of
+		  the host to pass on to the guest, as QEMU's hostfwd, e.g.
+		  "tcp:127.0.0.1:2323-:23". The guest sees the connections come
+		  from the gateway, and from a reserved port when the client on
+		  the host used one (as rsh and rlogin do). See
+		  doc/networking.html.

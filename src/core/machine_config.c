@@ -51,7 +51,8 @@
  *	  "slots": { "0": "PMAG-BA.bin" },
  *	  "network": { "enabled": true, "mac": "",
  *	               "nat": { "enabled": true, "net": "10.0.0.0/8",
- *	                        "gateway": "10.0.0.254" },
+ *	                        "gateway": "10.0.0.254",
+ *	                        "forwards": [ "tcp:127.0.0.1:2514-:514" ] },
  *	               "udp": { "enabled": true, "local_port": 0,
  *	                        "remote": "host:port" },
  *	               "l2tpv3": { "enabled": true, "session": 1,
@@ -80,6 +81,9 @@
  *  "" = a random one in the maker's block (08:00:2b:xx:xx:xx for DEC),
  *  saved in the file.  Older files' "type", "ipv4", "ipv4len",
  *  "local_port", "remotes", "tapdev", "gateway" and "l2tp" are read too.
+ *  The gateway passes connections to the host's ports in "nat"'s
+ *  "forwards" on to the guest, e.g. "tcp:127.0.0.1:2514-:514" (see
+ *  net_forward_parse()); older files have "forwards" in "network".
  */
 
 #include <ctype.h>
@@ -267,6 +271,9 @@ void machine_config_free(struct machine_config *c)
 	for (i = 0; i < MC_MAX_SLOTS; i++)
 		free(c->slot_rom[i]);
 	free(c->net_nat_net); free(c->net_nat_gateway);
+	for (i = 0; i < c->n_net_forwards; i++)
+		free(c->net_forwards[i]);
+	free(c->net_forwards);
 	free_link(&c->net_udp);
 	free_link(&c->net_l2tp);
 	free(c->net_tapdev); free(c->net_l2tp_cookie); free(c->net_mac);
@@ -319,6 +326,10 @@ struct machine_config *machine_config_copy(const struct machine_config *src)
 
 	c->net_nat_net = xstrdup(src->net_nat_net);
 	c->net_nat_gateway = xstrdup(src->net_nat_gateway);
+	c->n_net_forwards = 0; c->net_forwards = NULL;
+	for (i = 0; i < src->n_net_forwards; i++)
+		machine_config_add_string(&c->n_net_forwards, &c->net_forwards,
+		    src->net_forwards[i]);
 	copy_link(&c->net_udp, &src->net_udp);
 	copy_link(&c->net_l2tp, &src->net_l2tp);
 	c->net_tapdev = xstrdup(src->net_tapdev);
@@ -1249,8 +1260,8 @@ static const struct key_alias serial_aliases[] = {
 static const char *network_keys[] = {
 	"enabled", "l2tpv3", "mac", "nat", "tap", "udp",
 	/*  Older files':  */
-	"gateway", "ipv4", "ipv4len", "l2tp", "local_port", "remotes",
-	"tapdev", "type"
+	"forwards", "gateway", "ipv4", "ipv4len", "l2tp", "local_port",
+	"remotes", "tapdev", "type"
 };
 static const struct key_alias network_aliases[] = {
 	{ "enable", "enabled" },
@@ -1263,10 +1274,11 @@ static const struct key_alias network_aliases[] = {
 };
 
 static const char *nat_keys[] = {
-	"enabled", "gateway", "net"
+	"enabled", "forwards", "gateway", "net"
 };
 static const struct key_alias nat_aliases[] = {
 	{ "enable", "enabled" },
+	{ "forward", "forwards" },
 	{ "network", "net" },
 	{ "ipv4", "net" },
 	{ "subnet", "net" },
@@ -1460,6 +1472,9 @@ static void parse_network(cJSON *o, struct machine_config *c, char **errp)
 	    network_aliases, N_KEYS(network_aliases), errp);
 	get_bool(o, "network", "enabled", &c->net, errp);
 	get_str(o, "network", "mac", &c->net_mac, errp);
+	/*  (Older files have the gateway's port forwards here.)  */
+	get_list(o, "network", "forwards", &c->n_net_forwards,
+	    &c->net_forwards, errp);
 
 	for (i = 0; i < N_KEYS(old_keys); i++)
 		if (cJSON_GetObjectItemCaseSensitive(o, old_keys[i]) != NULL)
@@ -1484,6 +1499,8 @@ static void parse_network(cJSON *o, struct machine_config *c, char **errp)
 			machine_config_set(&c->net_nat_gateway, "");
 		get_str(v, "network.nat", "net", &c->net_nat_net, errp);
 		get_str(v, "network.nat", "gateway", &c->net_nat_gateway, errp);
+		get_list(v, "network.nat", "forwards", &c->n_net_forwards,
+		    &c->net_forwards, errp);
 	}
 
 	if ((v = net_part(o, "udp", "network.udp", udp_keys, N_KEYS(udp_keys),
@@ -1997,6 +2014,9 @@ bool machine_config_save(struct machine_config *c, const char *path,
 		cJSON_AddBoolToObject(n, "enabled", true);
 		cJSON_AddStringToObject(n, "net", c->net_nat_net);
 		cJSON_AddStringToObject(n, "gateway", c->net_nat_gateway);
+		if (c->n_net_forwards > 0)
+			add_list(n, "forwards", c->n_net_forwards,
+			    c->net_forwards);
 	}
 	if (c->net_udp.enabled) {
 		n = cJSON_AddObjectToObject(o, "udp");
@@ -2355,6 +2375,7 @@ static char *check_link(const struct mc_net_link *l, const char *what)
 static char *check_network(const struct machine_config *c)
 {
 	char *err;
+	int i;
 
 	if (c->net_tap && (c->net_nat || c->net_udp.enabled ||
 	    c->net_l2tp.enabled))
@@ -2385,6 +2406,21 @@ static char *check_network(const struct machine_config *c)
 				    "on %s", c->net_nat_gateway,
 				    c->net_nat_net);
 		}
+	}
+
+	for (i = 0; i < c->n_net_forwards; i++) {
+		struct sockaddr_in host;
+		struct in_addr guest;
+		bool guest_given;
+		int guest_port;
+		const char *problem = net_forward_parse(c->net_forwards[i],
+		    &host, &guest, &guest_given, &guest_port);
+		if (problem != NULL)
+			return xprintf("the port forward \"%s\" %s",
+			    c->net_forwards[i], problem);
+		if (!c->net_nat)
+			return xstrdup("only the simulated gateway (NAT) can "
+			    "forward ports");
 	}
 
 	if (c->net_udp.enabled && (err = check_link(&c->net_udp, "UDP")) != NULL)
@@ -3587,6 +3623,9 @@ bool machine_config_apply(struct machine_config *c, struct emul *emul,
 			fprintf(stderr, "Bad L2TPv3 settings.\n");
 			return false;
 		}
+		for (i = 0; i < c->n_net_forwards; i++)
+			if (!net_add_forward(emul->net, c->net_forwards[i]))
+				return false;
 	}
 
 	/*  Files to load: the system ROM, or the others (with PROM

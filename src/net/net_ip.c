@@ -318,6 +318,11 @@ void net_ip_tcp_connectionreply(struct net *net, struct nic_data *nic,
 		lp->data[47] |= 0x04;	/*  RST  */
 	if (net->tcp_connections[con_id].state >= TCP_OUTSIDE_DISCONNECTED)
 		lp->data[47] |= 0x01;	/*  FIN  */
+	if (net->tcp_connections[con_id].state == TCP_INSIDE_CONNECTING) {
+		/*  Opening a forwarded connection: just SYN, no ACK  */
+		lp->data[47] = 0x02;
+		memset(lp->data + 42, 0, 4);
+	}
 
 	/*  Window  */
 	lp->data[48] = 0x10;
@@ -371,6 +376,35 @@ void net_ip_tcp_connectionreply(struct net *net, struct nic_data *nic,
 
 	if (connecting)
 		net->tcp_connections[con_id].outside_seqnr ++;
+}
+
+
+/*
+ *  tcp_syn_wscale():
+ *
+ *  The guest's window scale, if its SYN (or SYN+ACK) has one (we always
+ *  offer ours, shift 0), else -1.
+ */
+static int tcp_syn_wscale(unsigned char *packet, int data_offset, int len)
+{
+	int i, wscale = -1;
+
+	for (i = 34 + 20; i < data_offset && i < len; ) {
+		int kind = packet[i];
+		if (kind == 0)
+			break;
+		if (kind == 1) {
+			i ++;
+			continue;
+		}
+		if (i + 1 >= len || packet[i + 1] < 2)
+			break;
+		if (kind == 3 && packet[i + 1] == 3 && i + 2 < len)
+			wscale = packet[i + 2] > 14? 14 : packet[i + 2];
+		i += packet[i + 1];
+	}
+
+	return wscale;
 }
 
 
@@ -490,11 +524,43 @@ static void net_ip_tcp(struct net *net, struct nic_data *nic,
 		}
 	}
 
+	/*  The guest OS' answer to the SYN of a forwarded connection?  */
+	if (con_id >= 0 && net->tcp_connections[con_id].state ==
+	    TCP_INSIDE_CONNECTING) {
+		struct tcp_connection *tc = &net->tcp_connections[con_id];
+
+		if (rst) {
+			debugmsg(SUBSYS_NET, "net_ip", VERBOSITY_DEBUG, "[ net: TCP: "
+			    "the guest refused forwarded connection %i ]", con_id);
+			tcp_closeconnection(net, con_id);
+		} else if (syn && ack && acknr == tc->outside_seqnr + 1) {
+			tc->outside_seqnr ++;
+			tc->inside_seqnr = seqnr;
+			tc->inside_acknr = acknr;
+			tc->inside_wscale = tcp_syn_wscale(packet, data_offset,
+			    len);
+			tc->inside_window = window;	/*  (a SYN's isn't scaled)  */
+			tc->outside_acknr = seqnr + 1;
+			tc->state = TCP_OUTSIDE_CONNECTED;
+			tc->incoming_buf_len = 0;
+			tc->incoming_buf_seqnr = tc->outside_seqnr;
+			tc->last_progress_ms = tcp_now_ms();
+			net->timestamp ++;
+			tc->last_used_timestamp = net->timestamp;
+
+			/*  ACK the guest's SYN:  */
+			net_ip_tcp_connectionreply(net, nic, con_id, 0, NULL,
+			    0, 0);
+		}
+		return;
+	}
+
 	/*
-	 *  Unknown connection, and not SYN? Then drop the packet.
+	 *  Unknown connection, and not SYN (or SYN+ACK, which answers
+	 *  something)? Then drop the packet.
 	 *  TODO:  Send back RST?
 	 */
-	if (con_id < 0 && !syn) {
+	if (con_id < 0 && (!syn || ack)) {
 		debugmsg(SUBSYS_NET, "net_ip", VERBOSITY_DEBUG, "[ net: TCP: dropping packet from unknown connection,"
 		    " %i.%i.%i.%i:%i -> %i.%i.%i.%i:%i %s%s%s%s%s]\n",
 		    packet[26], packet[27], packet[28], packet[29], srcport,
@@ -562,25 +628,8 @@ static void net_ip_tcp(struct net *net, struct nic_data *nic,
 		memcpy(net->tcp_connections[con_id].outside_ip_address,
 		    packet + 30, 4);
 		net->tcp_connections[con_id].outside_tcp_port = dstport;
-		net->tcp_connections[con_id].inside_wscale = -1;
-
-		/*  The guest's window scale, if its SYN has one (we always
-		    offer ours, shift 0):  */
-		for (i = 34 + 20; i < data_offset && i < len; ) {
-			int kind = packet[i];
-			if (kind == 0)
-				break;
-			if (kind == 1) {
-				i ++;
-				continue;
-			}
-			if (i + 1 >= len || packet[i + 1] < 2)
-				break;
-			if (kind == 3 && packet[i + 1] == 3 && i + 2 < len)
-				net->tcp_connections[con_id].inside_wscale =
-				    packet[i + 2] > 14? 14 : packet[i + 2];
-			i += packet[i + 1];
-		}
+		net->tcp_connections[con_id].inside_wscale =
+		    tcp_syn_wscale(packet, data_offset, len);
 		net->tcp_connections[con_id].inside_window = window;
 
 		net->tcp_connections[con_id].socket =
@@ -1737,6 +1786,119 @@ void net_udp_rx_avail(struct net *net, struct nic_data *nic)
 
 
 /*
+ *  forward_port_in_use():
+ *
+ *  Is a forwarded connection from this port of the gateway to fw's port
+ *  on the guest in use?
+ */
+static bool forward_port_in_use(struct net *net, struct net_forward *fw,
+	int port)
+{
+	int i;
+
+	for (i = 0; i < MAX_TCP_CONNECTIONS; i++) {
+		struct tcp_connection *tc = &net->tcp_connections[i];
+		if (tc->in_use && tc->outside_tcp_port == port &&
+		    tc->inside_tcp_port == fw->guest_port &&
+		    memcmp(tc->outside_ip_address, net->gateway_ipv4_addr,
+		    4) == 0 &&
+		    memcmp(tc->inside_ip_address, fw->guest_ipv4_addr, 4) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+
+/*
+ *  forward_source_port():
+ *
+ *  The port that a forwarded connection comes from, as the guest sees it.
+ *  If the client's port on the host is a reserved one (below 1024), as
+ *  rsh's and rlogin's are, then it is one too, else it is the client's.
+ *  The reserved ports rotate, so that the guest has long forgotten the last
+ *  connection from a port when it is used again.  Returns -1 if the port
+ *  is in use.
+ */
+static int forward_source_port(struct net *net, struct net_forward *fw,
+	int client_port)
+{
+	int i, port;
+
+	if (client_port >= 1024)
+		return forward_port_in_use(net, fw, client_port) ? -1 :
+		    client_port;
+
+	for (i = 512; i < 1024; i++) {
+		port = net->forward_next_port;
+		net->forward_next_port = port > 512 ? port - 1 : 1023;
+		if (!forward_port_in_use(net, fw, port))
+			return port;
+	}
+
+	return -1;
+}
+
+
+/*
+ *  tcp_forward_accept():
+ *
+ *  Accept a connection to a forwarded port on the host, and open a
+ *  connection to the guest OS for it: the gateway sends it a SYN.
+ */
+static void tcp_forward_accept(struct net *net, struct nic_data *nic,
+	struct net_forward *fw)
+{
+	struct sockaddr_in from;
+	socklen_t fromlen = sizeof(from);
+	struct tcp_connection *tc;
+	int s, con_id, port;
+
+	s = accept(fw->socket, (struct sockaddr *)&from, &fromlen);
+	if (s < 0)
+		return;
+
+	for (con_id = 0; con_id < MAX_TCP_CONNECTIONS; con_id++)
+		if (!net->tcp_connections[con_id].in_use)
+			break;
+	port = forward_source_port(net, fw, ntohs(from.sin_port));
+	if (con_id >= MAX_TCP_CONNECTIONS || port < 0) {
+		debugmsg(SUBSYS_NET, "TCP", VERBOSITY_WARNING, "no room for "
+		    "a connection to forwarded port %i", fw->guest_port);
+		socket_close(s);
+		return;
+	}
+
+	socket_set_nonblocking(s);
+	socket_set_cloexec(s);
+
+	/*  (A free connection has no buffer: tcp_closeconnection() freed it.)  */
+	tc = &net->tcp_connections[con_id];
+	memset(tc, 0, sizeof(struct tcp_connection));
+	tc->in_use = 1;
+	tc->forwarded = 1;
+	tc->socket = s;
+	memcpy(tc->ethernet_address, nic->mac_address, 6);
+	memcpy(tc->inside_ip_address, fw->guest_ipv4_addr, 4);
+	tc->inside_tcp_port = fw->guest_port;
+	memcpy(tc->outside_ip_address, net->gateway_ipv4_addr, 4);
+	tc->outside_tcp_port = port;
+	tc->inside_wscale = -1;
+	tc->outside_seqnr = ((random() & 0xffff) << 16) + (random() & 0xffff);
+	tc->state = TCP_INSIDE_CONNECTING;
+	tc->syn_time = time(NULL);
+	net->timestamp ++;
+	tc->last_used_timestamp = net->timestamp;
+
+	debugmsg(SUBSYS_NET, "net_ip", VERBOSITY_DEBUG, "[ net: TCP: forwarded "
+	    "connection %i from port %i, as port %i ]", con_id,
+	    ntohs(from.sin_port), port);
+
+	net_ip_tcp_connectionreply(net, nic, con_id, 0, NULL, 0, 0);
+}
+
+
+/*
  *  net_tcp_rx_avail():
  *
  *  Receive any available TCP packets (from the outside world).
@@ -1745,7 +1907,11 @@ void net_tcp_rx_avail(struct net *net, struct nic_data *nic)
 {
 	int received_packets_this_tick = 0;
 	int max_packets_this_tick = 200;
-	int con_id;
+	int con_id, i;
+
+	/*  New connections to forwarded ports:  */
+	for (i = 0; i < net->n_forwards; i++)
+		tcp_forward_accept(net, nic, &net->forwards[i]);
 
 	for (con_id=0; con_id<MAX_TCP_CONNECTIONS; con_id++) {
 		ssize_t res, res2;
@@ -1786,6 +1952,30 @@ void net_tcp_rx_avail(struct net *net, struct nic_data *nic)
 		if (net->tcp_connections[con_id].state >=
 		    TCP_OUTSIDE_DISCONNECTED)
 			continue;
+
+		/*
+		 *  A forwarded connection that the guest OS hasn't answered
+		 *  yet?  Send the SYN again every second, for 30 seconds.
+		 */
+		if (net->tcp_connections[con_id].state ==
+		    TCP_INSIDE_CONNECTING) {
+			time_t now = time(NULL);
+
+			if (now == net->tcp_connections[con_id].syn_time)
+				continue;
+			if (++ net->tcp_connections[con_id].syn_tries >= 30) {
+				debugmsg(SUBSYS_NET, "TCP", VERBOSITY_WARNING,
+				    "the guest didn't answer a connection to "
+				    "forwarded port %i", net->tcp_connections[
+				    con_id].inside_tcp_port);
+				tcp_closeconnection(net, con_id);
+				continue;
+			}
+			net->tcp_connections[con_id].syn_time = now;
+			net_ip_tcp_connectionreply(net, nic, con_id, 0, NULL,
+			    0, 0);
+			continue;
+		}
 
 		/*
 		 *  Is the socket available for output?  While connecting,
@@ -1931,3 +2121,152 @@ void net_tcp_rx_avail(struct net *net, struct nic_data *nic)
 }
 
 
+
+
+/*
+ *  net_forward_parse():
+ *
+ *  Parse a port forward, "[tcp:][hostaddr]:hostport-[guestaddr]:guestport"
+ *  as for QEMU's hostfwd, e.g. "tcp:127.0.0.1:2514-:514".  Without a
+ *  hostaddr, only this computer can connect (127.0.0.1; 0.0.0.0 is all of
+ *  the host's addresses).  Without a guestaddr, *guest_given is false, and
+ *  the guest is at the address that DHCP gives the first NIC.
+ *
+ *  Returns NULL if spec is fine, else what is wrong with it.
+ */
+const char *net_forward_parse(const char *spec, struct sockaddr_in *host,
+	struct in_addr *guest, bool *guest_given, int *guest_port)
+{
+	static const char *syntax = "isn't [tcp:][hostaddr]:hostport-"
+	    "[guestaddr]:guestport, e.g. tcp:127.0.0.1:2514-:514";
+	const char *p = spec, *dash;
+	char part[2][64];
+	int i;
+
+	if (strncmp(p, "udp:", 4) == 0)
+		return "is for UDP, but only TCP ports can be forwarded";
+	if (strncmp(p, "tcp:", 4) == 0)
+		p += 4;
+	dash = strchr(p, '-');
+	if (dash == NULL || dash - p >= (int) sizeof(part[0]) ||
+	    strlen(dash + 1) >= sizeof(part[1]))
+		return syntax;
+	memcpy(part[0], p, dash - p);
+	part[0][dash - p] = '\0';
+	strcpy(part[1], dash + 1);
+
+	memset(host, 0, sizeof(struct sockaddr_in));
+	host->sin_family = AF_INET;
+	host->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	*guest_given = false;
+
+	for (i = 0; i < 2; i++) {
+		char *colon = strrchr(part[i], ':'), *end;
+		const char *portstr = part[i];
+		struct in_addr addr;
+		long port;
+
+		if (colon != NULL) {
+			*colon = '\0';
+			portstr = colon + 1;
+			if (part[i][0] != '\0') {
+#ifdef HAVE_INET_PTON
+				if (inet_pton(AF_INET, part[i], &addr) != 1)
+#else
+				if (inet_aton(part[i], &addr) == 0)
+#endif
+					return "has an address that isn't an "
+					    "IPv4 address like 10.0.0.1";
+				if (i == 0)
+					host->sin_addr = addr;
+				else {
+					*guest = addr;
+					*guest_given = true;
+				}
+			}
+		}
+
+		port = strtol(portstr, &end, 10);
+		if (portstr[0] == '\0' || *end != '\0' || port < 1 ||
+		    port > 65535)
+			return syntax;
+		if (i == 0)
+			host->sin_port = htons(port);
+		else
+			*guest_port = port;
+	}
+
+	return NULL;
+}
+
+
+/*
+ *  net_add_forward():
+ *
+ *  Forward a port on the host to the guest (see net_forward_parse()).
+ *  Connections to it are passed on to the guest, from the gateway's
+ *  address.  Returns false, after saying why, if it can't be set up.
+ */
+bool net_add_forward(struct net *net, const char *spec)
+{
+	struct net_forward *fw;
+	struct sockaddr_in host;
+	struct in_addr guest;
+	const char *problem;
+	bool guest_given;
+	int s, guest_port, one = 1;
+
+	problem = net_forward_parse(spec, &host, &guest, &guest_given,
+	    &guest_port);
+	if (problem != NULL) {
+		fprintf(stderr, "The port forward \"%s\" %s.\n", spec,
+		    problem);
+		return false;
+	}
+	if (!net->gateway) {
+		fprintf(stderr, "The port forward \"%s\" needs the simulated"
+		    " gateway (NAT).\n", spec);
+		return false;
+	}
+
+	s = socket(AF_INET, SOCK_STREAM, 0);
+	if (s < 0) {
+		perror("socket");
+		return false;
+	}
+	setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *) &one,
+	    sizeof(one));
+	if (bind(s, (struct sockaddr *)&host, sizeof(host)) < 0 ||
+	    listen(s, 5) < 0) {
+		int e = socket_error();
+		fprintf(stderr, "The port forward \"%s\" can't listen on "
+		    "%s:%i: %s.\n", spec, inet_ntoa(host.sin_addr),
+		    ntohs(host.sin_port), e == SOCKET_EADDRINUSE ?
+		    "the port is in use" : strerror(e));
+		socket_close(s);
+		return false;
+	}
+	/*  (A reset starts gxemul again, which listens anew.)  */
+	socket_set_cloexec(s);
+	socket_set_nonblocking(s);
+
+	CHECK_ALLOCATION(net->forwards = (struct net_forward *) realloc(
+	    net->forwards, sizeof(struct net_forward) * (net->n_forwards + 1)));
+	fw = &net->forwards[net->n_forwards ++];
+	fw->socket = s;
+	fw->guest_port = guest_port;
+	if (guest_given)
+		memcpy(fw->guest_ipv4_addr, &guest, 4);
+	else
+		net_client_ipv4(net, NULL, fw->guest_ipv4_addr, NULL);
+
+	if (net->forward_next_port == 0)
+		net->forward_next_port = 1023;
+
+	debugmsg(SUBSYS_NET, "", VERBOSITY_INFO, "forwarding %s:%i to "
+	    "%i.%i.%i.%i:%i", inet_ntoa(host.sin_addr), ntohs(host.sin_port),
+	    fw->guest_ipv4_addr[0], fw->guest_ipv4_addr[1],
+	    fw->guest_ipv4_addr[2], fw->guest_ipv4_addr[3], guest_port);
+
+	return true;
+}

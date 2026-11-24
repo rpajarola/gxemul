@@ -138,6 +138,18 @@ struct tcp_connection {
 	unsigned char	outside_ip_address[4];
 	int		outside_tcp_port;
 	uint32_t	outside_timestamp;
+
+	/*  A forwarded connection, which the outside opened:  */
+	int		forwarded;
+	time_t		syn_time;	/*  when the SYN was last sent  */
+	int		syn_tries;
+};
+
+/*  A port forward: connections to a port on the host go to the guest.  */
+struct net_forward {
+	int		socket;		/*  listening on the host  */
+	unsigned char	guest_ipv4_addr[4];
+	int		guest_port;
 };
 
 /*****************************************************************************/
@@ -189,6 +201,11 @@ struct net {
 	struct udp_connection udp_connections[MAX_UDP_CONNECTIONS];
 	struct udp_reassembly udp_reassemblies[N_UDP_REASSEMBLIES];
 	struct tcp_connection tcp_connections[MAX_TCP_CONNECTIONS];
+
+	/*  Port forwards to the guest (with the gateway):  */
+	int		n_forwards;
+	struct net_forward *forwards;
+	int		forward_next_port;	/*  reserved port to use next  */
 
 	/*  Distributed network:  */
 	int		local_port;
@@ -250,6 +267,9 @@ void net_ip(struct net *net, struct nic_data *nic, unsigned char *packet,
 	int len);
 void net_udp_rx_avail(struct net *net, struct nic_data *nic);
 void net_tcp_rx_avail(struct net *net, struct nic_data *nic);
+const char *net_forward_parse(const char *spec, struct sockaddr_in *host,
+	struct in_addr *guest, bool *guest_given, int *guest_port);
+bool net_add_forward(struct net *net, const char *spec);
 
 /*  net.c:  */
 struct ethernet_packet_link *net_allocate_ethernet_packet_link(
@@ -293,10 +313,11 @@ struct remote_net {
 	int		portnr;
 };
 
-#define	TCP_OUTSIDE_TRYINGTOCONNECT	1
-#define	TCP_OUTSIDE_CONNECTED		2
-#define	TCP_OUTSIDE_DISCONNECTED	3
-#define	TCP_OUTSIDE_DISCONNECTED2	4
+#define	TCP_INSIDE_CONNECTING		1	/*  forwarded, SYN sent  */
+#define	TCP_OUTSIDE_TRYINGTOCONNECT	2
+#define	TCP_OUTSIDE_CONNECTED		3
+#define	TCP_OUTSIDE_DISCONNECTED	4
+#define	TCP_OUTSIDE_DISCONNECTED2	5
 
 #define	TCP_INCOMING_BUF_LEN	65536
 

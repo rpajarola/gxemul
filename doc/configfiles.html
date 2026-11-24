@@ -320,7 +320,9 @@ shown here, except for the machine type:
     "nat": {                    <font color="#2020cf">the simulated gateway: DHCP, DNS, and NAT to the host's network</font>
       "enabled": true,          <font color="#2020cf">(each part is used unless it says false; "nat": true is enough)</font>
       "net": "10.0.0.0/8",
-      "gateway": "10.0.0.254"   <font color="#2020cf">"" = the last address of "net"</font>
+      "gateway": "10.0.0.254",  <font color="#2020cf">"" = the last address of "net"</font>
+      "forwards": []            <font color="#2020cf">host ports that the gateway passes on to the guest, e.g.</font>
+                                <font color="#2020cf">  "tcp:127.0.0.1:2323-:23" (see <a href="networking.html#forwards">port forwarding</a>)</font>
     },
     "udp": {                    <font color="#2020cf">raw Ethernet frames over UDP, to other emulators or a bridge</font>
       "enabled": true,

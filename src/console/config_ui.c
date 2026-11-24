@@ -2434,6 +2434,9 @@ static void gateway_fields(void)
 {
 	mu_Context *ctx = ui.ctx;
 	struct machine_config *c = ui.cfg;
+	int full[1] = { -1 };
+	int aw[1] = { CH(14) };
+	int i;
 
 	mu_label(ctx, "Network");
 	text_field(&c->net_nat_net);
@@ -2442,6 +2445,35 @@ static void gateway_fields(void)
 	mu_label(ctx, "");
 	mu_label(ctx, "(e.g. 10.0.0.0/8 and 10.0.0.254; an empty gateway is "
 	    "the last address)");
+
+	row(1, full);
+	mu_label(ctx, "Port forwards to the guest "
+	    "([tcp:][hostaddr]:hostport-[guestaddr]:guestport):");
+	mu_push_id(ctx, "forwards", 8);
+	for (i = 0; i < c->n_net_forwards; i++) {
+		int w[2] = { -CH(10), -1 };
+		mu_push_id(ctx, &i, sizeof(i));
+		row(2, w);
+		text_field(&c->net_forwards[i]);
+		if (mu_button(ctx, "Remove")) {
+			machine_config_remove_string(&c->n_net_forwards,
+			    &c->net_forwards, i);
+			edits_clear();
+			mu_pop_id(ctx);
+			break;
+		}
+		mu_pop_id(ctx);
+	}
+	mu_pop_id(ctx);
+	row(1, aw);
+	if (mu_button(ctx, "Add forward")) {
+		machine_config_add_string(&c->n_net_forwards,
+		    &c->net_forwards, "tcp:127.0.0.1:2323-:23");
+		edits_clear();
+	}
+	row(1, full);
+	mu_label(ctx, "(e.g. tcp:127.0.0.1:2323-:23: telnet to port 2323 "
+	    "on this computer reaches the guest's port 23)");
 }
 
 

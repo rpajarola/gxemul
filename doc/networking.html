@@ -46,6 +46,7 @@ SUCH DAMAGE.
 <p><br>
 <ul>
   <li><a href="#intro">Introduction</a>
+  <li><a href="#forwards">Port forwarding to the guest</a>
   <li><a href="#tap">Virtual Ethernet switch using a tap device</a>
   <li><a href="#multihost">Network across multiple hosts</a>
   <li><a href="#direct_example_1">UDP "Direct-access" example: udp_snoop</a>
@@ -131,6 +132,63 @@ used. This is very much machine-dependent, and implemented on a case-by-case bas
 <p>If you are impatient, and simply want to try out networking in GXemul,
 I would recommend trying out an ftp install of <a
 href="machine_decstation.html#netbsdpmaxinstall">NetBSD/pmax</a>.
+
+
+
+
+
+
+<p><br>
+<a name="forwards"></a>
+<h3>Port forwarding to the guest:</h3>
+
+<p>Through the simulated gateway, the guest OS can connect out, but
+nothing can connect in. A port forward makes the emulator listen on a TCP
+port of the host, and pass each connection to it on to a port of the
+guest, like QEMU's <tt>hostfwd</tt>. In a <a
+href="configfiles.html#config">machine.json</a>, the forwards are a list
+in the network's <tt>"nat"</tt> part ("Port forwards to the guest" on the
+Network page of the configuration window):
+
+<p><pre>
+"network": {
+  "nat": {
+    "forwards": [ "tcp:127.0.0.1:2323-:23", "tcp:127.0.0.1:2514-:514" ]
+  }
+}
+</pre>
+
+<p>(Older files, with a <tt>"type"</tt>, have <tt>"forwards"</tt> in
+<tt>"network"</tt> itself.)
+
+<p>Each is <tt>[tcp:][hostaddr]:hostport-[guestaddr]:guestport</tt>.
+Without a hostaddr, only programs on the host itself can connect
+(127.0.0.1); <tt>0.0.0.0</tt> lets other computers connect too. Without a
+guestaddr, the guest is at the address that DHCP gives its first network
+card (10.0.0.1 on the default network). With the example above, <tt><b>telnet localhost
+2323</b></tt> on the host logs in to the guest, and an rsh client that can
+use another port runs commands there through port 2514.
+
+<p>Notes:
+<ul>
+  <li>The guest sees the connections come from the gateway (10.0.0.254),
+	so that is the host its access control (e.g. <tt>.rhosts</tt>)
+	must let in. Servers that look up the client's name, such as
+	Ultrix's <tt>rshd</tt>, also need the gateway in the guest's
+	<tt>/etc/hosts</tt> (e.g. "<tt>10.0.0.254 gateway</tt>").
+  <li>A connection from a reserved port of the host (below 1024, as rsh
+	and rlogin clients make them) comes from a reserved port of the
+	gateway too, so that rshd and rlogind trust it. Other connections
+	keep their port.
+  <li>Only TCP can be forwarded, and only through the simulated gateway
+	(<tt>"nat"</tt>; not on a network with only <tt>"tap"</tt>,
+	<tt>"udp"</tt> or <tt>"l2tpv3"</tt>).
+  <li>The guest must be running and listening on the port: the gateway
+	tries to connect for 30 seconds, and then closes the host's
+	connection.
+  <li>A forward's port that is in use on the host stops the emulator
+	from starting.
+</ul>
 
 
 
