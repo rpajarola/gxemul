@@ -5898,3 +5898,6 @@ Changelog for GXemul:
 
 
 ==============  RELEASE 1.0.34  ==============
+
+20261124	Simulated gateway: the ACK of the guest's FIN counts the FIN
+		  (a FIN takes one sequence number).

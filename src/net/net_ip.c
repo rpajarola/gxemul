@@ -681,6 +681,10 @@ static void net_ip_tcp(struct net *net, struct nic_data *nic,
 			}
 		}
 
+		/*  The FIN counts as one byte (unless it came before):  */
+		if (seqnr + (len - data_offset) == c->outside_acknr)
+			c->outside_acknr ++;
+
 		/*  Send ACK:  */
 		net_ip_tcp_connectionreply(net, nic, con_id, 0, NULL, 0, 0);
 		net->tcp_connections[con_id].state = TCP_OUTSIDE_DISCONNECTED2;
