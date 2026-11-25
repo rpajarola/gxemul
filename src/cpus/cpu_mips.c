@@ -1824,28 +1824,40 @@ void mips_cpu_exception(struct cpu *cpu, int exccode, int tlb, uint64_t vaddr,
 			debugmsg(SUBSYS_CPU, "cpu_mips", VERBOSITY_DEBUG, "]\n");
 	}
 
+	/*
+	* Low virtual address references may be legitimate guest
+	* exceptions, e.g. during kernel copyin() operations.
+	* Report them without interrupting guest execution.
+	*/
 	if (tlb && vaddr < 0x1000) {
 		uint64_t offset;
-		char *symbol = get_symbol_name(&cpu->machine->symbol_context,
-		    cpu->pc, &offset);
+		char *symbol;
 
-		// TODO: debugmsg SUBSYS_CPU, or better: SUBSYS_EXCEPTION
-		// VERBOSITY_WARNING since this is a relatively sure sign of a bug.
+		symbol = get_symbol_name(
+			&cpu->machine->symbol_context,
+			cpu->pc, &offset);
 
-		debugmsg(SUBSYS_CPU, "cpu", VERBOSITY_DEBUG, "[ ");
-		if (cpu->machine->ncpus > 1)
-			fatal_error_cpu(cpu, SUBSYS_CPU, "cpu", "cpu%i: ", cpu->cpu_id);
-		fatal_error_cpu(cpu, SUBSYS_CPU, "cpu", "warning: LOW reference: vaddr=");
-		if (cpu->is_32bit)
-			fatal_error_cpu(cpu, SUBSYS_CPU, "cpu", "0x%08" PRIx32, (uint32_t) vaddr);
-		else
-			fatal_error_cpu(cpu, SUBSYS_CPU, "cpu", "0x%016" PRIx64, (uint64_t) vaddr);
-		fatal_error_cpu(cpu, SUBSYS_CPU, "cpu", ", exception %s, pc=", exception_names[exccode]);
-		if (cpu->is_32bit)
-			fatal_error_cpu(cpu, SUBSYS_CPU, "cpu", "0x%08" PRIx32, (uint32_t) cpu->pc);
-		else
-			fatal_error_cpu(cpu, SUBSYS_CPU, "cpu", "0x%016" PRIx64, (uint64_t)cpu->pc);
-		fatal_error_cpu(cpu, SUBSYS_CPU, "cpu", " <%s> ]", symbol? symbol : "(no symbol)");
+		if (cpu->is_32bit) {
+			debugmsg_cpu(cpu, SUBSYS_CPU, "cpu",
+				VERBOSITY_WARNING,
+				"LOW reference: vaddr=0x%08" PRIx32
+				", exception %s, pc=0x%08" PRIx32
+				" <%s>\n",
+				(uint32_t)vaddr,
+				exception_names[exccode],
+				(uint32_t)cpu->pc,
+				symbol ? symbol : "(no symbol)");
+		} else {
+			debugmsg_cpu(cpu, SUBSYS_CPU, "cpu",
+				VERBOSITY_WARNING,
+				"LOW reference: vaddr=0x%016" PRIx64
+				", exception %s, pc=0x%016" PRIx64
+				" <%s>\n",
+				(uint64_t)vaddr,
+				exception_names[exccode],
+				(uint64_t)cpu->pc,
+				symbol ? symbol : "(no symbol)");
+		}
 	}
 
 	/*  Clear the exception code bits of the cause register...  */
